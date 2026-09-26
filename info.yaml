@@ -1,0 +1,54 @@
+# Tiny Tapeout project information
+project:
+  title:        "Verified Protocol Emulator"   # Project title (working title)
+  author:       "dean"                          # Your name
+  discord:      ""                              # Your discord username (optional)
+  description:  "Firmware-programmable protocol emulator with an end-to-end verified firmware-to-pins flow"
+  language:     "Hardcaml (OCaml) emitted to Verilog"
+  clock_hz:     0       # TBD once the ISA and timing target are fixed; template CLOCK_PERIOD is 20 ns
+
+  # How many tiles your design occupies? Jane Street competition allocation is 6x4.
+  # The template comment listing valid sizes is stale; tt-support-tools ihp-sg13cmos5l accepts 6x4.
+  tiles: "6x4"
+
+  # Your top module name must start with "tt_um_". Must be unique on the shuttle (uniqueness not yet checked).
+  top_module:  "tt_um_dean_protocol_emulator"
+
+  # List your project's source files here. Source files must be in ./src.
+  source_files:
+    - "tt_um_dean_protocol_emulator.v"
+
+# The pinout of your project. Leave unused pins blank. Assigned once the ISA is fixed.
+pinout:
+  # Inputs
+  ui[0]: ""
+  ui[1]: ""
+  ui[2]: ""
+  ui[3]: ""
+  ui[4]: ""
+  ui[5]: ""
+  ui[6]: ""
+  ui[7]: ""
+
+  # Outputs
+  uo[0]: ""
+  uo[1]: ""
+  uo[2]: ""
+  uo[3]: ""
+  uo[4]: ""
+  uo[5]: ""
+  uo[6]: ""
+  uo[7]: ""
+
+  # Bidirectional pins
+  uio[0]: ""
+  uio[1]: ""
+  uio[2]: ""
+  uio[3]: ""
+  uio[4]: ""
+  uio[5]: ""
+  uio[6]: ""
+  uio[7]: ""
+
+# Do not change!
+yaml_version: 6
