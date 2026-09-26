@@ -1,0 +1,30 @@
+# OCaml / dune
+_build/
+*.install
+_opam/
+.merlin
+
+# Simulation and waveforms
+sim_build/
+results.xml
+*.vcd
+*.fst
+*.ghw
+__pycache__/
+*.pyc
+
+# Formal and flow outputs
+formal/work/
+formal/**/*_prf/
+formal/**/*_bmc/
+flow/work/
+runs/
+gate_level_netlist.v
+
+# Local toolchain caches
+.toolchain/
+oss-cad-suite/
+
+# OS / editor
+.DS_Store
+*.swp
