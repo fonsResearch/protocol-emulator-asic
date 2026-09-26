@@ -28,3 +28,8 @@ oss-cad-suite/
 # OS / editor
 .DS_Store
 *.swp
+
+# Smoke-test and cocotb run outputs
+flow/smoke/work/
+test/make_rtl.log
+test/sim_build/

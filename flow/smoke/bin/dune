@@ -1,0 +1,3 @@
+(executable
+ (name emit)
+ (libraries smoke_counter hardcaml core))

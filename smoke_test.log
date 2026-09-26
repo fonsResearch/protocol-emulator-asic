@@ -1,0 +1,41 @@
+
+### versions
+ocaml 5.3.0
+dune 3.24.2
+Yosys 0.69+post (git sha1 9f75ca1f9834a39a863915b5dae0c7b1e33533bc, Release, AppleClang /usr/bin/clang++ 21.0.0.21000334)
+Icarus Verilog version 13.0 (stable) (v13_0)
+Z3 version 5.1.0 - 64 bit
+cocotb 2.0.1
+
+### Hardcaml expect tests (cyclesim + waveterm)
+RESULT: expect tests as expected
+
+### Emit Verilog
+ctr_bug.v
+ctr_ok.v
+
+### ctr_ok: Yosys -> AIGER miter -> ABC pdr / bmc3
+pdr: Property proved.  Time =     0.00 sec
+RESULT: pdr ctr_ok as expected
+
+### ctr_ok: SymbiYosys (smtbmc z3 k-induction, abc pdr)
+[work/sby_ctr_ok_pdr] summary: engine_0 (abc pdr) returned PASS
+[work/sby_ctr_ok_kind] summary: engine_0 (smtbmc z3) returned pass for basecase
+[work/sby_ctr_ok_kind] summary: engine_0 (smtbmc z3) returned pass for induction
+RESULT: sby k-induction ctr_ok as expected
+
+### ctr_bug: Yosys -> AIGER miter -> ABC pdr / bmc3
+pdr: Output 0 of miter "flow/smoke/work/ctr_bug" was asserted in frame 10.  Time =     0.01 sec
+RESULT: pdr ctr_bug as expected
+bmc3: Output 0 of miter "flow/smoke/work/ctr_bug" was asserted in frame 10. Time =     0.01 sec
+
+### ctr_bug: SymbiYosys (smtbmc z3 k-induction, abc pdr)
+[work/sby_ctr_bug_kind] summary: engine_0 (smtbmc z3) returned FAIL for basecase
+[work/sby_ctr_bug_pdr] summary: engine_0 (abc pdr) returned FAIL
+RESULT: sby k-induction ctr_bug as expected
+
+### TT cocotb wrapper test (Icarus)
+                                                        ** TESTS=1 PASS=1 FAIL=0 SKIP=0                  320.00           0.01      62950.95  **
+RESULT: TT CI grep check as expected
+
+SMOKE TEST: ALL AS EXPECTED

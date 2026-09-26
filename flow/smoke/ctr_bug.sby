@@ -1,0 +1,22 @@
+[tasks]
+kind  prove_kind
+pdr   prove_pdr
+
+[options]
+prove_kind: mode prove
+prove_kind: depth 20
+prove_pdr: mode prove
+
+[engines]
+prove_kind: smtbmc z3
+prove_pdr: abc pdr
+
+[script]
+read_verilog ctr_bug.v
+read_verilog -formal formal_top.sv
+prep -top formal_top
+setundef -zero -init
+
+[files]
+out/ctr_bug.v
+formal_top.sv
