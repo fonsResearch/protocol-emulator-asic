@@ -1,5 +1,9 @@
 # Agent-independence protocol (process layer E)
 
+> **Status (2026-09-27): deferred by user decision.** The vertical-slice spec (S1), RTL and monitors (S3) are all written in one context, which also wrote the source documents. They are therefore **not** independent, and no independence claim is made for them.
+>
+> Plan for adding E later: once the main flow works, isolated contexts write *second* versions (a second spec, a second monitor set, possibly a second RTL) using only the permissions below. Those versions are cross-checked against the first ones, and common-mode faults are measured through the mutation cross-kill matrix. Until then, this document describes the target protocol.
+
 The reference semantics (S1), the RTL, and the protocol monitors (S3) are cross-checked against each other. The checks only mean something if these artifacts are written independently. Each is produced by a separate agent context, from a different source document. Every disagreement between them is logged and triaged.
 
 ## Contexts and permissions
