@@ -8,7 +8,7 @@ The reference semantics (S1), the RTL, and the protocol monitors (S3) are cross-
 |---|---|---|---|
 | Doc (human-approved) | anything | `doc/` | — |
 | Spec (S1) | `doc/isa/`, `doc/interface.md` | `spec/` | `rtl/`, `src/` generated core, `monitors/`, `formal/` |
-| RTL | `doc/isa/`, `doc/interface.md` | `rtl/`, generated Verilog in `src/` | `spec/`, `monitors/`, `formal/` |
+| RTL | `doc/isa/`, `doc/interface.md`, `doc/sram_interface.md`, `rtl/macros/` (vendored PDK models) | `rtl/`, generated Verilog in `src/` | `spec/`, `monitors/`, `formal/` |
 | Monitor (S3) | `doc/protocols/`, `trace/` interface | `monitors/` | `doc/isa/`, `spec/`, `rtl/` |
 | Trace (S2) | `doc/interface.md` | `trace/` | `spec/`, `rtl/`, `monitors/` internals |
 | Integrator (formal, mutation, flow) | everything, through library interfaces | `formal/`, `mutation/`, `flow/`, `log/` | — (writes nothing in `spec/`, `rtl/`, `monitors/`) |

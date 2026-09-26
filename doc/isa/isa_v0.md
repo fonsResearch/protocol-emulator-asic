@@ -1,6 +1,6 @@
-# ISA v0 (vertical-slice ISA)
+# ISA v0.1 (vertical-slice ISA)
 
-Status: APPROVED v0 (2026-09-27; the user delegated the section 8 decisions to agent judgment). Frozen for the vertical slice. Any change goes through `log/disagreements.md` as `doc-ambiguity` and needs user approval.
+Status: APPROVED v0.1 (2026-09-27). v0.1 changes instruction memory depth to 64 (user decision: SRAM-shaped instruction memory; see doc/CHANGES.md). The user delegated the other section 8 decisions to agent judgment. Frozen for the vertical slice. Any change goes through `log/disagreements.md` as `doc-ambiguity` and needs user approval.
 
 Scope: the smallest ISA that can:
 - transmit UART 8N1 at any integer bit period of 3 cycles or more,
@@ -23,16 +23,16 @@ This document, together with `doc/interface.md`, is the only source for the spec
 
 | Name | Width | Reset value | Description |
 |---|---|---|---|
-| `pc` | 5 | 0 | Program counter (32-entry instruction memory) |
+| `pc` | 6 | 0 | Program counter (64-entry instruction memory) |
 | `out` | 8 | 0x00 | Output register; drives `uo_out[7:0]` |
 | `sr` | 8 | 0x00 | Shift register |
 | `lc` | 8 | 0x00 | Loop counter |
-| `imem[0..31]` | 16 each | undefined | Instruction memory; not cleared by reset |
+| `imem[0..63]` | 16 each | undefined | Instruction memory; not cleared by reset |
 | `running` | 1 | 0 | Execution enable, derived from the RUN pin (see `doc/interface.md`) |
 
 A WAIT in progress also has hidden state (cycles remaining). Only its observable effect is specified.
 
-All arithmetic is modulo 2^width of the destination, so `pc` increments modulo 32.
+All arithmetic is modulo 2^width of the destination, so `pc` increments modulo 64.
 
 ## 3. Execution model
 
@@ -48,14 +48,14 @@ Instructions are 16-bit words: `op = w[15:12]`, `arg = w[11:0]`. Bits marked "mu
 
 | op | Mnemonic | Operand | Cycles | Effect, written at the end of the instruction's last cycle |
 |---|---|---|---|---|
-| 0x0 | `JMP t` | `t = arg[4:0]`; `arg[11:5]` must be 0 | 1 | `pc` <- t |
+| 0x0 | `JMP t` | `t = arg[5:0]`; `arg[11:6]` must be 0 | 1 | `pc` <- t |
 | 0x1 | `OUT v` | `v = arg[7:0]`; `arg[11:8]` must be 0 | 1 | `out` <- v; `pc` <- pc+1 |
 | 0x2 | `OUTB p` | `p = arg[2:0]`; `arg[11:3]` must be 0 | 1 | `out[p]` <- `sr[0]`, other bits of `out` unchanged; `sr` <- `sr >> 1` (logical shift, 0 in); `pc` <- pc+1 |
 | 0x3 | `LDI v` | `v = arg[7:0]`; `arg[11:8]` must be 0 | 1 | `sr` <- v; `pc` <- pc+1 |
 | 0x4 | `IN` | `arg` must be 0 | 1 | `sr` <- sampled `uio_in` (`doc/interface.md` section 4); `pc` <- pc+1 |
 | 0x5 | `WAIT k` | `k = arg[11:0]`, 0..4095 | k+1 | No architectural change until the end of the last cycle, then `pc` <- pc+1 |
 | 0x6 | `LDC v` | `v = arg[7:0]`; `arg[11:8]` must be 0 | 1 | `lc` <- v; `pc` <- pc+1 |
-| 0x7 | `DJNZ t` | `t = arg[4:0]`; `arg[11:5]` must be 0 | 1 | `lc` <- lc-1; if (lc-1) != 0 then `pc` <- t, else `pc` <- pc+1 |
+| 0x7 | `DJNZ t` | `t = arg[5:0]`; `arg[11:6]` must be 0 | 1 | `lc` <- lc-1; if (lc-1) != 0 then `pc` <- t, else `pc` <- pc+1 |
 | 0x8-0xF | reserved | ignored | 1 | `pc` <- pc+1 (behaves as NOP) |
 
 Notes:
@@ -108,13 +108,13 @@ Transform T replaces the counted loop at addresses 5-7 (`OUTB 0; WAIT D-3; DJNZ 
 
 Timing argument: each unrolled copy takes 1 + (D-1) = D cycles. A loop iteration takes 1 + (D-2) + 1 = D cycles.
 
-Claim checked on the RTL alone, with no spec involved: for every `uio_in` input sequence, program P and program T(P) produce identical `uo_out` traces, cycle for cycle. T(P) needs 5 + 16 + 3 = 24 words, which is why the slice memory has 32 entries.
+Claim checked on the RTL alone, with no spec involved: for every `uio_in` input sequence, program P and program T(P) produce identical `uo_out` traces, cycle for cycle. T(P) needs 5 + 16 + 3 = 24 words, which fits in the 64-entry memory.
 
 ## 8. Decisions (resolved for v0, 2026-09-27)
 
 The user delegated these choices to the agent. Each one is recorded with its reason so it can be revisited.
 
-1. **Instruction memory depth: 32 entries, 5-bit `pc`.** T(P) in section 7 needs 24 words. With only 16 entries, the QED check would use a program that is not the real UART program. Cost: 512 bits of symbolic `imem` state in formal. That is acceptable for the slice and will be measured in the first proofs.
+1. **Instruction memory depth: 64 entries, 6-bit `pc` (v0.1; was 32 in v0).** The depth matches the smallest IHP single-port SRAM macro, RM_IHPSG13_1P_64x16_c2, which the user chose as the instruction-memory target. The original v0 rationale for going beyond 16 entries still holds: T(P) in section 7 needs 24 words. With only 16 entries, the QED check would use a program that is not the real UART program. Cost: 1024 bits of symbolic `imem` state in formal. That is acceptable for the slice and will be measured in the first proofs.
 2. **Reserved opcodes: 1-cycle NOP.** Every encoding is fully specified, so the RTL-vs-spec proof has no unconstrained cases.
 3. **`out` reset/halt value: 0x00.** Kept as the simplest choice for the slice. A connected UART receiver sees a break while the machine is halted; this is known and accepted for v0. Planned for v1: protocol pins move to `uio` with `uio_oe` = 0 while halted, so idle levels come from external pull-ups rather than from a value the emulator drives. That handles UART, I2C and SPI idle states the same way. v0 does not address it.
-4. **Memory timing.** v0 assumes combinational instruction read (flip-flop memory). A later synchronous-read SRAM must still meet section 5, for example through prefetch. That is an RTL obligation, not an ISA change.
+4. **Memory timing.** Instruction memory is a synchronous-read SRAM (see doc/sram_interface.md). The section 5 timing contract is unchanged: meeting it with a synchronous-read memory (for example, presenting the next `pc` to the SRAM address in the current cycle) is an RTL obligation. The ISA does not change.
