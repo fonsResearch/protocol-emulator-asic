@@ -1,6 +1,6 @@
 # UART 8N1 transmit convention (monitor source document)
 
-Status: DRAFT, awaiting user approval. This is the only document the monitor (S3) context reads. It describes the line protocol and deliberately says nothing about the emulator ISA.
+Status: APPROVED v0 (2026-09-27). This is the only document the monitor (S3) context reads. It describes the line protocol and deliberately says nothing about the emulator ISA.
 
 ## Line format
 

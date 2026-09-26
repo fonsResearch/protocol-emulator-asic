@@ -1,6 +1,6 @@
 # Interface contract v0 (shared by spec and RTL)
 
-Status: DRAFT, awaiting user approval together with `doc/isa/isa_v0.md`. Pin assignments are proposals for the vertical slice.
+Status: APPROVED v0 (2026-09-27), together with `doc/isa/isa_v0.md`. Pin assignments apply to the vertical slice only.
 
 ## 1. Core boundary
 
@@ -27,6 +27,7 @@ Every input the core uses (`ui_in[7]`, `ui_in[6]`, `uio_in[7:0]`) passes through
 
 - During cycle c, `s2` holds the pin value sampled at edge e_{c-1}.
 - `running` during cycle c equals `s2(RUN)` during cycle c. The halted/running rule in ISA section 3 uses this value.
+- The synchroniser flops (`s1`, `s2`, and the extra WSTB stage used for edge detection) reset to 0 while `rst_sync_n` = 0. After reset is released, `running` is therefore 0 for at least the first 2 cycles.
 - Formal and simulation models assume each asynchronous input is stable around the sampling edge, so no metastability is modelled. This is an assumption; it is stated in every proof report.
 
 ## 4. `IN` sampling

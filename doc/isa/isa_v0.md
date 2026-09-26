@@ -1,6 +1,6 @@
 # ISA v0 (vertical-slice ISA)
 
-Status: DRAFT, awaiting user approval. Nothing in spec/ or rtl/ may be written against this document until it is approved.
+Status: APPROVED v0 (2026-09-27; the user delegated the section 8 decisions to agent judgment). Frozen for the vertical slice. Any change goes through `log/disagreements.md` as `doc-ambiguity` and needs user approval.
 
 Scope: the smallest ISA that can:
 - transmit UART 8N1 at any integer bit period of 3 cycles or more,
@@ -110,9 +110,11 @@ Timing argument: each unrolled copy takes 1 + (D-1) = D cycles. A loop iteration
 
 Claim checked on the RTL alone, with no spec involved: for every `uio_in` input sequence, program P and program T(P) produce identical `uo_out` traces, cycle for cycle. T(P) needs 5 + 16 + 3 = 24 words, which is why the slice memory has 32 entries.
 
-## 8. Open decisions (proposal shown in the body)
+## 8. Decisions (resolved for v0, 2026-09-27)
 
-1. **Instruction memory depth.** 32 entries (proposed; needed for T(P) in section 7), or 16 entries with a 4-iteration QED variant.
-2. **Reserved opcodes.** NOP (proposed; fully specified, so formal completeness stays simple), or trap.
-3. **`out` reset/halt value.** 0x00 (proposed). A UART receiver on `uo_out[0]` sees this as a break condition while the machine is halted; 0xFF, or a separately programmable halt value, avoids that.
-4. **Memory timing.** v0 assumes combinational instruction read (flip-flop memory). A later synchronous-read SRAM must preserve section 5, for example with prefetch. That is an RTL obligation and does not change the ISA.
+The user delegated these choices to the agent. Each one is recorded with its reason so it can be revisited.
+
+1. **Instruction memory depth: 32 entries, 5-bit `pc`.** T(P) in section 7 needs 24 words. With only 16 entries, the QED check would use a program that is not the real UART program. Cost: 512 bits of symbolic `imem` state in formal. That is acceptable for the slice and will be measured in the first proofs.
+2. **Reserved opcodes: 1-cycle NOP.** Every encoding is fully specified, so the RTL-vs-spec proof has no unconstrained cases.
+3. **`out` reset/halt value: 0x00.** Kept as the simplest choice for the slice. A connected UART receiver sees a break while the machine is halted; this is known and accepted for v0. Planned for v1: protocol pins move to `uio` with `uio_oe` = 0 while halted, so idle levels come from external pull-ups rather than from a value the emulator drives. That handles UART, I2C and SPI idle states the same way. v0 does not address it.
+4. **Memory timing.** v0 assumes combinational instruction read (flip-flop memory). A later synchronous-read SRAM must still meet section 5, for example through prefetch. That is an RTL obligation, not an ISA change.
