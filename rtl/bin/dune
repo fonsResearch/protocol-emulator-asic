@@ -1,0 +1,9 @@
+(executable
+ (name generate)
+ (modules generate)
+ (libraries core hardcaml pemu_rtl))
+
+(executable
+ (name dump_vectors)
+ (modules dump_vectors)
+ (libraries core pemu_spec))
