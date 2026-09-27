@@ -1,0 +1,29 @@
+# A1 cross-check with an engine independent of ABC: SMT-based k-induction (yosys-smtbmc + z3).
+# Same initial-state rules as formal/prove_one.sh: all FFs init 0 before any opt, SRAM output
+# registers free.
+[tasks]
+kind20
+bmc40
+
+[options]
+kind20: mode prove
+kind20: depth 20
+bmc40: mode bmc
+bmc40: depth 40
+
+[engines]
+smtbmc z3
+
+[script]
+read_verilog a1_miter.v
+read_verilog -formal a1_wrap.sv
+hierarchy -check -top a1_wrap
+proc
+flatten
+setundef -zero -init
+setattr -unset init w:*rtl_imem_dout*
+opt -keepdc -fast
+
+[files]
+a1_miter.v
+a1_wrap.sv

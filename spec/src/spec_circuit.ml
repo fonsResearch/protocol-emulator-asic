@@ -27,13 +27,47 @@ module O = struct
   [@@deriving hardcaml]
 end
 
-(* [rom]: formal/test-only variant in which imem is a constant program (the load protocol
-   still runs, but its writes are ignored). The default (no [rom]) is the specification. *)
-let create ?rom (i : _ I.t) =
+(* Instruction memory as a pluggable function (combinational read, synchronous write), so
+   that tools (formal/src/mutate.ml) can treat it as a memory model outside the logic.
+   - [imem_registers]: the specification: 64 x 16 registers, no reset, written by the load
+     protocol only.
+   - [imem_rom words]: formal/test-only: a constant program; writes are ignored. *)
+module Imem = struct
+  type 'a t =
+    { clock : 'a
+    ; we : 'a
+    ; waddr : 'a
+    ; wdata : 'a
+    ; raddr : 'a
+    }
+end
+
+let imem_registers (m : Signal.t Imem.t) =
+  let spec_noclear = Reg_spec.create ~clock:m.clock () in
+  mux
+    m.raddr
+    (List.init Isa.imem_depth ~f:(fun a ->
+       let we = m.we &: (m.waddr ==:. a) in
+       reg spec_noclear ~enable:we m.wdata -- sprintf "spec_imem_%d" a))
+;;
+
+let imem_rom (words : int array) (m : Signal.t Imem.t) =
+  ignore (m.clock, m.we, m.waddr, m.wdata);
+  mux m.raddr (List.init Isa.imem_depth ~f:(fun a -> of_int ~width:16 words.(a)))
+;;
+
+(* [rom]: shorthand for [~imem:(imem_rom rom)]. The default is [imem_registers]. *)
+let create ?rom ?imem (i : _ I.t) =
+  let imem =
+    match imem, rom with
+    | Some f, None -> f
+    | None, Some words -> imem_rom words
+    | None, None -> imem_registers
+    | Some _, Some _ -> raise_s [%message "Spec_circuit.create: both ?rom and ?imem given"]
+  in
   let open Always in
   (* rst_sync_n is used as a synchronous clear (all registers except imem). *)
   let spec = Reg_spec.create ~clock:i.clock ~clear:(~:(i.rst_sync_n)) () in
-  let spec_noclear = Reg_spec.create ~clock:i.clock () in
   let r w = Variable.reg spec ~width:w in
   (* synchronisers *)
   let s1_run = reg spec (bit i.ui_in 7) in
@@ -55,19 +89,16 @@ let create ?rom (i : _ I.t) =
   and load_addr = r Isa.pc_width
   and load_hi = r 1
   and load_lo = r 8 in
-  (* instruction memory: 64 x 16 registers, written only by the load protocol *)
-  let imem_we = running ==:. 0 &: write_event &: load_hi.value in
-  let imem_wdata = s2_uio @: load_lo.value in
-  let imem =
-    match rom with
-    | Some (words : int array) ->
-      List.init Isa.imem_depth ~f:(fun a -> of_int ~width:16 words.(a))
-    | None ->
-      List.init Isa.imem_depth ~f:(fun a ->
-        let we = imem_we &: (load_addr.value ==:. a) in
-        reg spec_noclear ~enable:we imem_wdata -- sprintf "spec_imem_%d" a)
+  (* instruction memory (see [Imem]) *)
+  let instr =
+    imem
+      { Imem.clock = i.clock
+      ; we = running ==:. 0 &: write_event &: load_hi.value
+      ; waddr = load_addr.value
+      ; wdata = s2_uio @: load_lo.value
+      ; raddr = pc.value
+      }
   in
-  let instr = mux pc.value imem in
   let op = select instr 15 12
   and arg = select instr 11 0 in
   let arg8 = select arg 7 0

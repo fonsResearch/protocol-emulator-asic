@@ -29,14 +29,39 @@ let bad_circuit ?(debug = false) ?(dbg = []) ~name bad =
   let extra =
     if debug then List.map dbg ~f:(fun (n, s) -> output ("dbg_" ^ n) s) else []
   in
+  let name =
+    match !Mutate.active with
+    | None -> name
+    | Some (t, k) ->
+      sprintf
+        "m_%s_%s__%s"
+        (Mutate.target_to_string t)
+        (if k < 0 then "id" else Int.to_string k)
+        name
+  in
   Circuit.create_exn ~name (output "bad" bad :: extra)
+;;
 
+(* Instances consult [Mutate.active]: when a mutation targets the spec (resp. RTL), every spec
+   (resp. RTL) instance in the harness is the mutant; memory models are never mutated. *)
 let spec_instance ?rom ~clock ~rst_sync_n ~ui_in ~uio_in () =
-  Spec_circuit.create ?rom { Spec_circuit.I.clock; rst_sync_n; ui_in; uio_in }
+  let i = { Spec_circuit.I.clock; rst_sync_n; ui_in; uio_in } in
+  match !Mutate.active with
+  | Some (Spec, index) ->
+    let imem =
+      match rom with
+      | Some words -> Spec_circuit.imem_rom words
+      | None -> Spec_circuit.imem_registers
+    in
+    Mutate.spec ~index ~imem i
+  | _ -> Spec_circuit.create ?rom i
 ;;
 
 let rtl_instance ~sram ~clock ~rst_sync_n ~ui_in ~uio_in () =
-  Pemu_rtl.Engine.create ~sram { Pemu_rtl.Engine.I.clock; rst_sync_n; ui_in; uio_in }
+  let i = { Pemu_rtl.Engine.I.clock; rst_sync_n; ui_in; uio_in } in
+  match !Mutate.active with
+  | Some (Rtl, index) -> Mutate.rtl ~index ~sram i
+  | _ -> Pemu_rtl.Engine.create ~sram i
 ;;
 
 let a2_uart ?debug ~d () =
@@ -112,17 +137,22 @@ let a1_rom_miter ?debug ~d () =
 let b1_qed ?debug ~d () =
   let clock = input "clock" 1
   and uio_in = input "uio_in" 8 in
-  let run ~prog =
+  (* distinct SRAM register names per instance: duplicate names are disambiguated in different
+     orders by the Verilog backend and by cyclesim, which breaks counterexample replay *)
+  let run ~tag ~prog =
     rtl_instance
-      ~sram:(Pemu_rtl.Sram.behavioural_rom ~contents:(Isa.assemble prog))
+      ~sram:
+        (Pemu_rtl.Sram.behavioural_rom
+           ~name:("rtl_imem_dout_" ^ tag)
+           ~contents:(Isa.assemble prog))
       ~clock
       ~rst_sync_n:vdd
       ~ui_in:(of_int ~width:8 0x80)
       ~uio_in
       ()
   in
-  let p = run ~prog:(Programs.uart_tx ~d)
-  and t = run ~prog:(Programs.uart_tx_unrolled ~d) in
+  let p = run ~tag:"p" ~prog:(Programs.uart_tx ~d)
+  and t = run ~tag:"t" ~prog:(Programs.uart_tx_unrolled ~d) in
   bad_circuit ?debug ~dbg:[ "p_uo", p.uo_out; "t_uo", t.uo_out ] ~name:(sprintf "b1_qed_d%d" d) (p.uo_out <>: t.uo_out)
 ;;
 
@@ -131,9 +161,14 @@ let b1_qed ?debug ~d () =
 let b1_qed_negative ?debug ~d () =
   let clock = input "clock" 1
   and uio_in = input "uio_in" 8 in
-  let run ~prog =
+  (* distinct SRAM register names per instance: duplicate names are disambiguated in different
+     orders by the Verilog backend and by cyclesim, which breaks counterexample replay *)
+  let run ~tag ~prog =
     rtl_instance
-      ~sram:(Pemu_rtl.Sram.behavioural_rom ~contents:(Isa.assemble prog))
+      ~sram:
+        (Pemu_rtl.Sram.behavioural_rom
+           ~name:("rtl_imem_dout_" ^ tag)
+           ~contents:(Isa.assemble prog))
       ~clock
       ~rst_sync_n:vdd
       ~ui_in:(of_int ~width:8 0x80)
@@ -144,8 +179,8 @@ let b1_qed_negative ?debug ~d () =
     List.mapi (Programs.uart_tx_unrolled ~d) ~f:(fun i ins ->
       if i = 8 then Isa.Wait (d - 3) else ins)
   in
-  let p = run ~prog:(Programs.uart_tx ~d)
-  and t = run ~prog:broken in
+  let p = run ~tag:"p" ~prog:(Programs.uart_tx ~d)
+  and t = run ~tag:"t" ~prog:broken in
   bad_circuit ?debug ~dbg:[ "p_uo", p.uo_out; "t_uo", t.uo_out ] ~name:(sprintf "b1_qed_neg_d%d" d) (p.uo_out <>: t.uo_out)
 ;;
 
@@ -163,6 +198,61 @@ let a2_uart_negative ?debug ~d () =
       { Pemu_monitors.Uart_tx_monitor.I.clock; clear = gnd; line = bit o.uo_out 0 }
   in
   bad_circuit ?debug ~dbg:[ "uo_out", o.uo_out ] ~name:(sprintf "a2_uart_neg_d%d" d) m.bad
+;;
+
+(* A2 on the RTL: the UART monitor directly on the RTL running uart_tx (ROM SRAM model).
+   Spec-free, like B1. Same bounds and environment as [a2_uart]. *)
+let a2_rtl_uart ?debug ~d () =
+  let clock = input "clock" 1
+  and uio_in = input "uio_in" 8 in
+  let o =
+    rtl_instance
+      ~sram:(Pemu_rtl.Sram.behavioural_rom ~contents:(Isa.assemble (Programs.uart_tx ~d)))
+      ~clock
+      ~rst_sync_n:vdd
+      ~ui_in:(of_int ~width:8 0x80)
+      ~uio_in
+      ()
+  in
+  let m =
+    Pemu_monitors.Uart_tx_monitor.create
+      ~b:d
+      { Pemu_monitors.Uart_tx_monitor.I.clock; clear = gnd; line = bit o.uo_out 0 }
+  in
+  let bound = (10 * d) + 5 in
+  let w = Int.ceil_log2 (bound + 2) in
+  let since =
+    reg_fb (Reg_spec.create ~clock ()) ~width:w ~f:(fun c ->
+      mux2 m.frame_done (zero w) (mux2 (c ==:. bound + 1) c (c +:. 1)))
+  in
+  bad_circuit
+    ?debug
+    ~dbg:[ "uo_out", o.uo_out; "mon_bad", m.bad; "mon_timeout", m.timeout ]
+    ~name:(sprintf "a2_rtl_uart_d%d" d)
+    (m.bad |: m.timeout |: (since >:. bound))
+;;
+
+(* B1 on the spec: P vs T(P) on two spec instances with ROM imem. Spec-free check of the
+   spec itself (used for spec mutants). *)
+let b1_qed_spec ?debug ~d () =
+  let clock = input "clock" 1
+  and uio_in = input "uio_in" 8 in
+  let run ~prog =
+    spec_instance
+      ~rom:(Isa.assemble prog)
+      ~clock
+      ~rst_sync_n:vdd
+      ~ui_in:(of_int ~width:8 0x80)
+      ~uio_in
+      ()
+  in
+  let p = run ~prog:(Programs.uart_tx ~d)
+  and t = run ~prog:(Programs.uart_tx_unrolled ~d) in
+  bad_circuit
+    ?debug
+    ~dbg:[ "p_uo", p.uo_out; "t_uo", t.uo_out ]
+    ~name:(sprintf "b1_qed_spec_d%d" d)
+    (p.uo_out <>: t.uo_out)
 ;;
 
 (* Negative control for A1: RTL whose SRAM model lacks write-through (on MEN & WEN & REN the
@@ -195,18 +285,98 @@ let a1_miter_negative ?debug () =
   bad_circuit ?debug ~dbg:[ "spec_uo", s.uo_out; "rtl_uo", r.uo_out ] ~name:"a1_miter_neg" differ
 ;;
 
+(* A1 generalised to arbitrary initial instruction memory: both memories power up with free
+   contents (registers named free_*, left uninitialised by prove_one.sh), and the obligation is
+   only required on runs where the two memories were equal at frame 0:
+     bad = outputs differ /\ (frame 0 ? mem_equal : mem_equal_at_frame_0). *)
+let a1_miter_anyinit ?debug () =
+  let clock = input "clock" 1
+  and rst_sync_n = input "rst_sync_n" 1
+  and ui_in = input "ui_in" 8
+  and uio_in = input "uio_in" 8 in
+  let spec_words = ref [] and rtl_words = ref [] in
+  let spec_imem (m : Signal.t Spec_circuit.Imem.t) =
+    let r = Reg_spec.create ~clock:m.clock () in
+    let words =
+      List.init Isa.imem_depth ~f:(fun a ->
+        reg r ~enable:(m.we &: (m.waddr ==:. a)) m.wdata -- sprintf "free_spec_imem_%d" a)
+    in
+    spec_words := words;
+    mux m.raddr words
+  in
+  let rtl_sram (i : _ Pemu_rtl.Sram.I.t) =
+    let module S = Pemu_rtl.Sram in
+    let r = Reg_spec.create ~clock:i.a_clk () in
+    let write = i.a_men &: i.a_wen and read = i.a_men &: i.a_ren in
+    let words =
+      List.init S.depth ~f:(fun a ->
+        reg r ~enable:(write &: (i.a_addr ==:. a)) i.a_din -- sprintf "free_rtl_imem_%d" a)
+    in
+    rtl_words := words;
+    let rd = mux i.a_addr words in
+    let dout_en = (write &: i.a_ren) |: (~:write &: read) in
+    { S.O.a_dout = reg r ~enable:dout_en (mux2 write i.a_din rd) -- "rtl_imem_dout" }
+  in
+  let s =
+    Spec_circuit.create ~imem:spec_imem { Spec_circuit.I.clock; rst_sync_n; ui_in; uio_in }
+  in
+  let r = rtl_instance ~sram:rtl_sram ~clock ~rst_sync_n ~ui_in ~uio_in () in
+  let mem_equal =
+    List.map2_exn !spec_words !rtl_words ~f:( ==: ) |> reduce ~f:( &: )
+  in
+  let rs = Reg_spec.create ~clock () in
+  let started = reg rs vdd in
+  let eq0 = reg_fb rs ~width:1 ~f:(fun q -> mux2 started q mem_equal) in
+  let equal_at_0 = mux2 started eq0 mem_equal in
+  let differ =
+    (s.uo_out <>: r.uo_out) |: (s.uio_out <>: r.uio_out) |: (s.uio_oe <>: r.uio_oe)
+  in
+  bad_circuit
+    ?debug
+    ~dbg:[ "spec_uo", s.uo_out; "rtl_uo", r.uo_out; "equal_at_0", equal_at_0 ]
+    ~name:"a1_miter_anyinit"
+    (differ &: equal_at_0)
+;;
+
 (* Registry: every harness by name, for the emitter and the counterexample replayer. *)
 let all ?debug () =
   List.concat_map [ 3; 4 ] ~f:(fun d ->
     [ a2_uart ?debug ~d ()
     ; a2_uart_negative ?debug ~d ()
+    ; a2_rtl_uart ?debug ~d ()
     ; a1_rom_miter ?debug ~d ()
     ; b1_qed ?debug ~d ()
+    ; b1_qed_spec ?debug ~d ()
     ; b1_qed_negative ?debug ~d ()
     ])
-  @ [ a1_miter ?debug (); a1_miter_negative ?debug () ]
+  @ [ a1_miter ?debug (); a1_miter_negative ?debug (); a1_miter_anyinit ?debug () ]
 ;;
 
+(* Oracle harnesses run against every mutant of [target] (kill-matrix columns A1, A2, B1). *)
+let oracles ?debug target =
+  match (target : Mutate.target) with
+  | Rtl -> [ "A1", a1_miter ?debug (); "A2", a2_rtl_uart ?debug ~d:3 (); "B1", b1_qed ?debug ~d:3 () ]
+  | Spec ->
+    [ "A1", a1_miter ?debug (); "A2", a2_uart ?debug ~d:3 (); "B1", b1_qed_spec ?debug ~d:3 () ]
+;;
+
+(* Names "m_<target>_<index>__<harness>" build the harness with that mutation active. *)
 let find ?debug name =
-  List.find_exn (all ?debug ()) ~f:(fun c -> String.equal (Circuit.name c) name)
+  let base_find n =
+    List.find_exn (all ?debug ()) ~f:(fun c -> String.equal (Circuit.name c) n)
+  in
+  match String.chop_prefix name ~prefix:"m_" with
+  | None -> base_find name
+  | Some rest ->
+    (match String.substr_index rest ~pattern:"__" with
+     | None -> failwithf "bad mutant harness name %s" name ()
+     | Some k ->
+       let tgt_idx = String.prefix rest k in
+       (match String.lsplit2 tgt_idx ~on:'_' with
+        | Some (t, i) ->
+          Mutate.with_active
+            (Some (Mutate.target_of_string t, if String.equal i "id" then -1 else Int.of_string i))
+            ~f:(fun () ->
+              List.find_exn (all ?debug ()) ~f:(fun c -> String.equal (Circuit.name c) name))
+        | None -> failwithf "bad mutant harness name %s" name ()))
 ;;

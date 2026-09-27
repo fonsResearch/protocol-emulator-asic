@@ -17,7 +17,7 @@ let () =
   List.iter map ~f:(fun l ->
     match String.split l ~on:' ' with
     | [ "input"; idx; bit; n ] -> Hashtbl.set inputs ~key:(Int.of_string idx) ~data:(n, Int.of_string bit)
-    | [ "init"; idx; bit; n ] when String.is_prefix n ~prefix:"rtl_imem_dout" ->
+    | [ "init"; idx; bit; n ] ->
       Hashtbl.add_multi inits ~key:(Int.of_string idx) ~data:(n, Int.of_string bit)
     | _ -> ());
   let frames =
@@ -29,17 +29,29 @@ let () =
    | _ -> failwith "expected all-zero initial latch line");
   let circuit = Harness.find ~debug:true name in
   let sim = Cyclesim.create ~config:Cyclesim.Config.trace_all circuit in
-  (* initial values of free SRAM output registers, from frame-0 init inputs *)
+  (* initial values of free SRAM output registers, from frame-0 init inputs. The map lists
+     every alias of each init bit; write the alias that is a register in the simulation. *)
   let f0 = List.hd_exn frames in
   let init_vals = Hashtbl.create (module String) in
+  let reg_cache = Hashtbl.create (module String) in
+  let is_reg n =
+    Hashtbl.find_or_add reg_cache n ~default:(fun () ->
+      Option.is_some (Cyclesim.lookup_reg_by_name sim n))
+  in
   Hashtbl.iteri inits ~f:(fun ~key:idx ~data ->
-    List.iter data ~f:(fun (n, bit) ->
-      if Char.equal f0.[idx] '1'
-      then Hashtbl.update init_vals n ~f:(fun v -> Option.value v ~default:0 lor (1 lsl bit))));
+    match List.find data ~f:(fun (n, _) -> is_reg n) with
+    | None ->
+      failwithf
+        "init input %d: no alias is a simulation register (%s)"
+        idx
+        (List.map data ~f:fst |> String.concat ~sep:",")
+        ()
+    | Some (n, bit) ->
+      let v = Hashtbl.find init_vals n |> Option.value ~default:0 in
+      let v = if Char.equal f0.[idx] '1' then v lor (1 lsl bit) else v in
+      Hashtbl.set init_vals ~key:n ~data:v);
   Hashtbl.iteri init_vals ~f:(fun ~key ~data ->
-    match Cyclesim.lookup_reg_by_name sim key with
-    | Some r -> Cyclesim.Reg.of_int r data
-    | None -> failwithf "register %s not found in sim" key ());
+    Cyclesim.Reg.of_int (Option.value_exn (Cyclesim.lookup_reg_by_name sim key)) data);
   let dbg_ports =
     List.filter_map (Circuit.outputs circuit) ~f:(fun s ->
       let n = List.hd_exn (Signal.names s) in

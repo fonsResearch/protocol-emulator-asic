@@ -55,12 +55,12 @@ let behavioural ?(name_prefix = "rtl_imem") (i : _ I.t) =
    write-through kept, a load write to address 0 would make the ROM RTL diverge from the ROM
    spec (found by PDR on a1_rom, frame 6). Used to fix a program in the RTL for
    program-level proofs (timed QED). Not for synthesis. *)
-let behavioural_rom ~(contents : int array) (i : _ I.t) =
+let behavioural_rom ?(name = "rtl_imem_dout") ~(contents : int array) (i : _ I.t) =
   let spec = Reg_spec.create ~clock:i.a_clk () in
   let read = i.a_men &: i.a_ren in
   let mem = List.init depth ~f:(fun a -> of_int ~width:data_width contents.(a)) in
   let rd = mux i.a_addr mem in
-  let dout = reg spec ~enable:read rd -- "rtl_imem_dout" in
+  let dout = reg spec ~enable:read rd -- name in
   ignore (i.a_wen, i.a_din);
   { O.a_dout = dout }
 ;;
