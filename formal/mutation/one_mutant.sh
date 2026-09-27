@@ -11,7 +11,7 @@ B=${BUILD_DIR:-$TMPDIR/_build_pemu}; export BUILD_DIR=$B
 D=${MUT_DIR:-formal/work/mut}/${t}_$i; mkdir -p $D/v
 M=$B/default/formal/bin/mutants.exe
 # resumable: a finished mutant (result.txt written atomically at the end) is skipped
-[ -f $D/result.txt ] && exit 0
+[ -f $D/result.txt ] && [ -z "${FORCE:-}" ] && exit 0
 {
   echo "SIM $(formal/tlimit.sh $TMO $M sim $t $i $NPROG 2>&1 | tail -1)"
   $M emit $t $i $D/v | while read o n; do

@@ -61,9 +61,14 @@ let sim target index nprog =
     Mutate.with_active (Some (target, index)) ~f:(fun () -> Harness.a1_miter ())
   in
   let s = Cyclesim.create circuit in
-  let rst = Cyclesim.in_port s "rst_sync_n"
-  and ui = Cyclesim.in_port s "ui_in"
-  and uio = Cyclesim.in_port s "uio_in"
+  (* a mutant may make an input unreachable; Hardcaml then drops the port *)
+  let port n =
+    List.Assoc.find (Cyclesim.in_ports s) ~equal:String.equal n
+    |> Option.value ~default:(ref (Bits.zero 8))
+  in
+  let rst = port "rst_sync_n"
+  and ui = port "ui_in"
+  and uio = port "uio_in"
   and bad = Cyclesim.out_port ~clock_edge:Before s "bad" in
   let rs = Random.State.make [| 11; 20260927 |] in
   let cycles = ref 0 in
@@ -71,9 +76,9 @@ let sim target index nprog =
   (try
      for p = 1 to nprog do
        List.iter (stimulus rs) ~f:(fun (r, u, x) ->
-         rst := Bits.of_int ~width:1 r;
-         ui := Bits.of_int ~width:8 u;
-         uio := Bits.of_int ~width:8 x;
+         rst := Bits.of_int ~width:(Bits.width !rst) r;
+         ui := Bits.of_int ~width:(Bits.width !ui) u;
+         uio := Bits.of_int ~width:(Bits.width !uio) x;
          Cyclesim.cycle s;
          incr cycles;
          if Bits.to_int !bad = 1

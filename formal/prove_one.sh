@@ -8,19 +8,25 @@ if [ -n "${MUT_DIR:-}" ] && [ -f "$MUT_DIR/STOP" ]; then echo "| $1 | $5 | - | S
 h=$1; V=$2; A=$3; TMO=$4; expected=$5
 B=${BUILD_DIR:-$TMPDIR/_build_pemu}
 mkdir -p $A
+# proc -norom: case statements stay mux trees. Otherwise proc_rom infers ROM memories from
+# Hardcaml's combinational case blocks, and memory_dff can then fold the (kept) SRAM output
+# register into the ROM read port, leaving the read wire undriven (seen on mutant rtl_122).
+# Hardcaml emits no real memories here (all storage is registers), so no memory passes.
 # Initial state = reset state: every FF gets init 0 immediately after proc, BEFORE any opt
 # pass (otherwise opt_dff may exploit the undefined init, e.g. replace a synchroniser flop
 # whose D is constant by that constant). SRAM output registers (rtl_imem_dout*) are then
 # stripped of init and stay free, as are registers named free_* (harness-declared free
-# initial state, e.g. a1_miter_anyinit). All opt passes use -keepdc so free init values are not
+# initial state, e.g. a1_miter_anyinit). Their flip-flops are marked keep: otherwise Yosys may
+# delete a never-enabled free register (seen on mutant rtl_6, whose SRAM is never enabled),
+# which silently turns its free power-up value into a constant. All opt passes use -keepdc so free init values are not
 # exploited either. The final 'setundef -zero' only touches x constants introduced by Yosys
 # (the Hardcaml Verilog contains no x literals; checked by grep below).
 if grep -q -E "'b?x|[0-9]'hx" $V/$h.v; then echo "| $h | $expected | - | X-LITERAL | | | | |"; exit 0; fi
 yosys -q -l $A/$h.yosys.log -p "
-  read_verilog $V/$h.v; hierarchy -check -top $h; proc;
+  read_verilog $V/$h.v; hierarchy -check -top $h; proc -norom;
   setundef -zero -init;
-  setattr -unset init w:rtl_imem_dout* w:free_*;
-  flatten; opt -keepdc -fast; memory -nomap; memory_map; opt -keepdc -fast;
+  setattr -unset init w:rtl_imem_dout* w:free_*; setattr -set keep 1 w:rtl_imem_dout* %ci1:+[Q] w:free_* %ci1:+[Q];
+  flatten; opt -keepdc -fast;
   techmap; opt -keepdc -fast; dffunmap; aigmap; setundef -zero;
   write_aiger -zinit -miter -map $A/$h.map $A/$h.aig" >/dev/null 2>&1 || { echo "| $h | $expected | yosys | ERROR | | | | |"; exit 0; }
 # Undriven-bit guard: the AIGER backend may report top-level input-port bits as "undriven"
@@ -44,8 +50,10 @@ t0=$(date +%s)
 engine="dprove"
 # -T bounds only dprove's final PDR stage; the whole call is bounded by formal/tlimit.sh.
 out=$(formal/tlimit.sh $TMO yosys-abc -c "read_aiger $A/$h.aig; dprove -v -T $TMO" 2>&1)
-if echo "$out" | grep -q "Networks are equivalent"; then res=PASS
-elif echo "$out" | grep -q -i -E "not equivalent|asserted in frame|failed in frame"; then res=FAIL
+# Latch-free models (e.g. a miter that Hardcaml constant-folded) go to CEC, which prints
+# UNSATISFIABLE (proved) or SATISFIABLE (counterexample).
+if echo "$out" | grep -q -E "Networks are equivalent|^UNSATISFIABLE"; then res=PASS
+elif echo "$out" | grep -q -i -E "not equivalent|asserted in frame|failed in frame|^SATISFIABLE"; then res=FAIL
 else res=UNDECIDED; fi
 t1=$(date +%s)
 [ "$res" = UNDECIDED ] && [ $((t1 - t0)) -ge $TMO ] && res=TIMEOUT
@@ -55,7 +63,11 @@ echo "$out" > $A/$h.abc.log
 # be first failures) and require bad to rise first at exactly its last frame in cyclesim.
 replay=""
 if [ "$res" = FAIL ]; then
-  if true; then
+  if echo "$stats" | grep -q -E "^i/o = 0/ ?1 lat = 0 "; then
+    # no latches and no inputs (Hardcaml constant-folded the miter): the only trace is one
+    # frame with no inputs
+    printf "\n\n# DONE\n" > $A/$h.cex; bdepth=0
+  else
     bout=$(formal/tlimit.sh $TMO yosys-abc -c "read_aiger $A/$h.aig; bmc3 -F $(( ${depth:-300} + 1 )) -T $TMO; write_cex -a $A/$h.cex" 2>&1)
     echo "$bout" > $A/$h.bmc.log
     bdepth=$(echo "$bout" | grep -o -E "asserted in frame [0-9]+" | grep -o -E "[0-9]+$" | head -1)

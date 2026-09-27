@@ -67,7 +67,7 @@ with out_csv.open("w", newline="") as f:
         w.writerow(r)
 
 md = ["# Mutation kill matrix", "",
-      f"Source: formal/work/mut (campaign), {len(rows)} mutants, {missing} missing results.",
+      f"Source: {mut.relative_to(root)} (campaign), {len(rows)} mutants, {missing} missing results.",
       "Codes: K killed (formal cex replayed in cyclesim), S survived (formal: proved), U undecided (timeout), E error.",
       "A1 = S: mutant proven pin-equivalent to the partner model from reset; excluded from kill-rate denominators.", ""]
 for target in ["rtl", "spec"]:
