@@ -1,0 +1,5 @@
+(library
+ (name pemu_formal)
+ (libraries core hardcaml pemu_spec pemu_rtl pemu_monitors)
+ (preprocess
+  (pps ppx_jane ppx_hardcaml)))

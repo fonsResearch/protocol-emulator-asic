@@ -1,0 +1,3 @@
+(executables
+ (names emit_formal replay_cex)
+ (libraries core hardcaml pemu_formal))

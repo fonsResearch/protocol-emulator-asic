@@ -153,7 +153,7 @@ module pemu_core_macro (
     wire _148;
     wire _149;
     wire [15:0] _172;
-    wire [15:0] instr;
+    wire [15:0] _13;
     wire [3:0] _40;
     wire _174;
     wire _178;
@@ -327,7 +327,7 @@ module pemu_core_macro (
             pc <= _9;
     end
     assign _136 = pc + _135;
-    assign _60 = instr[11:0];
+    assign _60 = _13[11:0];
     assign _131 = _60[5:0];
     always @* begin
         case (_40)
@@ -413,8 +413,8 @@ module pemu_core_macro (
           .A_DIN(_170),
           .A_DLY(vdd),
           .A_DOUT(_172[15:0]) );
-    assign instr = _172;
-    assign _40 = instr[15:12];
+    assign _13 = _172;
+    assign _40 = _13[15:12];
     assign _174 = _40 == _173;
     assign _178 = _174 & _177;
     assign _180 = waiting ? _179 : _178;

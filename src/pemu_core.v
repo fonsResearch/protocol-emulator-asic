@@ -413,8 +413,7 @@ module pemu_core (
     wire _52;
     wire _56;
     wire [15:0] _458;
-    reg [15:0] instr;
-    wire [15:0] rtl_imem_dout;
+    reg [15:0] rtl_imem_dout;
     wire [3:0] _471;
     wire _564;
     wire _568;
@@ -1043,7 +1042,7 @@ module pemu_core (
             pc <= _9;
     end
     assign _543 = pc + _81;
-    assign _485 = instr[11:0];
+    assign _485 = rtl_imem_dout[11:0];
     assign _538 = _485[5:0];
     always @* begin
         case (_471)
@@ -1250,9 +1249,9 @@ module pemu_core (
     assign _458 = _56 ? _72 : _457;
     always @(posedge _17) begin
         if (_469)
-            instr <= _458;
+            rtl_imem_dout <= _458;
     end
-    assign _471 = instr[15:12];
+    assign _471 = rtl_imem_dout[15:12];
     assign _564 = _471 == _563;
     assign _568 = _564 & _567;
     assign _570 = waiting ? _569 : _568;
@@ -1296,7 +1295,6 @@ module pemu_core (
             out <= _20;
     end
     assign load_hi = imem_write;
-    assign rtl_imem_dout = instr;
     assign s2_run = running;
     assign uo_out = out;
     assign uio_out = _22;

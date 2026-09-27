@@ -27,7 +27,9 @@ module O = struct
   [@@deriving hardcaml]
 end
 
-let create (i : _ I.t) =
+(* [rom]: formal/test-only variant in which imem is a constant program (the load protocol
+   still runs, but its writes are ignored). The default (no [rom]) is the specification. *)
+let create ?rom (i : _ I.t) =
   let open Always in
   (* rst_sync_n is used as a synchronous clear (all registers except imem). *)
   let spec = Reg_spec.create ~clock:i.clock ~clear:(~:(i.rst_sync_n)) () in
@@ -57,9 +59,13 @@ let create (i : _ I.t) =
   let imem_we = running ==:. 0 &: write_event &: load_hi.value in
   let imem_wdata = s2_uio @: load_lo.value in
   let imem =
-    List.init Isa.imem_depth ~f:(fun a ->
-      let we = imem_we &: (load_addr.value ==:. a) in
-      reg spec_noclear ~enable:we imem_wdata -- sprintf "spec_imem_%d" a)
+    match rom with
+    | Some (words : int array) ->
+      List.init Isa.imem_depth ~f:(fun a -> of_int ~width:16 words.(a))
+    | None ->
+      List.init Isa.imem_depth ~f:(fun a ->
+        let we = imem_we &: (load_addr.value ==:. a) in
+        reg spec_noclear ~enable:we imem_wdata -- sprintf "spec_imem_%d" a)
   in
   let instr = mux pc.value imem in
   let op = select instr 15 12

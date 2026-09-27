@@ -89,7 +89,7 @@ let create ~(sram : sram) (i : _ I.t) =
       ; a_dly = vdd
       }
   in
-  let instr = sram_o.a_dout -- "instr" in
+  let instr = sram_o.a_dout in
   (* decode *)
   let op = select instr 15 12
   and arg = select instr 11 0 in
