@@ -16,7 +16,9 @@ mkdir -p $A
 # pass (otherwise opt_dff may exploit the undefined init, e.g. replace a synchroniser flop
 # whose D is constant by that constant). SRAM output registers (rtl_imem_dout*) are then
 # stripped of init and stay free, as are registers named free_* (harness-declared free
-# initial state, e.g. a1_miter_anyinit). Their flip-flops are marked keep: otherwise Yosys may
+# initial state, e.g. a1_miter_anyinit). Selection is structural (the flip-flops driving any wire
+# of that name, then every wire on their Q ports), because Yosys may carry the init attribute
+# on a differently named alias of the net (seen on the IHP model's dr_r). They are marked keep: otherwise Yosys may
 # delete a never-enabled free register (seen on mutant rtl_6, whose SRAM is never enabled),
 # which silently turns its free power-up value into a constant. All opt passes use -keepdc so free init values are not
 # exploited either. The final 'setundef -zero' only touches x constants introduced by Yosys
@@ -25,7 +27,8 @@ if grep -q -E "'b?x|[0-9]'hx" $V/$h.v; then echo "| $h | $expected | - | X-LITER
 yosys -q -l $A/$h.yosys.log -p "
   read_verilog $V/$h.v; hierarchy -check -top $h; proc -norom;
   setundef -zero -init;
-  setattr -unset init w:rtl_imem_dout* w:free_*; setattr -set keep 1 w:rtl_imem_dout* %ci1:+[Q] w:free_* %ci1:+[Q];
+  select -set ff w:rtl_imem_dout* w:free_* %ci1:+[Q]; select -set qw @ff %co1:+[Q];
+  setattr -unset init @qw; setattr -set keep 1 @ff;
   flatten; opt -keepdc -fast;
   techmap; opt -keepdc -fast; dffunmap; aigmap; setundef -zero;
   write_aiger -zinit -miter -map $A/$h.map $A/$h.aig" >/dev/null 2>&1 || { echo "| $h | $expected | yosys | ERROR | | | | |"; exit 0; }

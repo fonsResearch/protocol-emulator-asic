@@ -77,15 +77,15 @@ for target in ["rtl", "spec"]:
     equiv = [r for r in tr if r.get("A1") == "S"]
     live = [r for r in tr if r.get("A1") != "S"]
     md += [f"## target = {target}", "",
-           f"mutants {len(tr)}; proven pin-equivalent (A1 = S) {len(equiv)}; non-equivalent or unresolved {len(live)}", ""]
-    md += ["| oracle | K | S | U | E | kill rate on non-equivalent |", "|---|---|---|---|---|---|"]
+           f"mutants {len(tr)}; proven pin-equivalent (A1 = S) {len(equiv)}; not proven equivalent {len(live)}", ""]
+    md += ["| oracle | K | S | U | E | kill rate (of not proven equivalent) |", "|---|---|---|---|---|---|"]
     for o in ORACLES:
         c = collections.Counter(r.get(o, "E") for r in tr)
         kl = sum(1 for r in live if r.get(o) == "K")
         md.append(f"| {o} | {c['K']} | {c['S']} | {c['U']} | {c['E']} | {kl}/{len(live)} |")
     # kill-set combinations over non-equivalent mutants
     combo = collections.Counter("+".join(o for o in ORACLES if r.get(o) == "K") or "none" for r in live)
-    md += ["", "Kill sets (non-equivalent mutants): oracles that kill each mutant", "",
+    md += ["", "Kill sets (mutants not proven equivalent): oracles that kill each mutant", "",
            "| kill set | mutants |", "|---|---|"]
     for k, n in combo.most_common():
         md.append(f"| {k} | {n} |")
@@ -102,7 +102,7 @@ for target in ["rtl", "spec"]:
             md.append(f"| {r['index']} | {r['op']} | {r['desc']} | {r.get('SIM')} | {r.get('A1')} | {r.get('A2')} | {r.get('B1')} |")
     md.append("")
     # per operator
-    md += ["Per operator (non-equivalent / proven-equivalent):", "", "| op | non-equiv | equiv |", "|---|---|---|"]
+    md += ["Per operator (not proven equivalent / proven equivalent):", "", "| op | not proven equiv | proven equiv |", "|---|---|---|"]
     ops = sorted(set(r["op"] for r in tr))
     for op in ops:
         md.append(f"| {op} | {sum(1 for r in live if r['op'] == op)} | {sum(1 for r in equiv if r['op'] == op)} |")

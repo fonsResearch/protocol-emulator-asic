@@ -33,3 +33,4 @@ oss-cad-suite/
 flow/smoke/work/
 test/make_rtl.log
 test/sim_build/
+flow/equiv/work/
