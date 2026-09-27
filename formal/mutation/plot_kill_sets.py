@@ -34,7 +34,7 @@ for col, (target, title) in enumerate([("rtl", "RTL mutants"), ("spec", "Spec mu
         c = GREY if not k else (COL[fam.pop()] if len(fam) == 1 else "#6b6b6b")
         ax.bar(x, n, color=c, width=0.7)
         ax.text(x, n + 1, str(n), ha="center", va="bottom", fontsize=6)
-    ax.set_title(f"{title}: {len(live)} of {n_all} not proven equivalent", loc="left", fontsize=8)
+    ax.set_title(f"{title}\n{len(live)} of {n_all} not proven equivalent", loc="left", fontsize=8)
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_ylim(0, max(n for _, n in order) * 1.18)
     if col == 0:
@@ -69,6 +69,6 @@ h = [matplotlib.patches.Patch(color=COL["spec-based"], label="killed only by spe
      matplotlib.patches.Patch(color="#6b6b6b", label="killed by both families"),
      matplotlib.patches.Patch(color=GREY, label="no oracle kills (unresolved)")]
 fig.legend(handles=h, loc="upper right", bbox_to_anchor=(0.995, 0.995), ncol=2, fontsize=6, frameon=False)
-fig.subplots_adjust(left=0.30, right=0.99, top=0.84, bottom=0.03)
+fig.subplots_adjust(left=0.30, right=0.99, top=0.80, bottom=0.03)
 fig.savefig(out, dpi=300)
 print("saved", out)
