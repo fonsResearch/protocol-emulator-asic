@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: MIT
  *
  * Tiny Tapeout top-level wrapper. Hand-written on purpose so the TT pin
- * contract does not depend on Hardcaml's port naming. The Hardcaml-generated
- * core will be instantiated here once it exists. Until then every output is
- * driven to a constant 0 and all pins are inputs.
+ * contract does not depend on Hardcaml's port naming. It instantiates the
+ * Hardcaml-generated core (src/pemu_core.v, flop-memory variant; emitted by
+ * rtl/bin/generate.exe) and adds only the reset synchroniser. ena is ignored.
  *
  * Reset: rst_n is treated as an asynchronous input. rst_sync_n is asserted
  * asynchronously and released synchronously through two flops (reset
@@ -33,12 +33,17 @@ module tt_um_dean_protocol_emulator (
   end
   wire rst_sync_n = rst_sync[1];
 
-  // Core instantiation goes here (Hardcaml-generated). Placeholder outputs:
-  assign uo_out  = 8'h00;
-  assign uio_out = 8'h00;
-  assign uio_oe  = 8'h00;
+  pemu_core core (
+      .clock     (clk),
+      .rst_sync_n(rst_sync_n),
+      .ui_in     (ui_in),
+      .uio_in    (uio_in),
+      .uo_out    (uo_out),
+      .uio_out   (uio_out),
+      .uio_oe    (uio_oe)
+  );
 
   // List all unused inputs to prevent warnings
-  wire _unused = &{ena, ui_in, uio_in, rst_sync_n, 1'b0};
+  wire _unused = &{ena, 1'b0};
 
 endmodule

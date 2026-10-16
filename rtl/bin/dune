@@ -7,3 +7,8 @@
  (name dump_vectors)
  (modules dump_vectors)
  (libraries core pemu_spec))
+
+(executable
+ (name dump_tt_vectors)
+ (modules dump_tt_vectors)
+ (libraries core pemu_spec))

@@ -34,3 +34,6 @@ flow/smoke/work/
 test/make_rtl.log
 test/sim_build/
 flow/equiv/work/
+
+# Local mapping outputs (regenerate with flow/map/map_cmos5l.sh)
+flow/map/out/

@@ -17,6 +17,7 @@ project:
   # List your project's source files here. Source files must be in ./src.
   source_files:
     - "tt_um_dean_protocol_emulator.v"
+    - "pemu_core.v"
 
 # The pinout of your project. Leave unused pins blank. Assigned once the ISA is fixed.
 pinout:
@@ -27,28 +28,28 @@ pinout:
   ui[3]: ""
   ui[4]: ""
   ui[5]: ""
-  ui[6]: ""
-  ui[7]: ""
+  ui[6]: "WSTB (program-load write strobe)"
+  ui[7]: "RUN (1 = execute, 0 = halt / load)"
 
   # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
-  uo[5]: ""
-  uo[6]: ""
-  uo[7]: ""
+  uo[0]: "out[0]"
+  uo[1]: "out[1]"
+  uo[2]: "out[2]"
+  uo[3]: "out[3]"
+  uo[4]: "out[4]"
+  uo[5]: "out[5]"
+  uo[6]: "out[6]"
+  uo[7]: "out[7]"
 
   # Bidirectional pins
-  uio[0]: ""
-  uio[1]: ""
-  uio[2]: ""
-  uio[3]: ""
-  uio[4]: ""
-  uio[5]: ""
-  uio[6]: ""
-  uio[7]: ""
+  uio[0]: "load data / IN data bit 0 (input)"
+  uio[1]: "load data / IN data bit 1 (input)"
+  uio[2]: "load data / IN data bit 2 (input)"
+  uio[3]: "load data / IN data bit 3 (input)"
+  uio[4]: "load data / IN data bit 4 (input)"
+  uio[5]: "load data / IN data bit 5 (input)"
+  uio[6]: "load data / IN data bit 6 (input)"
+  uio[7]: "load data / IN data bit 7 (input)"
 
 # Do not change!
 yaml_version: 6
