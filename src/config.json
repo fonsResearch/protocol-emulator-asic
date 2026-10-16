@@ -31,6 +31,40 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
+  "//": "--- pemu core-macro: IHP SRAM macro integration (see flow/map/macro_integration_notes.md) ---",
+  "meta": {
+    "flow": "Classic",
+    "substituting_steps": { "+OpenROAD.GeneratePDN": "Pemu.MacroColumnStripes" }
+  },
+  "//": "Custom PDN_CFG = LibreLane's default minus the macro grid (PDN-0233 on the single-layer tile). Power reaches the macro through Pemu.MacroColumnStripes (librelane_plugin_pemu_pdn.py).",
+  "PDN_CFG": "dir::../flow/pdn/pdn_cfg.tcl",
+  "//": "check_power_grid runs inside GeneratePDN, before the stripe step connects the macro, so its count is not a verdict. Verdicts: Pemu.MacroColumnStripes property check (fails the step), LVS, IR drop report.",
+  "ERROR_ON_PDN_VIOLATIONS": 0,
+  "PDN_MACRO_CONNECTIONS": [
+    "core\\.u_imem VPWR VGND VDD! VSS!",
+    "core\\.u_imem VPWR VGND VDDARRAY! VSS!"
+  ],
+  "FP_MACRO_HORIZONTAL_HALO": 2.0,
+  "FP_MACRO_VERTICAL_HALO": 0.48,
+  "//": "x = 3.36 puts the left-array VDD/VSS columns under the VPWR/VGND pairs at 9.03/14.65 and 53.99/59.61 um; y = 321.30 (row 85) leaves carved stripe segments above and below so VDD! and VDDARRAY! are fed without crossing the Metal4 OBS bar between them. Orientation N: signal pins (Metal2) face down.",
+  "MACROS": {
+    "RM_IHPSG13_1P_64x16_c2": {
+      "gds": ["pdk_dir::libs.ref/sg13cmos5l_sram/gds/RM_IHPSG13_1P_64x16_c2.gds"],
+      "lef": ["pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_64x16_c2.lef"],
+      "spice": ["pdk_dir::libs.ref/sg13cmos5l_sram/cdl/RM_IHPSG13_1P_64x16_c2.cdl"],
+      "nl": [],
+      "spef": {},
+      "lib": {
+        "nom_typ_1p20V_25C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_64x16_c2_typ_1p20V_25C.lib"],
+        "nom_fast_1p32V_m40C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_64x16_c2_fast_1p32V_m55C.lib"],
+        "nom_slow_1p08V_125C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_64x16_c2_slow_1p08V_125C.lib"]
+      },
+      "instances": {
+        "core.u_imem": { "location": [3.36, 321.30], "orientation": "N" }
+      }
+    }
+  },
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
@@ -58,7 +92,10 @@
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
 
-  "FP_PDN_VPITCH": 50.0,
+  "//": "pemu core-macro: VPITCH/VSPACING/VOFFSET changed from the template so tile stripes land on the SRAM's Metal4 power columns (4 x 11.24 um pitch, 5.62 um VPWR-VGND). Values from the organiser-linked walkthrough (kdp1965, 2026-09-29). Template value was VPITCH 50.0; VSPACING 2.0 and VOFFSET 10.0 came from the PDK.",
+  "FP_PDN_VPITCH": 44.96,
+  "FP_PDN_VSPACING": 3.52,
+  "FP_PDN_VOFFSET": 6.15,
   "FP_PDN_VWIDTH": 2.1,
 
   "//": "Clock",
