@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local SG13CMOS5L mapping estimate (approximates LibreLane's Yosys synthesis; NOT the TT flow).
-# usage: flow/map/map_cmos5l.sh <flop|macro|top> [abc_delay_ps]   (top = wrapper + flop core, for local GL replay)
+# usage: flow/map/map_cmos5l.sh <flop|macro|top|macrotop> [abc_delay_ps]   (top = wrapper + flop core, for local GL replay)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 V="$1"; DPS="${2:-20000}"
@@ -10,9 +10,11 @@ SLIB="$PDK/libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_64x16_c2_typ_1p20V_25C.lib
 LT="$PDK/libs.tech/librelane/sg13cmos5l_stdcell"
 DU=""; for c in $(cat "$LT/synth_exclude.cells"); do DU="$DU -dont_use $c"; done
 OUT="$ROOT/flow/map/out/$V"; mkdir -p "$OUT"
+WRAP="${WRAP:-$ROOT/src/tt_um_dean_protocol_emulator.v}"  # macrotop: pass the core-macro branch wrapper via WRAP=
 case "$V" in
   flop)  SRC="read_verilog $ROOT/src/pemu_core.v"; TOP=pemu_core ;;
   macro) SRC="read_liberty -lib $SLIB; read_verilog $ROOT/src/pemu_core_macro.v"; TOP=pemu_core_macro ;;
+  macrotop) SRC="read_liberty -lib $SLIB; read_verilog $WRAP $ROOT/src/pemu_core_macro.v"; TOP=tt_um_dean_protocol_emulator ;;
   top)   SRC="read_verilog $ROOT/src/tt_um_dean_protocol_emulator.v $ROOT/src/pemu_core.v"; TOP=tt_um_dean_protocol_emulator ;;
 esac
 cat > "$OUT/map.ys" <<YS
@@ -32,8 +34,8 @@ splitnets
 opt_clean -purge
 insbuf -buf sg13cmos5l_buf_1 A X
 check
-tee -o $OUT/stat.txt stat -liberty $LIB $( [ "$V" = macro ] && echo "-liberty $SLIB" )
-stat -json -liberty $LIB $( [ "$V" = macro ] && echo "-liberty $SLIB" )
+tee -o $OUT/stat.txt stat -liberty $LIB $( [ "$V" = macro -o "$V" = macrotop ] && echo "-liberty $SLIB" )
+stat -json -liberty $LIB $( [ "$V" = macro -o "$V" = macrotop ] && echo "-liberty $SLIB" )
 write_verilog -noattr $OUT/netlist.v
 YS
 yosys -q -l "$OUT/yosys.log" -s "$OUT/map.ys" > "$OUT/stat.json.raw"
