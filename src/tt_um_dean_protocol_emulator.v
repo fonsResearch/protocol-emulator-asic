@@ -4,7 +4,8 @@
  *
  * Tiny Tapeout top-level wrapper. Hand-written on purpose so the TT pin
  * contract does not depend on Hardcaml's port naming. It instantiates the
- * Hardcaml-generated core (src/pemu_core.v, flop-memory variant; emitted by
+ * Hardcaml-generated core (src/pemu_core_macro.v, IHP-macro variant: instruction
+ * memory is one RM_IHPSG13_1P_64x16_c2 instance, core.u_imem; emitted by
  * rtl/bin/generate.exe) and adds only the reset synchroniser. ena is ignored.
  *
  * Reset: rst_n is treated as an asynchronous input. rst_sync_n is asserted
@@ -33,7 +34,7 @@ module tt_um_dean_protocol_emulator (
   end
   wire rst_sync_n = rst_sync[1];
 
-  pemu_core core (
+  pemu_core_macro core (
       .clock     (clk),
       .rst_sync_n(rst_sync_n),
       .ui_in     (ui_in),

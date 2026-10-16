@@ -17,7 +17,8 @@ project:
   # List your project's source files here. Source files must be in ./src.
   source_files:
     - "tt_um_dean_protocol_emulator.v"
-    - "pemu_core.v"
+    - "pemu_core_macro.v"
+    - "sram_64x16_bb.v"
 
 # The pinout of your project. Leave unused pins blank. Assigned once the ISA is fixed.
 pinout:
