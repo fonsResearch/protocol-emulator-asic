@@ -27,7 +27,7 @@ let () =
   (match List.hd cex with
    | Some l0 when String.for_all l0 ~f:(Char.equal '0') -> ()
    | _ -> failwith "expected all-zero initial latch line");
-  let circuit = Harness.find ~debug:true name in
+  let circuit = Registry.find ~debug:true name in
   let sim = Cyclesim.create ~config:Cyclesim.Config.trace_all circuit in
   (* initial values of free SRAM output registers, from frame-0 init inputs. The map lists
      every alias of each init bit; write the alias that is a register in the simulation. *)

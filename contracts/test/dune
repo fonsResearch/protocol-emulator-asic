@@ -1,0 +1,6 @@
+(library
+ (name pemu_contracts_test)
+ (libraries core hardcaml hardcaml_waveterm pemu_contracts pemu_spec)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_expect ppx_hardcaml)))
