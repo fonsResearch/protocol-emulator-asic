@@ -1,5 +1,5 @@
 (library
  (name pemu_formal)
- (libraries core hardcaml pemu_spec pemu_rtl pemu_monitors pemu_contracts pemu_spec_v1)
+ (libraries core hardcaml pemu_spec pemu_rtl pemu_monitors pemu_contracts pemu_spec_v1 pemu_rtl_v1)
  (preprocess
   (pps ppx_jane ppx_hardcaml)))

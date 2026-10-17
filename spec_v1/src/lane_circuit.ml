@@ -387,7 +387,8 @@ let create ~imem (i : _ I.t) =
   let fault_now = exec &: (fetch_bound |: halt_now) in
   let cause_now = mux2 fetch_bound (of_int ~width:2 1) (of_int ~width:2 3) in
   (* ---- assemble next state ---- *)
-  let step_reset = i.tick &: (~:running |: step_blame |: fault_now) in
+  (* v1.0.2: reset in every non-running cycle, and at the end of a step that faults *)
+  let step_reset = ~:running |: step_blame |: fault_now in
   let hold_or v_exec v_reset v =
     mux2 step_reset v_reset (mux2 exec v_exec v)
   in
@@ -404,7 +405,7 @@ let create ~imem (i : _ I.t) =
   prevp_d <== hold_or i.pins (zero 8) prevp;
   List.iteri ser_regs ~f:(fun k (q, d) ->
     d <== hold_or (List.nth_exn (ser_to_list ser_exec) k) (List.nth_exn (ser_to_list ser_reset) k) q);
-  live_d <== mux2 i.tick (running &: ~:step_blame &: ~:fault_now) live;
+  live_d <== mux2 step_reset gnd (mux2 i.tick vdd live);
   let new_fault = step_blame |: fault_now in
   let new_cause = mux2 step_blame (of_int ~width:2 2) cause_now in
   let clear = i.clear_fault &: ~:new_fault in
@@ -449,7 +450,7 @@ let create ~imem (i : _ I.t) =
   let pp = lm &: ~:(i.od)
   and odm = lm &: i.od in
   { O.uio_out = out_eff &: pp
-  ; uio_oe = (oe_eff &: pp) |: (out_eff &: odm)
+  ; uio_oe = (oe_eff &: pp) |: (~:out_eff &: odm)
   ; xo
   ; faulted
   ; cause

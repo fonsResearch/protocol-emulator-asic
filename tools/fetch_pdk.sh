@@ -22,9 +22,9 @@ D="$ROOT/.toolchain/pdk/ihp-sg13cmos5l"; rm -rf "$ROOT/.toolchain/pdk"; mkdir -p
 cp -RL ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell "$D/libs.ref/"
 cp -RL ihp-sg13cmos5l/libs.ref/sg13cmos5l_io/verilog "$D/libs.ref/sg13cmos5l_io/"
 for f in ihp-sg13cmos5l/libs.tech/librelane/*; do [ -e "$f" ] && cp -RL "$f" "$D/libs.tech/librelane/"; done
-for sub in lef lib gds verilog doc; do
+for sub in lef lib gds verilog doc cdl; do
   mkdir -p "$D/libs.ref/sg13cmos5l_sram/$sub"
-  find -L ihp-sg13g2/libs.ref/sg13g2_sram/$sub -maxdepth 1 \( -name 'RM_IHPSG13_1P_64x16_c2*' -o -name 'RM_IHPSG13_1P_core*' \) -exec cp -L {} "$D/libs.ref/sg13cmos5l_sram/$sub/" \;
+  find -L ihp-sg13g2/libs.ref/sg13g2_sram/$sub -maxdepth 1 \( -name 'RM_IHPSG13_1P_64x16_c2*' -o -name 'RM_IHPSG13_1P_256x16_c2_bm_bist*' -o -name 'RM_IHPSG13_1P_core*' \) -exec cp -L {} "$D/libs.ref/sg13cmos5l_sram/$sub/" \;
 done
 echo "IHP-Open-PDK $REV (subset)" > "$D/SOURCES"
 echo "PDK subset installed in $D"

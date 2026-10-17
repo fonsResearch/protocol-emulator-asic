@@ -236,10 +236,10 @@ let outputs t (i : inputs) ~pop ~push =
       out_eff := (!out_eff land lnot (1 lsl ser_pin)) lor (b2i v lsl ser_pin);
       oe_eff := !oe_eff lor (1 lsl ser_pin));
   let live_mask = if t.live then i.own else 0 in
-  (* push-pull pins: out/oe; open-drain pins: out = 1 pulls low *)
+  (* push-pull pins: out/oe; open-drain pins: out = 0 pulls low, out = 1 releases (v1.0.2) *)
   let pp = live_mask land lnot i.od and odm = live_mask land i.od in
   { uio_out = !out_eff land pp
-  ; uio_oe = (!oe_eff land pp) lor (!out_eff land odm)
+  ; uio_oe = (!oe_eff land pp) lor (lnot !out_eff land odm)
   ; xo = t.xo
   ; faulted = t.faulted
   ; cause = t.cause
@@ -459,13 +459,12 @@ let step t (i : inputs) =
         else None, None
       else None, None
     in
-    if i.tick
-    then (
-      if running && not t.faulted
-      then t.live <- true
-      else (
-        reset_exec t;
-        t.live <- false));
+    (* v1.0.2: every non-running cycle (and a step that faults) resets the execution state *)
+    if running && not t.faulted
+    then (if i.tick then t.live <- true)
+    else (
+      reset_exec t;
+      t.live <- false);
     (* blame latch: pending until consumed by a step *)
     if i.blame_in && release_on_blame && not (i.tick && running) then t.blame_pending <- true;
     (* host side of the FIFOs, using levels at the start of the cycle *)

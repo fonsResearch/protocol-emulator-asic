@@ -3,7 +3,7 @@
 open! Core
 open Hardcaml
 
-let all ?debug () = Harness.all ?debug () @ Ag_harness.all ?debug () @ Ag_v1.all ?debug ()
+let all ?debug () = Harness.all ?debug () @ Ag_harness.all ?debug () @ Ag_v1.all ?debug () @ A1_lane.all ?debug () @ Presc16.all ?debug ()
 
 let find ?debug name =
   if String.is_prefix name ~prefix:"m_"

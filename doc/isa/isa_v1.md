@@ -151,7 +151,7 @@ UART TX/RX, SPI controller/target modes 0-3, I2C controller/target, USB-LS TX. E
 
 No encoding changes. These points resolve ambiguities found while writing the executable lane specification (`spec_v1/`). Where this section and an earlier section differ, this section governs. `spec_v1/src/lane_model.ml` (reference interpreter) and `spec_v1/src/lane_circuit.ml` (spec-as-circuit) implement exactly these semantics. `spec_v1/test` checks them against each other.
 
-1. **Open-drain polarity.** Section 3.2 and section 4 disagreed. Normative: for an owned pin with `od[i]` = 1, `uio_out[i]` = 0 and `uio_oe[i]` = `out[i]`. Writing 1 pulls the pin low; writing 0 releases it. Reset values therefore release open-drain pins. This supersedes "`uio_oe[i]` = NOT `out[i]`" in section 4.
+1. **Open-drain polarity** (v1.0.2, user decision; replaces the v1.0.1 wording). For an owned pin with `od[i]` = 1: `uio_out[i]` = 0, `uio_oe[i]` = NOT `out[i]`. Writing 1 releases the pin and writing 0 pulls it low, as section 4 states; section 3.2's remark about `out` = 0 releasing is withdrawn. While a lane is not live it drives nothing (item 2). From its first step on, a program must set the open-drain pins it owns to 1 unless it means to pull them low. Package assumption contracts and the assembler lint check this.
 2. **Live gating.** A lane drives its owned pins only if it executed in its most recent step (`live`). Otherwise `uio_oe` = 0 on all of its pins, whatever `od` is. A lane that faults in step s drives nothing from the cycle after step s.
 3. **Faults.**
    - A fault raised in a step (`FETCH_BOUND`, `HALT`, `BLAME`) resets the execution state at the end of that step.
@@ -176,3 +176,10 @@ No encoding changes. These points resolve ambiguities found while writing the ex
 8. **Register operands 6, 7** in POP/PUSH/SER select `r0`. The assembler rejects them, and the load gate (decision V4) may reject them in a later revision.
 9. **Reset.** While `rst_sync_n` = 0, nothing executes and no stream event is reported. Outputs reflect the state at the start of the cycle.
 10. **Program length.** `len` is 8 bits, so a program is at most 255 words, and word 255 is never fetched.
+
+## 11. Clarifications v1.0.2 (normative, user decisions 2026-10-17)
+
+1. **Halted cycles** (replaces "halted step" in section 3.2). At the end of every cycle in which the lane is not running (section 3.1), the execution state returns to reset values and `live` <- 0. This happens whether or not the cycle is a tick, so a lane that stops releases its pins from the next cycle. A step that raises a fault does the same (section 10, item 3). Not affected: the FIFOs, the fault flag and cause, and the blame latch.
+2. **Prescaler while halted.** The prescaler counter is held at 0 in every cycle in which the lane is not running. Ticks occur only while running, and the first tick after running starts comes in the cycle when the counter first equals P (P = 0: the first running cycle). Section 1 reads this way.
+3. **Fetch** (RTL, informative). The instruction memory is read with next-pc addressing, so the timing contract (section 7) holds with P = 0. Because of item 1, `pc` = 0 throughout every halted interval, including program loads.
+4. **Open-drain polarity**: section 10, item 1, as amended.

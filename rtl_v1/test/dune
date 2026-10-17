@@ -1,0 +1,6 @@
+(library
+ (name pemu_rtl_v1_test)
+ (libraries core hardcaml hardcaml_waveterm pemu_spec_v1 pemu_rtl_v1)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_expect ppx_hardcaml)))
