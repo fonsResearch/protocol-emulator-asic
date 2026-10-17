@@ -9,11 +9,21 @@
    Variants (negative controls and margin experiments):
    - [~blame_delay k]: the assumption fires k cycles after RUN is seen low (k = 0 normal);
    - [~with_assumption:false]: no assumption watcher (U must fail: the assumption is needed);
-   - [~overstrong:true]: adds a blame on any change of uio_in[0] (N1 must fail). *)
+   - [~overstrong:true]: adds a blame on any change of uio_in[0] (N1 must fail);
+   - [~with_progress:false]: timing guarantee only (no progress watcher). Used for the ISA v1
+     lane, whose progress depends on the host keeping the TX FIFO non-empty (a stream
+     assumption, contract language v1). *)
 open! Core
 open Contract
 
-let uart_tx_v01 ?(blame_delay = 0) ?(with_assumption = true) ?(overstrong = false) ~d () =
+let uart_tx_v01
+    ?(blame_delay = 0)
+    ?(with_assumption = true)
+    ?(overstrong = false)
+    ?(with_progress = true)
+    ~d
+    ()
+  =
   let host_run =
     watcher
       "host_run"
@@ -60,7 +70,8 @@ let uart_tx_v01 ?(blame_delay = 0) ?(with_assumption = true) ?(overstrong = fals
   ; observables = [ "tx", Uo 0; "run", Ui 7; "d0", Uio_in 0 ]
   ; watchers =
       (if with_assumption then [ host_run ] else [])
-      @ [ frame; progress ]
+      @ [ frame ]
+      @ (if with_progress then [ progress ] else [])
       @ if overstrong then [ nosy ] else []
   }
 ;;
