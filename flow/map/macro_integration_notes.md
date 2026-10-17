@@ -97,3 +97,13 @@ Changes for run 3 (user decision 2026-10-17: "drop the 8, extend the 4 full-heig
 - The viewer job fails with deploy-pages HTTP 404 because GitHub Pages is not enabled on the repository; the user chose to leave it.
 
 Change for run 4: `RUN_POST_GRT_DESIGN_REPAIR` true (repair with global-route parasitics), for the A_DOUT[5] max cap.
+
+## CI run 4 on core-macro @ dad0fc3 (2026-10-17)
+
+- Precheck all 9 pass; GL 7/7; KLayout DRC 0; LVS 0; C1-C4 0; E4m/E5m PASS again (negative controls fail at frames 0 and 8).
+- Post-GRT repair (step 42) ran: 4 fanout violations found, 4 buffers inserted (repair buffers 202 -> 206). It did not see A_DOUT[5].
+- A_DOUT[5] max cap: slow corner now clean; typ 0.0654 pF (+2.2%), fast 0.0675 pF (+5.5%) vs 0.064 pF. The routed load is at least 13% above
+  the global-route estimate that post-GRT repair compares against its 10% margin.
+- Setup WNS typ 14.11 / slow 10.50 ns; hold 0.121 ns; IR drop worst 0.197 mV; 1 fanout violation, on a clock buffer.
+
+Change for run 5 (agent choice, continuing the delegated fix): `GRT_DESIGN_REPAIR_MAX_CAP_PCT` 10 -> 30.

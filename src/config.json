@@ -57,6 +57,8 @@
   ],
   "//": "Run 0f4d84e: A_DOUT[5] (7 direct decode loads, left unbuffered by pre-route repair) at 0.065-0.069 pF vs the SRAM's 0.064 pF max cap after routing. Post-global-route repair (agent choice, delegated by the user 2026-10-17) re-runs repair_design with global-route parasitics (margin GRT_DESIGN_REPAIR_MAX_CAP_PCT, default 10). LibreLane default is false.",
   "RUN_POST_GRT_DESIGN_REPAIR": true,
+  "//": "Run dad0fc3: post-GRT repair ran but saw only 4 fanout violations; A_DOUT[5] stayed at 0.0654 (typ) / 0.0675 (fast) pF vs 0.064 after detailed routing, i.e. the routed load is at least 13% above the global-route estimate. Margin 10 -> 30 makes post-GRT repair buffer nets estimated above 0.0448 pF.",
+  "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 30,
   "FP_MACRO_HORIZONTAL_HALO": 2.0,
   "FP_MACRO_VERTICAL_HALO": 0.48,
   "//": "x = 3.36 puts the left-array VDD/VSS columns under the VPWR/VGND pairs at 9.03/14.65 and 53.99/59.61 um; y = 321.30 (row 85) leaves carved stripe segments above and below so VDD! and VDDARRAY! are fed without crossing the Metal4 OBS bar between them. Orientation FS (user decision 2026-10-17): signal pins (Metal2) on the top edge, facing the TT IO pins (y = 710) and the logic; with N, A_DOUT exceeded its 0.064 pF max cap and A_DIN[9-11] max slew. Under FS, VDDARRAY! is fed from the stripe segments below and VDD! from those above.",
