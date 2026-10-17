@@ -1,6 +1,6 @@
 # Architecture v1: options for decision (plan step 3)
 
-Status: PARTLY DECIDED (2026-10-17). Decided: G1, G2, G3 and A1 (marked DECIDED below). Everything else is open. Inputs: `doc/concept/assume_guarantee.md`, `doc/contracts/language_v0.md`, `log/spike_report.md`, `log/build_path_report.md`.
+Status: DECIDED (2026-10-17). Every item is marked DECIDED below, either by the user or by the agent where the user delegated it. Changes after this point go through doc/CHANGES.md. Inputs: `doc/concept/assume_guarantee.md`, `doc/contracts/language_v0.md`, `log/spike_report.md`, `log/build_path_report.md`.
 Legend: **[F]** measured or cited; **[E]** estimate.
 
 Decisions are grouped by what they block:
@@ -72,6 +72,8 @@ Options:
 
 ### A2. Protocol set and roles
 
+**DECIDED 2026-10-17 (user): floor plus USB-LS TX.** UART TX/RX, SPI modes 0-3 as controller and target, I2C Sm/Fm as controller and target, and low-speed USB transmit; each with contracts, U and N1.
+
 [F] Organisers: UART, SPI modes 0-3 and I2C 100/400 kHz first; USB-LS and 10BASE-T as stretch; controller+target and concurrency are a plus; fewer protocols with strong architecture and verification can be competitive.
 
 Options:
@@ -81,6 +83,8 @@ Options:
 - (d) a floor set plus held-out protocols implemented after RTL freeze (plan step 11).
 
 ### A3. Driver lanes: execution model and count
+
+**DECIDED 2026-10-17 (user): two independent lanes**, each with its own program and tick, and pin ownership between them. Proof structure: A1 per lane plus a non-interference lemma.
 
 | option | benefit | cost | proof consequence [E] |
 |---|---|---|---|
@@ -92,6 +96,8 @@ Count: 1, 2 or 4. The v0.1 core logic is 8,444 um^2 [F]; a v1 lane with a datapa
 
 ### A4. Timing primitives (coupled to G1)
 
+**DECIDED 2026-10-17, delegated by the user to the agent:** follows G1. WAIT counts prescaler ticks; each lane has its own prescaler (A3); fractional division is not in v1.
+
 Options:
 - (a) relative WAIT in cycles (as now);
 - (b) WAIT in prescaler ticks (G1a);
@@ -101,6 +107,8 @@ Options:
 Avoid sub-cycle output placement (half-cycle writes, delay lines): it is hard to verify formally and to time.
 
 ### A5. Protocol assists
+
+**DECIDED 2026-10-17, delegated by the user to the agent:** open-drain mode, shifter, NRZI + bit stuffing, configurable CRC (CRC5/CRC16, polynomial register), a D+/D- pair output mode, and edge wait with timeout. Reasons: USB-LS at 40 cycles per bit leaves no budget for CRC or stuffing in firmware; the timeout bounds every wait, keeping U and N1 tractable.
 
 Choose any subset:
 
@@ -118,6 +126,12 @@ Every assist enters A1 and needs contract-language support for its observables.
 
 ### A6. Instruction memory (driver lanes)
 
+**DECIDED 2026-10-17 (user): one RM_IHPSG13_1P_256x16_c2_bm_bist macro per lane.** This settles open decision 5 (macro core). Consequences:
+- the PDN plugin must be redone for this macro's column geometry;
+- the extra bit-mask and BIST pins need tie-offs;
+- the DOUT/DIN electrical limits must be re-checked (compare the 64x16 A_DOUT max-cap issue);
+- the E1/E5m chain needs this macro's functional model.
+
 [F] LEF areas: 1P 64x16 15,240 um^2; 256x16 28,127; 512x16 45,309; 256x32 49,488; 2P 256x16 57,521. All except 64x16 and 2P 64x32 are `_bm_bist` variants with extra pins and new power-grid geometry for our plugin. Flop storage costs about 784 um^2 per 16-bit word plus the read mux [F, mapping].
 
 Options:
@@ -131,12 +145,16 @@ This also settles open decision 5 (flop core or macro core).
 
 ### A7. Datapath
 
+**DECIDED 2026-10-17, delegated by the user to the agent:** (b) without data RAM: a 4 x 8-bit register file with compare (register or immediate) and branch on equal/zero, plus the v0.1 shift register and loop counter. Per-lane host TX/RX FIFOs (part of A8) carry data and are the monitors' stream taps. USB packets stream from the TX FIFO through the shifter.
+
 Options:
 - (a) the v0.1 registers (out, sr, lc) plus additions per protocol;
 - (b) a small register file with compare-and-branch on data, needed for target roles (address match, ACK decisions);
 - (c) a data RAM or mailbox.
 
 ### A8. Host interface
+
+**DECIDED 2026-10-17, delegated by the user to the agent:** (b) an SPI target port: CS, SCK, MOSI on ui; MISO on uo. Its register map covers driver and monitor program load, per-lane FIFOs, run control and verdict readback. The host's SPI timing is an environment assumption, monitored as a blame contract; the SCK oversampling CDC point is a verification item.
 
 Options:
 - (a) the parallel strobe loader (as now, inside A1);
@@ -147,6 +165,8 @@ The interface must also expose the verdict block (fail and blame flags, first ca
 
 ### A9. Pin model
 
+**DECIDED 2026-10-17, delegated by the user to the agent:** the 8 uio pins are protocol pins shared by both lanes under an ownership mask. A halted lane drives oe = 0 (idle by pull-up), which resolves open decision 6. A fixed set of spare uo pins are push-pull lane outputs (no crossbar). Two uo pins carry the live fail and blame flags for the demo board's display.
+
 Options:
 - protocol pins on `uio` with `oe` = 0 while halted (fixes open decision 6, and lets RUN drop between frames without a blame);
 - open-drain emulation;
@@ -154,6 +174,8 @@ Options:
 - the host/protocol pin budget (24 pins total [F]).
 
 ### A10. Clock
+
+**DECIDED 2026-10-17 (user): 60 MHz** (16.67 ns period). USB-LS = 40 cycles per bit. Timing closure at 60 MHz in all corners is unverified; the current design has 10.50 ns slack at 20 ns (slow corner).
 
 [F] No organiser target. The RP2350B generates the project clock; TT documents 1 Hz to 66.5 MHz. Run 5 slack at 20 ns is 10.50 ns (slow corner).
 
@@ -179,6 +201,19 @@ Options: (a) 50 MHz; (b) 60 MHz; (c) 48 or 40 MHz; (d) any clock, with a fractio
 5. **V5, A1 cross-check engine (open decision 1).** (a) sby k-induction with invariants. (b) rIC3. (c) Pono. (d) Certified results checked by an independent checker. (e) Defer.
 6. **V6, generic A1-mon.** (a) Per-contract translation validation only (as in the spike; sufficient for each package). (b) Also a generic proof, needed if monitor programs are loaded at run time (G2 (b)-(f)).
 7. **V7, open decisions 3, 4 and 7** (A2 data correctness, reset-value mutants, COMBDLY lint). Their options are unchanged from `log/slice_report.md` section 5.
+
+### V decisions (2026-10-17)
+
+- **V1 (user): configurable per package.** Report only, or report and release the pins (oe = 0) and halt the lane. A package bit selects which. Both behaviours are specified and proved.
+- **V2 (user): guarded branch.** Arbitration loss is legal; the chip must release SDA/SCL within k ticks and report it. Needs the guarded-branch extension in language v1.
+- **V3 (delegated to the agent): on-chip guarantee monitors for the shipped protocols, in the ROM store.** Loadable packages run assumptions only. Keeps the silicon self-check claim at about 5k um^2 per protocol.
+- **V4 (delegated to the agent): hardware load gate plus a bound fault.** RUN is ignored until a program of declared length has been loaded since reset, and fetching at or beyond the declared length faults the lane. Together these make PH5 a proved invariant.
+- **V5 (user): certified results.** A certificate-producing engine, with witnesses checked by an independent checker (Certifaiger, Yu, Biere and Heljanko, CAV 2021, doi:10.1007/978-3-030-81688-9_17). Tool availability (rIC3 build, witness format for our models) is a step-5 task.
+- **V6: generic A1-mon required**, as a consequence of G2.
+- **V7:**
+  - open decision 3 is resolved by design (data checked against host-FIFO streams);
+  - open decision 4 is superseded by the v1 mutation campaign;
+  - open decision 7 (user): post-process the emitted Verilog, with combinational `<=` rewritten to `=` and E2-E5 equivalence covering the rewrite.
 
 ## 4. Order
 
