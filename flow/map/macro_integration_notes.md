@@ -46,3 +46,20 @@ run (GitHub CI after a push, or local hardening on your machine) to see whether 
 unpowered macro can pass DRC and LVS, so the acceptance checks are: the PSM/IR-drop step reports no floating net, and a geometric
 check that every Metal4 stripe crossing the macro lies within a column of matching polarity (VPWR on VDD!, VGND on VSS!). That check
 can be scripted against the final DEF; it is proposed here and not written yet.
+
+## CI run 1 on core-macro @ 99faace (2026-10-17, facts from the downloaded logs)
+
+- gds job failed only on the deferred Magic DRC count: 7,817 errors, **all inside the SRAM footprint**, spread evenly over it (about 850
+  per 20 um band in both bit-cell arrays, whether or not a band holds one of our stripes), on SRAM-internal rules (Metal2 min area, layer overlap,
+  subcell abutment, SRAM N-well/contact exceptions). Our step draws Metal4 only.
+- `Pemu.MacroColumnStripes` ran: 4 stripes bridged (VPWR 7.98-10.08, 52.94-55.04; VGND 13.60-15.70, 58.56-60.66 um), 6 rects, 0 C1-C3
+  violations. pdngen places VPWR centres at 9.03 + 44.96k um (the model's assumption holds) and carves with the 0.48 um vertical halo.
+- Final PSM (IRDropReport): all VPWR/VGND shapes connected, worst IR drop 0.126 mV. LVS clean; routing DRC 0; illegal overlaps 0.
+  `design__power_grid_violation__count` = 827,963 comes from the GeneratePDN check before the bridge (every shape plus `core.u_imem/VDDARRAY!`
+  reported unconnected); it says nothing about the final grid.
+- Area: 12,187 um^2 std cells (1.4%) + 15,240 um^2 macro; 168 hold buffers (flop core: 1,202). Setup WNS typ 13.86 / slow 10.18 ns.
+- Electrical: A_DOUT[1,2,4,5,6,7,9] max cap up to 0.110 pF (limit 0.064 pF, all corners); A_DIN[9-11] max slew up to 0.76 ns (limit 0.595 ns, slow).
+  Cause: orientation N put the pins at the bottom edge, while the TT IO pins (y = 710) and 403 of 488 cells were above the macro.
+
+Changes for run 2 (user decisions 2026-10-17): `RUN_MAGIC_DRC` 0 and `RUN_KLAYOUT_DRC` 1 (PDK default runset `ihp-sg13cmos5l.drc`, deep, no
+recommended rules); macro orientation N -> FS (pins face the IO and the logic). Geometry tests extended for FS: 16 pass.

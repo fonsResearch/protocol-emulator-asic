@@ -24,7 +24,7 @@ DBU = 1000
 CORE_X0, CORE_X1 = 2.88, 1289.28 - 2.88
 CORE_Y0, CORE_Y1 = 3.78, 710.64 - 3.78
 GRID = dict(vwidth=2.1, vspacing=3.52, vpitch=44.96, voffset=6.15)
-LOC, ORIENT = (3.36, 321.30), "N"
+LOC, ORIENT = (3.36, 321.30), "FS"  # src/config.json on core-macro (FS since 2026-10-17)
 HALO = (2.0, 0.48)
 
 
@@ -56,12 +56,25 @@ class TestReal64x16:
             (9.03, "P"), (14.65, "G"), (53.99, "P"), (59.61, "G")]
         assert len(p.skipped) == 2 * 6 - 4  # 6 pairs cross the 236.8 um macro; 4 stripes bridged
 
-    def test_vdd_bridge_avoids_obs_bar(self):
-        cols, macro, stripes = setup()
+    @pytest.mark.parametrize("orient,lo_top,hi_bot", [("N", 38825, 45465), ("FS", 18895, 25535)])
+    def test_vdd_bridge_avoids_obs_bar(self, orient, lo_top, hi_bot):
+        # N: VDD! 0-38.825 below the bar, VDDARRAY! 45.465-64.36 above it (master coordinates);
+        # FS mirrors them: VDDARRAY! 0-18.895, VDD! 25.535-64.36
+        cols, macro, stripes = setup(orient=orient)
         p = G.plan(macro, cols, carved(stripes, macro), NAMES)
         ys = sorted((r.y0 - macro[1], r.y1 - macro[1]) for r in p.rects if r.pol == "P" and r.x0 < 11000)
-        # two pieces: up to the top of VDD! (38.825) and from the bottom of VDDARRAY! (45.465)
-        assert len(ys) == 2 and ys[0][1] == 38825 and ys[1][0] == 45465
+        assert len(ys) == 2 and ys[0][1] == lo_top and ys[1][0] == hi_bot
+        assert G.check(macro, cols, carved(stripes, macro) + p.rects) == []
+
+    def test_fs_feeds_vddarray_from_below_and_vdd_from_above(self):
+        cols, macro, stripes = setup(orient="FS")
+        segs = carved(stripes, macro)
+        p = G.plan(macro, cols, segs, NAMES)
+        def touched(pin):
+            return {r for r in p.rects for c in cols if c.name == pin and c.x0 <= r.x0 and r.x1 <= c.x1 and r.y0 < c.y1 and c.y0 < r.y1}
+        below = {r for r in p.rects if r.y0 < macro[1]}
+        above = {r for r in p.rects if r.y1 > macro[3]}
+        assert touched("VDDARRAY!") & below and touched("VDD!") & above
 
     def test_check_passes_after_plan(self):
         cols, macro, stripes = setup()
@@ -133,10 +146,10 @@ def _def_text(macro, shapes, master="RM_IHPSG13_1P_64x16_c2", orient="N"):
 
 @pytest.mark.skipif(not LEF.exists(), reason="PDK LEF not fetched (tools/fetch_pdk.sh)")
 class TestDefChecker:
-    def run(self, tmp_path, shapes, macro):
+    def run(self, tmp_path, shapes, macro, orient=ORIENT):
         import subprocess, sys
         d = tmp_path / "t.def"
-        d.write_text(_def_text(macro, shapes))
+        d.write_text(_def_text(macro, shapes, orient=orient))
         r = subprocess.run([sys.executable, str(Path(__file__).with_name("check_macro_stripes_def.py")), str(d), str(LEF)],
                            capture_output=True, text=True)
         return r.returncode, r.stdout
@@ -161,4 +174,12 @@ class TestDefChecker:
         vdd = next(r for r in p.rects if r.pol == "P")
         bad = G.Rect("P", "VPWR", vdd.x0, macro[1], vdd.x1, macro[3])
         rc, out = self.run(tmp_path, segs + p.rects + [bad], macro)
+        assert rc == 1 and "C1" in out
+
+    def test_def_neg_orientation_mismatch(self, tmp_path):
+        # stripes planned for FS, DEF claims N: the bridges now cross the (unmirrored) OBS bar
+        cols, macro, stripes = setup(orient="FS")
+        segs = carved(stripes, macro)
+        p = G.plan(macro, cols, segs, NAMES)
+        rc, out = self.run(tmp_path, segs + p.rects, macro, orient="N")
         assert rc == 1 and "C1" in out

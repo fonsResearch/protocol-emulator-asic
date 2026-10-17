@@ -46,7 +46,7 @@
   ],
   "FP_MACRO_HORIZONTAL_HALO": 2.0,
   "FP_MACRO_VERTICAL_HALO": 0.48,
-  "//": "x = 3.36 puts the left-array VDD/VSS columns under the VPWR/VGND pairs at 9.03/14.65 and 53.99/59.61 um; y = 321.30 (row 85) leaves carved stripe segments above and below so VDD! and VDDARRAY! are fed without crossing the Metal4 OBS bar between them. Orientation N: signal pins (Metal2) face down.",
+  "//": "x = 3.36 puts the left-array VDD/VSS columns under the VPWR/VGND pairs at 9.03/14.65 and 53.99/59.61 um; y = 321.30 (row 85) leaves carved stripe segments above and below so VDD! and VDDARRAY! are fed without crossing the Metal4 OBS bar between them. Orientation FS (user decision 2026-10-17): signal pins (Metal2) on the top edge, facing the TT IO pins (y = 710) and the logic; with N, A_DOUT exceeded its 0.064 pF max cap and A_DIN[9-11] max slew. Under FS, VDDARRAY! is fed from the stripe segments below and VDD! from those above.",
   "MACROS": {
     "RM_IHPSG13_1P_64x16_c2": {
       "gds": ["pdk_dir::libs.ref/sg13cmos5l_sram/gds/RM_IHPSG13_1P_64x16_c2.gds"],
@@ -60,7 +60,7 @@
         "nom_slow_1p08V_125C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_64x16_c2_slow_1p08V_125C.lib"]
       },
       "instances": {
-        "core.u_imem": { "location": [3.36, 321.30], "orientation": "N" }
+        "core.u_imem": { "location": [3.36, 321.30], "orientation": "FS" }
       }
     }
   },
@@ -73,7 +73,9 @@
 
   "//": "Save some time",
   "RUN_KLAYOUT_XOR": 0,
-  "RUN_KLAYOUT_DRC": 0,
+  "//": "pemu core-macro (user decision 2026-10-17): Magic DRC off, KLayout DRC on with the CMOS5L deck. All 7,817 Magic DRC errors in run 99faace lay inside the IHP SRAM's own layout (Magic's deck lacks the SRAM exceptions); KLayout runs the TT precheck deck on the full GDS. Template value was RUN_KLAYOUT_DRC 0.",
+  "RUN_KLAYOUT_DRC": 1,
+  "RUN_MAGIC_DRC": 0,
 
   "//": "Don't put clock buffers on the outputs",
   "DESIGN_REPAIR_BUFFER_OUTPUT_PORTS": 0,
