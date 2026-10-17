@@ -146,3 +146,33 @@ UART TX/RX, SPI controller/target modes 0-3, I2C controller/target, USB-LS TX. E
 2. **Rate error.** Rates are d x (P+1) cycles; 115,200 baud at 60 MHz is 520.8 cycles, so the nearest is 520 = 8 x 65 (+0.16%). There is no fractional divider in v1 (decision A4).
 3. **CRC5 vs CRC16 coverage.** USB tokens (CRC5) are sent by hosts, not devices, so a USB-LS device TX needs only CRC16 for data packets. CRC5 is kept for host-emulation demos [choice].
 4. **No ALU beyond ADDI/CMP** [choice]. Checksums other than CRC are not supported in hardware.
+
+## 10. Clarifications v1.0.1 (normative)
+
+No encoding changes. These points resolve ambiguities found while writing the executable lane specification (`spec_v1/`). Where this section and an earlier section differ, this section governs. `spec_v1/src/lane_model.ml` (reference interpreter) and `spec_v1/src/lane_circuit.ml` (spec-as-circuit) implement exactly these semantics. `spec_v1/test` checks them against each other.
+
+1. **Open-drain polarity.** Section 3.2 and section 4 disagreed. Normative: for an owned pin with `od[i]` = 1, `uio_out[i]` = 0 and `uio_oe[i]` = `out[i]`. Writing 1 pulls the pin low; writing 0 releases it. Reset values therefore release open-drain pins. This supersedes "`uio_oe[i]` = NOT `out[i]`" in section 4.
+2. **Live gating.** A lane drives its owned pins only if it executed in its most recent step (`live`). Otherwise `uio_oe` = 0 on all of its pins, whatever `od` is. A lane that faults in step s drives nothing from the cycle after step s.
+3. **Faults.**
+   - A fault raised in a step (`FETCH_BOUND`, `HALT`, `BLAME`) resets the execution state at the end of that step.
+   - A `BLAME` step does not execute its instruction.
+   - Blame with `cfg.release_on_blame` is latched until a running step consumes it. A blame latched while the lane is halted makes the lane fault at its first running step.
+   - Host `clear_fault` clears the fault, the cause and the blame latch. It wins over a blame arriving in the same cycle, and loses to a fault raised by a step in the same cycle.
+4. **Blocking instructions** (WTP, POP, PUSH, SER SEND/SENDC/CRCS/EOP/IDLE).
+   - The first step evaluates the condition. On success the action happens in that step and `T` <- 0.
+   - If the condition is false with `to` = 0, the lane waits indefinitely.
+   - If the condition is false with `to` != 0, the instruction times out at step `to`+1: `T` <- 1, no action, `pc` advances.
+   - `to` is 8 bits in v1 (LDI `to_lo`).
+5. **Serializer ready.**
+   - Ready includes the step in which the last bit of the current item ends: data bit, pending stuffed bit, or the J of an EOP. Consecutive SEND/SENDC/CRCS/EOP are therefore contiguous on the line.
+   - The shift register is 16 bits wide (CRCS with CRC16).
+   - `ser_status` (MOV source 7) = {7'b0, busy}. Both it and BR condition 9 read busy after this step's serializer advance. BR condition 8 (ready) is evaluated before it.
+6. **Stuffing count.** The count of consecutive ones carries across byte boundaries, from SEND (SYNC, PID) into SENDC bytes and into CRCS. It resets at the end of EOP and on halt. This matches USB, where stuffing applies from the SYNC field on.
+7. **FIFOs** (depth 8, per lane, host TX/RX).
+   - The lane pops or pushes only in executing steps. The host side acts every cycle.
+   - A host push is accepted only if the level at the start of the cycle is below 8. A push to a full FIFO is dropped, even if the lane pops in the same cycle.
+   - A lane pop never sees a byte pushed by the host in the same cycle. A host pop removes the head present at the start of the cycle.
+   - Reset empties both FIFOs.
+8. **Register operands 6, 7** in POP/PUSH/SER select `r0`. The assembler rejects them, and the load gate (decision V4) may reject them in a later revision.
+9. **Reset.** While `rst_sync_n` = 0, nothing executes and no stream event is reported. Outputs reflect the state at the start of the cycle.
+10. **Program length.** `len` is 8 bits, so a program is at most 255 words, and word 255 is never fetched.
