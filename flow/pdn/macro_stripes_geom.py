@@ -25,6 +25,15 @@ final DEF):
        inside each covering rectangle (no metal over OBS, no partial column overlap);
   (C2) no P shape overlaps a G column and no G shape overlaps a P column;
   (C3) every power pin name of the macro is touched by at least one same-polarity shape.
+  (C4) Tiny Tapeout pin rule (tt-support-tools precheck/pin_check.py): every VPWR/VGND port rectangle
+       on the stripe layer is at least 2.1 um wide, inside the die, and within 10 um of both the bottom
+       and the top die edge (check_pins()).
+
+Full-span mode (plan(..., full_span=True), used since 2026-10-17 because of C4): an aligned stripe's
+carved segments are replaced by ONE rectangle from the bottom of its lowest segment to the top of its
+highest segment. Inside the macro that rectangle may cross a gap between two same-polarity pin
+rectangles of the same column (the VDD!/VDDARRAY! OBS bar) only if cross_gaps=True; the matching
+check(..., allow_pin_gaps=True) accepts exactly those gaps and nothing else.
 """
 from __future__ import annotations
 
@@ -51,6 +60,7 @@ class Plan:
     rects: List[Rect] = field(default_factory=list)  # new shapes to draw
     bridged: List[Tuple[str, int, int]] = field(default_factory=list)  # (pol, x0, x1)
     skipped: List[Tuple[str, int, int, str]] = field(default_factory=list)  # (pol, x0, x1, reason)
+    replace: List[Tuple[str, int, int, int, int]] = field(default_factory=list)  # full-span: (pol, x0, x1, ylo, yhi)
 
 
 def _x_overlap(a0: int, a1: int, b0: int, b1: int) -> bool:
@@ -67,11 +77,23 @@ def _merge(intervals: Iterable[Tuple[int, int]]) -> List[Tuple[int, int]]:
     return out
 
 
+def _pin_gaps(columns: Sequence[Rect], pol: str, x0: int, x1: int) -> List[Tuple[int, int]]:
+    """y-gaps between consecutive same-polarity pin rects that both contain [x0, x1] (one column)."""
+    rs = sorted((c.y0, c.y1) for c in columns if c.pol == pol and c.x0 <= x0 and x1 <= c.x1)
+    out = []
+    for (a0, a1), (b0, b1) in zip(rs, rs[1:]):
+        if b0 > a1:
+            out.append((a1, b0))
+    return out
+
+
 def plan(
     macro: Tuple[int, int, int, int],
     columns: Sequence[Rect],
     segments: Sequence[Rect],
     names: Dict[str, str],
+    full_span: bool = False,
+    cross_gaps: bool = False,
 ) -> Plan:
     """macro = (x0, y0, x1, y1) placed bbox; names = {'P': 'VPWR', 'G': 'VGND'}."""
     mx0, my0, mx1, my1 = macro
@@ -99,6 +121,21 @@ def plan(
             continue
         below_top = max((s.y1 for s in segs if s.y1 <= my0), default=None)
         above_bot = min((s.y0 for s in segs if s.y0 >= my1), default=None)
+        if full_span:
+            if below_top is None or above_bot is None:
+                p.skipped.append((pol, sx0, sx1, "full span needs segments both below and above the macro"))
+                continue
+            cover = _merge([(max(c.y0, my0), min(c.y1, my1)) for c in same]
+                           + (_pin_gaps(columns, pol, sx0, sx1) if cross_gaps else []))
+            if cover != [(my0, my1)]:
+                p.skipped.append((pol, sx0, sx1, "full span would cross metal-free area that is not a same-polarity pin gap"
+                                  if cross_gaps else "full span would cross a gap between pin rectangles (cross_gaps off)"))
+                continue
+            ylo, yhi = min(s.y0 for s in segs), max(s.y1 for s in segs)
+            p.replace.append((pol, sx0, sx1, ylo, yhi))
+            p.rects.append(Rect(pol, names[pol], sx0, ylo, sx1, yhi))
+            p.bridged.append((pol, sx0, sx1))
+            continue
         ivals = [(c.y0, c.y1) for c in same]
         if below_top is not None:
             ivals.append((below_top, my0))
@@ -121,6 +158,7 @@ def check(
     macro: Tuple[int, int, int, int],
     columns: Sequence[Rect],
     shapes: Sequence[Rect],
+    allow_pin_gaps: bool = False,
 ) -> List[str]:
     mx0, my0, mx1, my1 = macro
     v: List[str] = []
@@ -131,11 +169,14 @@ def check(
         for c in columns:
             if c.pol != s.pol and _x_overlap(c.x0, c.x1, s.x0, s.x1) and c.y0 < iy1 and iy0 < c.y1:
                 v.append(f"C2 {s.name} shape x[{s.x0},{s.x1}] y[{iy0},{iy1}] overlaps {c.name} column x[{c.x0},{c.x1}]")
-        cover = _merge(
+        pieces = [
             (max(c.y0, iy0), min(c.y1, iy1))
             for c in columns
             if c.pol == s.pol and c.x0 <= ix0 and ix1 <= c.x1 and c.y0 < iy1 and iy0 < c.y1
-        )
+        ]
+        if allow_pin_gaps:
+            pieces += [(max(a, iy0), min(b, iy1)) for a, b in _pin_gaps(columns, s.pol, ix0, ix1) if a < iy1 and iy0 < b]
+        cover = _merge(pieces)
         if cover != [(iy0, iy1)]:
             v.append(
                 f"C1 {s.name} shape x[{s.x0},{s.x1}] y[{iy0},{iy1}] inside the macro is not covered by "
@@ -151,6 +192,42 @@ def check(
         if not fed:
             v.append(f"C3 pin {pin} has no same-polarity stripe on any of its {len(cols)} rectangles")
     return v
+
+
+def check_pins(pins: Sequence[Rect], die: Tuple[int, int, int, int], dbu: int,
+               edge_um: float = 10.0, min_width_um: float = 2.1) -> List[str]:
+    """C4: Tiny Tapeout power-pin rule (tt-support-tools d66cf17 precheck/pin_check.py, power_pins loop)."""
+    dx0, dy0, dx1, dy1 = die
+    e, w = round(edge_um * dbu), round(min_width_um * dbu)
+    v = []
+    for r in pins:
+        tag = f"C4 {r.name} port x[{r.x0},{r.x1}] y[{r.y0},{r.y1}]"
+        if r.x1 - r.x0 < w:
+            v.append(f"{tag} narrower than {min_width_um} um")
+        if r.y0 - dy0 > e:
+            v.append(f"{tag} more than {edge_um} um from the bottom edge")
+        if dy1 - r.y1 > e:
+            v.append(f"{tag} more than {edge_um} um from the top edge")
+        if r.x0 < dx0 or r.x1 > dx1 or r.y0 < dy0 or r.y1 > dy1:
+            v.append(f"{tag} not inside the die")
+    return v
+
+
+def lef_port_rects(lef_text: str, pin: str, pol: str, layer: str = "Metal4", dbu: int = 1000) -> List[Rect]:
+    """Port rectangles of a top-level LEF pin (die coordinates), for C4 on the exported LEF."""
+    import re
+
+    m = re.search(r"PIN %s\s*\n(.*?)\n\s*END %s\s" % (re.escape(pin), re.escape(pin)), lef_text, re.S)
+    out, cur = [], None
+    for line in (m.group(1) if m else "").splitlines():
+        lm = re.match(r"\s*LAYER\s+(\S+)", line)
+        if lm:
+            cur = lm.group(1)
+        rm = re.match(r"\s*RECT\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", line)
+        if rm and cur == layer:
+            x0, y0, x1, y1 = (round(float(v) * dbu) for v in rm.groups())
+            out.append(Rect(pol, pin, x0, y0, x1, y1))
+    return out
 
 
 # --- LEF / placement helpers (pure Python; used by tests and the DEF checker) -----------

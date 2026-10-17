@@ -40,6 +40,17 @@
   "PDN_CFG": "dir::../flow/pdn/pdn_cfg.tcl",
   "//": "check_power_grid runs inside GeneratePDN, before the stripe step connects the macro, so its count is not a verdict. Verdicts: Pemu.MacroColumnStripes property check (fails the step), LVS, IR drop report.",
   "ERROR_ON_PDN_VIOLATIONS": 0,
+  "//": "Tiny Tapeout pin rule (precheck/pin_check.py): every VPWR/VGND port must reach within 10 um of the top and bottom die edges. Run 094ea6a failed it: the macro carves the 12 stripes over its x-span. Fix (user decision 2026-10-17): no stripes over the macro except the 2 aligned pairs (PDN_OBSTRUCTIONS on the 4 misaligned pairs, full tile height), and the step makes the aligned 4 full height across the macro, pins included.",
+  "PDN_OBSTRUCTIONS": [
+    "Metal4 97.40 0 106.12 710.64",
+    "Metal4 142.36 0 151.08 710.64",
+    "Metal4 187.32 0 196.04 710.64",
+    "Metal4 232.28 0 241.00 710.64"
+  ],
+  "PEMU_STRIPE_FULL_SPAN": true,
+  "//": "Crossing the VDD!/VDDARRAY! Metal4 OBS bar: RM_IHPSG13_1P_64x16_c2.gds (PDK 2bbec755) has 0 Metal4 (50/0) and 0 Via3 (49/0) polygons under both aligned VPWR stripes in the bar band, nearest Metal4 3.16 um away (checked with gdstk, flow/pdn/check_sram_bar_gds.py). Magic extraction reads the LEF abstract and reports these crossings as illegal overlaps, hence ERROR_ON_ILLEGAL_OVERLAPS 0; KLayout DRC checks the real GDS.",
+  "PEMU_STRIPE_CROSS_PIN_GAPS": true,
+  "ERROR_ON_ILLEGAL_OVERLAPS": 0,
   "PDN_MACRO_CONNECTIONS": [
     "core\\.u_imem VPWR VGND VDD! VSS!",
     "core\\.u_imem VPWR VGND VDDARRAY! VSS!"

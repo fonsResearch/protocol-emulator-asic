@@ -7,8 +7,11 @@ For every instance whose master name starts with --master-prefix:
   2. collect the tile's VPWR/VGND Metal4 stripe segments (pdngen output);
   3. macro_stripes_geom.plan(): bridge only stripes that lie fully inside a same-polarity
      column, and only over that polarity's pin rectangles (never over Metal4 OBS);
-  4. draw the bridge rectangles as STRIPE special wires;
-  5. macro_stripes_geom.check() on the resulting shapes: any violation fails the step.
+  4. draw the bridge rectangles as STRIPE special wires; in --full-span mode instead replace each
+     aligned stripe's carved segments by one full-height STRIPE box and its pin boxes by one
+     full-height pin box (vias are left as they are);
+  5. macro_stripes_geom.check() (C1-C3) on the resulting shapes and check_pins() (C4, the Tiny
+     Tapeout full-height power-pin rule) on every VPWR/VGND pin box: any violation fails the step.
 
 All geometry decisions are in macro_stripes_geom.py (unit-tested without OpenROAD). This file
 is only odb glue; it has not been executed outside a LibreLane run.
@@ -41,6 +44,18 @@ def _net_segments(net, pol, layer):
     return out
 
 
+def _net_bpin(net):
+    for bterm in net.getBTerms():
+        pins = bterm.getBPins()
+        if pins:
+            return pins[0]
+    return None
+
+
+def _pin_boxes(bpin, layer):
+    return [b for b in bpin.getBoxes() if _layer_name(b) == layer] if bpin is not None else []
+
+
 def _macro_columns(inst, pins, layer):
     px, py = inst.getOrigin()
     t = odb.dbTransform(inst.getOrient(), odb.Point(px, py))
@@ -70,9 +85,14 @@ def _macro_columns(inst, pins, layer):
 @click.option("--ground-net", default="VGND", show_default=True)
 @click.option("--power-pins", default="VDD!,VDDARRAY!", show_default=True)
 @click.option("--ground-pins", default="VSS!", show_default=True)
+@click.option("--full-span/--no-full-span", default=False, show_default=True)
+@click.option("--cross-pin-gaps/--no-cross-pin-gaps", default=False, show_default=True,
+              help="allow a full-span stripe to cross a gap between same-polarity pin rects of one column")
+@click.option("--check-tt-pins/--no-check-tt-pins", default=True, show_default=True)
 @click.option("--report", "report_path", required=True, type=click.Path())
 @click_odb
-def main(reader, layer, master_prefix, power_net, ground_net, power_pins, ground_pins, report_path):
+def main(reader, layer, master_prefix, power_net, ground_net, power_pins, ground_pins,
+         full_span, cross_pin_gaps, check_tt_pins, report_path):
     block = reader.block
     lay = reader.tech.findLayer(layer)
     if lay is None:
@@ -95,14 +115,35 @@ def main(reader, layer, master_prefix, power_net, ground_net, power_pins, ground
         macro = (bb.xMin(), bb.yMin(), bb.xMax(), bb.yMax())
         cols = _macro_columns(inst, pins, layer)
         segs = _net_segments(nets["P"], "P", layer) + _net_segments(nets["G"], "G", layer)
-        plan = G.plan(macro, cols, segs, names)
-        for r in plan.rects:
-            net = nets[r.pol]
-            swires = net.getSWires()
-            sw = swires[0] if swires else odb.dbSWire_create(net, "ROUTED")
-            odb.dbSBox_create(sw, lay, r.x0, r.y0, r.x1, r.y1, "STRIPE")
+        plan = G.plan(macro, cols, segs, names, full_span=full_span, cross_gaps=cross_pin_gaps)
+        pin_edits = []
+        if full_span:
+            for pol, x0, x1, ylo, yhi in plan.replace:
+                net = nets[pol]
+                sws = list(net.getSWires())
+                removed = 0
+                for sw in sws:
+                    for b in list(sw.getWires()):
+                        if not b.isVia() and _layer_name(b) == layer and (b.xMin(), b.xMax()) == (x0, x1):
+                            odb.dbSBox_destroy(b)
+                            removed += 1
+                odb.dbSBox_create(sws[0], lay, x0, ylo, x1, yhi, "STRIPE")
+                bpin = _net_bpin(net)
+                if bpin is None:
+                    raise click.ClickException(f"no BPin on net {net.getName()}")
+                old_pins = [b for b in _pin_boxes(bpin, layer) if (b.xMin(), b.xMax()) == (x0, x1)]
+                for b in old_pins:
+                    odb.dbBox_destroy(b)
+                odb.dbBox_create(bpin, lay, x0, ylo, x1, yhi)
+                pin_edits.append((net.getName(), x0, x1, ylo, yhi, removed, len(old_pins)))
+        else:
+            for r in plan.rects:
+                net = nets[r.pol]
+                swires = net.getSWires()
+                sw = swires[0] if swires else odb.dbSWire_create(net, "ROUTED")
+                odb.dbSBox_create(sw, lay, r.x0, r.y0, r.x1, r.y1, "STRIPE")
         after = _net_segments(nets["P"], "P", layer) + _net_segments(nets["G"], "G", layer)
-        viol = G.check(macro, cols, after)
+        viol = G.check(macro, cols, after, allow_pin_gaps=cross_pin_gaps)
         report["macros"].append({
             "instance": inst.getName(),
             "master": inst.getMaster().getName(),
@@ -112,11 +153,24 @@ def main(reader, layer, master_prefix, power_net, ground_net, power_pins, ground
             "bridged": plan.bridged,
             "skipped": plan.skipped,
             "drawn_rects": [(r.name, r.x0, r.y0, r.x1, r.y1) for r in plan.rects],
+            "replaced": plan.replace,
+            "pin_edits": pin_edits,
             "violations": viol,
         })
         report["violations"] += [f"{inst.getName()}: {v}" for v in viol]
         print(f"[pemu] {inst.getName()}: bridged {len(plan.bridged)} stripes, "
               f"skipped {len(plan.skipped)}, drew {len(plan.rects)} rects, {len(viol)} violations")
+
+    if check_tt_pins:
+        die = block.getDieArea()
+        pins = []
+        for pol, net in nets.items():
+            pins += [G.Rect(pol, net.getName(), b.xMin(), b.yMin(), b.xMax(), b.yMax())
+                     for b in _pin_boxes(_net_bpin(net), layer)]
+        c4 = G.check_pins(pins, (die.xMin(), die.yMin(), die.xMax(), die.yMax()), block.getDefUnits())
+        report["pin_ports"] = len(pins)
+        report["violations"] += c4
+        print(f"[pemu] C4: {len(pins)} {layer} power pin boxes, {len(c4)} violations")
 
     with open(report_path, "w") as f:
         json.dump(report, f, indent=1)

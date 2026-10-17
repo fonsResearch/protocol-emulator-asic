@@ -183,3 +183,68 @@ class TestDefChecker:
         p = G.plan(macro, cols, segs, NAMES)
         rc, out = self.run(tmp_path, segs + p.rects, macro, orient="N")
         assert rc == 1 and "C1" in out
+
+
+# --- full-span mode + C4 (TT full-height power pins), core-macro since 2026-10-17 -------------
+
+DIE = (0, 0, round(1289.28 * DBU), round(710.64 * DBU))
+# PDN_OBSTRUCTIONS in src/config.json: the 4 misaligned VPWR/VGND pairs over the macro x-span
+OBSTRUCT_UM = [(97.4, 106.12), (142.36, 151.08), (187.32, 196.04), (232.28, 241.0)]
+
+
+def obstructed(stripes):
+    return [s for s in stripes if not any(a * DBU <= s.x0 and s.x1 <= b * DBU for a, b in OBSTRUCT_UM)]
+
+
+def pins_after(segs, p):
+    """Pin rects as the step leaves them: one per stripe x; replaced stripes become one full-height rect."""
+    rep = {(pol, x0, x1) for pol, x0, x1, *_ in p.replace}
+    keep = [s for s in segs if (s.pol, s.x0, s.x1) not in rep]
+    return keep + [G.Rect(pol, NAMES[pol], x0, y0, x1, y1) for pol, x0, x1, y0, y1 in p.replace]
+
+
+@pytest.mark.skipif(not LEF.exists(), reason="PDK LEF not fetched (tools/fetch_pdk.sh)")
+class TestFullSpan:
+    def test_obstructions_leave_only_aligned_stripes_over_macro(self):
+        cols, macro, stripes = setup()
+        over = [s for s in obstructed(stripes) if s.x0 < macro[2] and macro[0] < s.x1]
+        assert sorted((s.pol, s.x0) for s in over) == [("G", 13600), ("G", 58560), ("P", 7980), ("P", 52940)]
+
+    def test_full_span_replaces_four_and_passes_c1_c3_with_pin_gaps(self):
+        cols, macro, stripes = setup()
+        segs = carved(obstructed(stripes), macro)
+        p = G.plan(macro, cols, segs, NAMES, full_span=True, cross_gaps=True)
+        assert len(p.replace) == 4 and p.skipped == []
+        for pol, x0, x1, y0, y1 in p.replace:
+            assert (y0, y1) == (round(CORE_Y0 * DBU), round(CORE_Y1 * DBU))
+        shapes = pins_after(segs, p)
+        assert G.check(macro, cols, shapes, allow_pin_gaps=True) == []
+        # control: the same shapes violate C1 when pin gaps are not allowed (they cross the OBS bar)
+        v = G.check(macro, cols, shapes, allow_pin_gaps=False)
+        assert v and all(x.startswith("C1 VPWR") for x in v)
+
+    def test_full_span_without_cross_gaps_keeps_only_vgnd(self):
+        cols, macro, stripes = setup()
+        p = G.plan(macro, cols, carved(obstructed(stripes), macro), NAMES, full_span=True, cross_gaps=False)
+        assert sorted(b[0] for b in p.bridged) == ["G", "G"]
+
+    def test_c4_passes_after_merge_and_fails_on_carved_pins(self):
+        cols, macro, stripes = setup()
+        segs = carved(obstructed(stripes), macro)
+        p = G.plan(macro, cols, segs, NAMES, full_span=True, cross_gaps=True)
+        assert G.check_pins(pins_after(segs, p), DIE, DBU) == []
+        # control: carved, unmerged pins on the unobstructed grid -> 12 stripes x 2 ports = 24 (CI run 2 precheck)
+        bad = G.check_pins(carved(stripes, macro), DIE, DBU)
+        assert len(bad) == 24
+
+
+CI_LEF = Path("/Users/dean/Developer/fonsResearch/ci-artifacts/core-macro/tt_submission/tt_submission/tt_um_dean_protocol_emulator.lef")
+
+
+@pytest.mark.skipif(not CI_LEF.exists(), reason="CI run artifacts not present")
+def test_c4_reproduces_precheck_on_ci_lef():
+    """Run 2 (094ea6a) LEF: precheck reported 24 LEF errors; C4 must find the same number, unless the file
+    is from a later, fixed run (then 0)."""
+    text = CI_LEF.read_text()
+    pins = G.lef_port_rects(text, "VPWR", "P") + G.lef_port_rects(text, "VGND", "G")
+    assert len(G.check_pins(pins, DIE, DBU)) in (24, 0)

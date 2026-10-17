@@ -75,6 +75,8 @@ def main():
     ap.add_argument("lef_file")
     ap.add_argument("--master", default="RM_IHPSG13_1P_64x16_c2")
     ap.add_argument("--layer", default="Metal4")
+    ap.add_argument("--allow-pin-gaps", action="store_true", help="accept crossing same-polarity pin gaps (full-span mode)")
+    ap.add_argument("--lef", help="exported top-level LEF: also run C4 (TT full-height power-pin rule) on its ports")
     a = ap.parse_args()
     lef = Path(a.lef_file).read_text()
     try:
@@ -91,7 +93,7 @@ def main():
     for name, x, y, orient in macros:
         cols = G.place(rects, size, (x / dbu, y / dbu), orient, dbu)
         macro = (x, y, x + round(size[0] * dbu), y + round(size[1] * dbu))
-        v = G.check(macro, cols, shapes)
+        v = G.check(macro, cols, shapes, allow_pin_gaps=a.allow_pin_gaps)
         fed = {c.name for c in cols for s in shapes
                if s.pol == c.pol and c.x0 <= s.x0 and s.x1 <= c.x1 and s.y0 < c.y1 and c.y0 < s.y1}
         print(f"{name} @ ({x / dbu}, {y / dbu}) {orient}: {len(shapes)} supply shapes on {a.layer}, "
@@ -99,6 +101,16 @@ def main():
         for line in v:
             print("  " + line)
         bad += len(v)
+    if a.lef:
+        lt = Path(a.lef).read_text()
+        sz = re.search(r"SIZE\s+([\d.]+)\s+BY\s+([\d.]+)", lt)
+        die = (0, 0, round(float(sz.group(1)) * dbu), round(float(sz.group(2)) * dbu))
+        pins = G.lef_port_rects(lt, "VPWR", "P", a.layer, dbu) + G.lef_port_rects(lt, "VGND", "G", a.layer, dbu)
+        c4 = G.check_pins(pins, die, dbu)
+        print(f"C4 on {Path(a.lef).name}: {len(pins)} power ports, {len(c4)} violations")
+        for line in c4[:30]:
+            print("  " + line)
+        bad += len(c4)
     return 1 if bad else 0
 
 

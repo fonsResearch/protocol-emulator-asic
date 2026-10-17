@@ -48,6 +48,23 @@ class MacroColumnStripes(OdbpyStep):
             "PEMU_STRIPE_GROUND_PINS", str, "Comma-separated macro ground pins tied to GND_NET.",
             default="VSS!",
         ),
+        Variable(
+            "PEMU_STRIPE_FULL_SPAN", bool,
+            "Replace each aligned stripe's carved segments (and pin boxes) by one full-height stripe and pin box "
+            "(required by the Tiny Tapeout power-pin rule).",
+            default=False,
+        ),
+        Variable(
+            "PEMU_STRIPE_CROSS_PIN_GAPS", bool,
+            "Allow a full-height stripe to cross a gap between two same-polarity pin rectangles of one macro "
+            "column (the VDD!/VDDARRAY! OBS bar). Only enable for a macro whose GDS is verified metal-free there.",
+            default=False,
+        ),
+        Variable(
+            "PEMU_STRIPE_CHECK_TT_PINS", bool,
+            "Fail the step if any VPWR/VGND pin box violates the Tiny Tapeout full-height power-pin rule (C4).",
+            default=True,
+        ),
     ]
 
     def get_script_path(self) -> str:
@@ -61,5 +78,8 @@ class MacroColumnStripes(OdbpyStep):
             "--ground-net", self.config["PEMU_STRIPE_GROUND_NET"],
             "--power-pins", self.config["PEMU_STRIPE_POWER_PINS"],
             "--ground-pins", self.config["PEMU_STRIPE_GROUND_PINS"],
+            "--full-span" if self.config["PEMU_STRIPE_FULL_SPAN"] else "--no-full-span",
+            "--cross-pin-gaps" if self.config["PEMU_STRIPE_CROSS_PIN_GAPS"] else "--no-cross-pin-gaps",
+            "--check-tt-pins" if self.config["PEMU_STRIPE_CHECK_TT_PINS"] else "--no-check-tt-pins",
             "--report", os.path.join(self.step_dir, "macro_stripes.json"),
         ]

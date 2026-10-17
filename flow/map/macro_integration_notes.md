@@ -63,3 +63,22 @@ can be scripted against the final DEF; it is proposed here and not written yet.
 
 Changes for run 2 (user decisions 2026-10-17): `RUN_MAGIC_DRC` 0 and `RUN_KLAYOUT_DRC` 1 (PDK default runset `ihp-sg13cmos5l.drc`, deep, no
 recommended rules); macro orientation N -> FS (pins face the IO and the logic). Geometry tests extended for FS: 16 pass.
+
+## CI run 2 on core-macro @ 094ea6a (2026-10-17, facts from the downloaded logs)
+
+- gds flow complete. In-flow KLayout DRC 0; **TT precheck KLayout SG13CMOS5L DRC passes on the full GDS including the SRAM**.
+- FS cleared the SRAM pin electrical violations: max slew 0, max cap 0. LVS 0, routing DRC 0, GL cocotb 7/7.
+- Setup WNS typ 14.23 / slow 10.69 ns, hold 0.13 ns; 11,939 um^2 std cells (1.35%) + 15,240 um^2 macro; 154 hold buffers.
+- Step under FS (odb orient MX): 4 stripes bridged, VPWR pieces split at y 340.195 / 346.835 (mirrored bar), 0 C1-C3 violations.
+- **Precheck pin check FAILED: 24 LEF errors.** tt-support-tools precheck/pin_check.py requires every VPWR/VGND port rectangle to be within
+  10 um of both die edges. All 12 stripes over the macro x-span (7.98-238.40 um) were exported as 2 ports each, one below and one above the
+  macro. Reproduced locally on the run's LEF: exactly 24. The bar-avoiding bridge pieces from run 1 cannot satisfy this rule.
+
+Changes for run 3 (user decision 2026-10-17: "drop the 8, extend the 4 full-height"):
+-  on the 4 misaligned VPWR/VGND pairs over the macro (full tile height); pdngen creates neither stripes nor pins there.
+- : each aligned stripe's carved segments become one full-height stripe box, and its pin boxes one full-height
+  pin box. : the VPWR stripes cross the VDD!/VDDARRAY! bar. GDS evidence: .
+- New step check C4 (TT pin rule) fails the step before precheck would.
+-  0: Magic extraction uses the LEF abstract, where the bar is OBS; the real GDS is clear and KLayout DRC
+  checks it.
+- Cost (estimate): no stripes over x 54-279 um across the whole tile height, so rails there are fed sideways; PSM will quantify.
