@@ -83,3 +83,17 @@ Changes for run 3 (user decision 2026-10-17: "drop the 8, extend the 4 full-heig
 - `ERROR_ON_ILLEGAL_OVERLAPS` 0: Magic extraction uses the LEF abstract, where the bar is OBS; the real GDS is clear and KLayout DRC
   checks it.
 - Cost (estimate): no stripes over x 54-279 um across the whole tile height, so rails there are fed sideways; PSM will quantify.
+
+## CI run 3 on core-macro @ 0f4d84e (2026-10-17, facts from the downloaded logs)
+
+- **TT precheck: all 9 checks pass**, pin check included. GL cocotb 7/7, KLayout DRC 0, LVS 0, routing DRC 0, antenna 0.
+- Step: 4 stripes replaced by one full-height stripe and pin each (3.56-707.08 um, 2 segments and 2 pin boxes removed per stripe); C4 0
+  violations over 50 Metal4 power pin boxes; C1-C3 0. Magic illegal overlaps 6, all inside the two VPWR footprints in the bar band
+  (y 340.46-346.58 um): the expected, GDS-verified crossings.
+- IR drop worst 0.195 mV (run 2: 0.126 mV, with all stripes). Setup WNS typ 14.24 / slow 10.72 ns, hold 0.126 ns.
+- Remaining electrical violation: max cap on A_DOUT[5] (net core._13[5], 7 direct decode loads, unbuffered), 0.065-0.069 pF vs 0.064 pF,
+  all corners. Other DOUT bits were buffered by the resizer.
+- E4m/E5m RTL == synthesis/final netlist (IHP SRAM model on both sides) PASS, with negative controls (log/equiv_cmos5l.md on main).
+- The viewer job fails with deploy-pages HTTP 404 because GitHub Pages is not enabled on the repository; the user chose to leave it.
+
+Change for run 4: `RUN_POST_GRT_DESIGN_REPAIR` true (repair with global-route parasitics), for the A_DOUT[5] max cap.
