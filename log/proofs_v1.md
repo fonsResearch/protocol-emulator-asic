@@ -122,3 +122,8 @@ The top level contains the SPI target (mode 0, oversampled), the register block 
 - Hardcaml emits non-blocking assignments in 23 combinational `always @*` blocks (Verilator 5.052: 23 COMBDLY). After the post-process (197 assignments): 0 COMBDLY. The only remaining lint warning is the black-box stub's undriven A_DOUT.
 - Yosys equivalence original == processed: proved, both with the macro as a black box and with a stand-in model. Negative control: one corrupted assignment gives 8 unproven equivalence cells.
 - Area estimate (typ): 6,761 cells, 897 flip-flops, 97,914 µm² of standard cells, plus 2 × 28,127 µm² of macros, about 154,000 µm² (12.8% of 8x4).
+
+## Open after step 5
+
+- **Unreplayed mutant kills.** `stuff5` and `fifo_full_7` are killed by dprove on L2 (stuff5 re-run: NOT EQUIVALENT, frame 14, 7 s). bmc3 found no replayable trace within 300 s, nor in a second run of about 35 minutes (stopped). Both are also caught in cyclesim (36,666 and 588,040 mismatching cycles). Moved to the plan step 9 campaign, e.g. a directed replay seed or a different trace engine.
+- **Monitor engine.** Not present yet (step 6): fail = blame = 0, and blame_in = 0 for the lanes.
