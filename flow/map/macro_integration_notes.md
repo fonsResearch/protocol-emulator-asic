@@ -75,10 +75,11 @@ recommended rules); macro orientation N -> FS (pins face the IO and the logic). 
   macro. Reproduced locally on the run's LEF: exactly 24. The bar-avoiding bridge pieces from run 1 cannot satisfy this rule.
 
 Changes for run 3 (user decision 2026-10-17: "drop the 8, extend the 4 full-height"):
--  on the 4 misaligned VPWR/VGND pairs over the macro (full tile height); pdngen creates neither stripes nor pins there.
-- : each aligned stripe's carved segments become one full-height stripe box, and its pin boxes one full-height
-  pin box. : the VPWR stripes cross the VDD!/VDDARRAY! bar. GDS evidence: .
+- `PDN_OBSTRUCTIONS` on the 4 misaligned VPWR/VGND pairs over the macro (full tile height); pdngen creates neither stripes nor pins there.
+- `PEMU_STRIPE_FULL_SPAN`: each aligned stripe's carved segments become one full-height stripe box, and its pin boxes one full-height
+  pin box. `PEMU_STRIPE_CROSS_PIN_GAPS`: the VPWR stripes cross the VDD!/VDDARRAY! bar. GDS evidence: `flow/pdn/check_sram_bar_gds.py`
+  (both aligned footprints CLEAR, nearest Metal4 3.16 um; an injected-metal control reports BLOCKED).
 - New step check C4 (TT pin rule) fails the step before precheck would.
--  0: Magic extraction uses the LEF abstract, where the bar is OBS; the real GDS is clear and KLayout DRC
+- `ERROR_ON_ILLEGAL_OVERLAPS` 0: Magic extraction uses the LEF abstract, where the bar is OBS; the real GDS is clear and KLayout DRC
   checks it.
 - Cost (estimate): no stripes over x 54-279 um across the whole tile height, so rails there are fed sideways; PSM will quantify.
