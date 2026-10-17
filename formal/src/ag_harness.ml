@@ -115,6 +115,99 @@ let u_rtl ?debug ~contract ~name ~d () =
   Harness.bad_circuit ?debug ~dbg:(dbg o m) ~name (m.fail_flag &: ~:(m.blame_flag))
 ;;
 
+(* ---- G1 spike: timing in ticks ---- *)
+
+(* U with the tick completely free: the spec core's execution state and the monitor's watchers
+   advance only on ticks; synchronisers run every cycle. *)
+let u_spec_tick ?debug ?(n1 = false) ~contract ~name ~d () =
+  let clock = input "clock" 1
+  and rst_sync_n = input "rst_sync_n" 1
+  and tick = input "tick" 1
+  and uio_in = input "uio_in" 8 in
+  let ui_in =
+    if n1
+    then (
+      let go = input "go" 1
+      and ui_low = input "ui_low" 7 in
+      let run_r = wire 1 in
+      let run = run_r |: go in
+      run_r <== reg (Reg_spec.create ~clock ()) run -- "env_run";
+      run @: ui_low)
+    else input "ui_in" 8
+  in
+  let s =
+    Spec_circuit.create
+      ~tick
+      ~rom:(Isa.assemble (Programs.uart_tx ~d))
+      { clock; rst_sync_n; ui_in; uio_in }
+  in
+  let m =
+    MC.Hardwired.create ~tick (C.Program.compile contract) (mon_inputs ~clock ~rst_sync_n ~ui_in ~uio_in s)
+  in
+  let bad = if n1 then m.fail_flag |: m.blame_flag else m.fail_flag &: ~:(m.blame_flag) in
+  Harness.bad_circuit ?debug ~dbg:(("tick", tick) :: dbg s m) ~name bad
+;;
+
+(* Prescaler lemma: for every divisor p (8 bits), consecutive ticks are exactly p + 1 cycles
+   apart. Independent reference: a gap counter reset at each tick. *)
+let presc_lemma ?debug ?(bug = false) ~name () =
+  let clock = input "clock" 1
+  and rst_sync_n = input "rst_sync_n" 1
+  and p = input "p" 8 in
+  let tick, p_r = C.Prescaler.create ~clock ~rst_sync_n ~p in
+  let tick = if bug then tick &: ~:(p_r ==:. 37) else tick (* planted: one divisor skips ticks *) in
+  let spec = Reg_spec.create ~clock ~clear:~:rst_sync_n () in
+  let gap_d = wire 9
+  and seen_d = wire 1 in
+  let gap = reg spec gap_d -- "ref_gap"
+  and seen = reg spec seen_d -- "ref_seen" in
+  (* gap = cycles since the last tick (or since reset release) *)
+  gap_d <== mux2 tick (zero 9) (mux2 (gap ==:. 511) gap (gap +:. 1));
+  seen_d <== (seen |: tick);
+  let target = uresize p_r 9 in
+  let bad =
+    rst_sync_n
+    &: ((tick &: seen &: (gap <>: target)) |: (gap >: target))
+  in
+  Harness.bad_circuit ?debug ~dbg:[ "tick", tick; "gap", gap ] ~name bad
+;;
+
+(* U with the real prescaler (divisor free, fixed after reset) generating the tick. *)
+let u_spec_prescaled ?debug ~contract ~name ~d () =
+  let clock = input "clock" 1
+  and rst_sync_n = input "rst_sync_n" 1
+  and ui_in = input "ui_in" 8
+  and uio_in = input "uio_in" 8
+  and p = input "p" 8 in
+  let tick, _ = C.Prescaler.create ~clock ~rst_sync_n ~p in
+  let s =
+    Spec_circuit.create
+      ~tick
+      ~rom:(Isa.assemble (Programs.uart_tx ~d))
+      { clock; rst_sync_n; ui_in; uio_in }
+  in
+  let m =
+    MC.Hardwired.create ~tick (C.Program.compile contract) (mon_inputs ~clock ~rst_sync_n ~ui_in ~uio_in s)
+  in
+  Harness.bad_circuit ?debug ~dbg:(("tick", tick) :: dbg s m) ~name (m.fail_flag &: ~:(m.blame_flag))
+;;
+
+let tick_harnesses ?debug () =
+  let lib = C.Library.uart_tx_v01 in
+  [ u_spec_tick ?debug ~contract:(lib ~d:4 ()) ~name:"u_spec_tick_d4" ~d:4 ()
+  ; u_spec_tick ?debug ~n1:true ~contract:(lib ~d:4 ()) ~name:"n1_spec_tick_d4" ~d:4 ()
+  ; u_spec_tick
+      ?debug
+      ~contract:(lib ~with_assumption:false ~d:4 ())
+      ~name:"u_spec_tick_noassume_neg_d4"
+      ~d:4
+      ()
+  ; presc_lemma ?debug ~name:"presc_lemma" ()
+  ; presc_lemma ?debug ~bug:true ~name:"presc_lemma_neg" ()
+  ; u_spec_prescaled ?debug ~contract:(lib ~d:4 ()) ~name:"u_spec_presc_d4" ~d:4 ()
+  ]
+;;
+
 let all ?debug () =
   let lib = C.Library.uart_tx_v01 in
   List.concat_map [ 3; 4 ] ~f:(fun d ->
@@ -169,4 +262,5 @@ let all ?debug () =
     ])
   @ List.map [ 12; 16 ] ~f:(fun d ->
     u_spec ?debug ~contract:(lib ~d ()) ~name:(sprintf "u_spec_uart_d%d" d) ~d ())
+  @ tick_harnesses ?debug ()
 ;;

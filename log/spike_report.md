@@ -126,3 +126,27 @@ Derived: one loadable instruction slot costs about 6,365 um^2 (4 x 32 minus 4 x 
 - **Full:** programmable monitors (one of 3.3 (b)-(e)), U at real windows via a prescaler or invariants, U and N1 per package lifted to the netlist.
 - **Reduced:** hardwired assumption monitors for the shipped protocols (about 5k um^2 each), U at real windows, post-tape-out packages proved with their assumptions stated rather than monitored.
 - **Minimum:** U and N1 at small windows only, plus a scaling argument stated as unproved.
+
+## 6. Addendum: tick spike for decision G1 (plan step 3, same day)
+
+Change: optional `tick` enable added to `Spec_circuit.create`. It gates the execution state (pc, out, sr, lc, wait); synchronisers and the load path still run every cycle. The same enable is added to the monitor (watcher state, edge history, firing) and the engine. A `Prescaler` (`contracts/src/prescaler.ml`) samples its divisor p during reset and ticks every p+1 cycles. With no tick given, every circuit is unchanged.
+
+| harness | claim | expected | result | depth | latches | wall s |
+|---|---|---|---|---|---|---|
+| presc_lemma | consecutive ticks exactly p+1 cycles apart, every 8-bit p | PASS | PASS | | 26 | 0 |
+| presc_lemma_neg | planted: divisor 37 never ticks | FAIL | FAIL | 39 | 26 | 6 |
+| u_spec_tick_d4 | U with the tick input completely free | PASS | PASS | | 81 | 29 |
+| n1_spec_tick_d4 | N1 with the tick free | PASS | PASS | | 82 | 8 |
+| u_spec_tick_noassume_neg_d4 | no assumption | FAIL | FAIL | 5 | 78 | 0 |
+| u_spec_presc_d4 | U with the real prescaler, divisor free | PASS | PASS | | 97 | 27 |
+| u_spec_uart_d4, a1mon_uart_d4, a1_miter | regression with tick absent | PASS | PASS | | 81 / 91 / 2202 | 21 / 1 / 14 |
+
+Readings:
+- **U holds for every tick pattern**, so it holds for the prescaler's ticks; the prescaler lemma gives exact real time (bit = d x (p+1) cycles). One proof (`u_spec_presc_d4`, 27 s) covers bit periods 4 to 1,024 cycles in steps of 4. The explicit-cycle proof at d = 16 alone took 1,001 s. **G1's condition is met.**
+- **Regression is clean.** Latch and AND counts of the existing harnesses are identical to before.
+- **Constraints this introduces (for ISA v1):**
+  - bit periods are d x (p+1), so a 115,200-baud UART at 50 MHz (434 cycles) needs d = 7, p = 61 (or d = 14, p = 30), and one proof per d [arithmetic];
+  - other rates need a fractional prescaler, whose lemma is a separate obligation;
+  - a lane on a slow tick reacts in ticks, not cycles, so fast-reacting protocols run with p = 0, where windows are short anyway;
+  - lane and monitor sample inputs only on ticks. Sub-tick input pulses are invisible to both, which keeps the theorem consistent but is a stated behaviour.
+- **Not done:** interpreter (Interp) support for ticks and differential tests in tick mode; tick-mode A1 (RTL with tick against spec with tick).

@@ -1,6 +1,6 @@
 # Architecture v1: options for decision (plan step 3)
 
-Status: OPEN (2026-10-17). Nothing here is chosen. Inputs: `doc/concept/assume_guarantee.md`, `doc/contracts/language_v0.md`, `log/spike_report.md`, `log/build_path_report.md`.
+Status: PARTLY DECIDED (2026-10-17). Decided: G1, G2, G3 and A1 (marked DECIDED below). Everything else is open. Inputs: `doc/concept/assume_guarantee.md`, `doc/contracts/language_v0.md`, `log/spike_report.md`, `log/build_path_report.md`.
 Legend: **[F]** measured or cited; **[E]** estimate.
 
 Decisions are grouped by what they block:
@@ -16,6 +16,8 @@ Section 4 lists a dependency order.
 
 ### G1. How proofs reach real protocol timing
 
+**DECIDED 2026-10-17: (a) timebase ticks**, delegated by the user to the agent. Reason: the only option that scales to held-out protocols without per-package manual work. It is conditional on the tick spike (U with a free tick input plus a prescaler lemma); if that spike fails, the fallback is (c).
+
 [F] U proof time grows with window length: spec d = 8, 12, 16 took 315, 533 and 1,001 s. Real windows: 434 cycles for a UART bit at 115,200 baud and 50 MHz; 235 cycles for I2C Sm tLOW at 50 MHz.
 
 | option | idea | benefit | cost / risk | verification consequence |
@@ -26,6 +28,8 @@ Section 4 lists a dependency order.
 | (d) accept small windows | prove U at small d; state real-rate behaviour as tested, not proved | none | the headline claim weakens to small-window proofs plus testing | the "Minimum" tier |
 
 ### G2. Monitor program store
+
+**DECIDED 2026-10-17: (f) hybrid, as one engine design with two store types**, delegated by the user to the agent. Shipped protocols use ROM-store watchers: constant programs synthesise to about the size of a hardwired monitor (5,191 um^2 against 5,225 um^2, measured). Post-tape-out packages use a small compressed loadable store, sized against the area budget once A3 is decided. Consequence: V6 (b), the generic A1-mon for the loadable store, becomes required.
 
 [F] Mapped estimates:
 - hardwired UART monitor: 5,225 um^2;
@@ -43,6 +47,8 @@ Section 4 lists a dependency order.
 
 ### G3. Concept go/no-go
 
+**DECIDED 2026-10-17 (user): (a) proceed at the Full tier.**
+
 Options:
 - **(a)** Proceed at the Full tier, choosing G1 (a)/(b)/(c) and G2 (b)-(f).
 - **(b)** Proceed at the Reduced tier: hardwired monitors, real-window proofs via G1.
@@ -53,6 +59,8 @@ Options:
 ## A. Architecture
 
 ### A1. Tile size
+
+**DECIDED 2026-10-17 (user): (b) 8x4 primary with a green 6x4 fallback build.**
 
 [F] tt-support-tools d66cf17 accepts 8x4 (1724.16 x 710.64 um). Core area is 902,417 um^2 at 6x4 and 1,208,173 um^2 at 8x4. The organisers' email of 2026-10-16 says 8x4 is planned, with a template expected in mid-October, and to design to 6x4 until then.
 

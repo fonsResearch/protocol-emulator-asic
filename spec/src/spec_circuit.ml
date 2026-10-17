@@ -56,8 +56,12 @@ let imem_rom (words : int array) (m : Signal.t Imem.t) =
   mux m.raddr (List.init Isa.imem_depth ~f:(fun a -> of_int ~width:16 words.(a)))
 ;;
 
-(* [rom]: shorthand for [~imem:(imem_rom rom)]. The default is [imem_registers]. *)
-let create ?rom ?imem (i : _ I.t) =
+(* [rom]: shorthand for [~imem:(imem_rom rom)]. The default is [imem_registers].
+   [tick] (spike, plan step 3, decision G1): when given, the execution state (pc, out, sr, lc,
+   wait) advances only in cycles with tick = 1, so instruction timing is counted in ticks.
+   Synchronisers and the load path still run every cycle. Without [tick] the circuit is
+   unchanged. *)
+let create ?rom ?imem ?tick (i : _ I.t) =
   let imem =
     match imem, rom with
     | Some f, None -> f
@@ -69,6 +73,11 @@ let create ?rom ?imem (i : _ I.t) =
   (* rst_sync_n is used as a synchronous clear (all registers except imem). *)
   let spec = Reg_spec.create ~clock:i.clock ~clear:(~:(i.rst_sync_n)) () in
   let r w = Variable.reg spec ~width:w in
+  let rx w =
+    match tick with
+    | None -> Variable.reg spec ~width:w
+    | Some enable -> Variable.reg ~enable spec ~width:w
+  in
   (* synchronisers *)
   let s1_run = reg spec (bit i.ui_in 7) in
   let s2_run = reg spec s1_run -- "spec_running" in
@@ -80,12 +89,12 @@ let create ?rom ?imem (i : _ I.t) =
   let running = s2_run in
   let write_event = s2_wstb &: ~:s3_wstb in
   (* architectural state *)
-  let pc = r Isa.pc_width
-  and out = r 8
-  and sr = r 8
-  and lc = r 8
-  and waiting = r 1
-  and wait_cnt = r 12
+  let pc = rx Isa.pc_width
+  and out = rx 8
+  and sr = rx 8
+  and lc = rx 8
+  and waiting = rx 1
+  and wait_cnt = rx 12
   and load_addr = r Isa.pc_width
   and load_hi = r 1
   and load_lo = r 8 in

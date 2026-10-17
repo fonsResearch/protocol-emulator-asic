@@ -56,22 +56,23 @@ let n_sources = 40
 module Front = struct
   type t =
     { spec : Reg_spec.t
+    ; tick : Signal.t (* watchers and edge history advance only when 1 (G1 spike); vdd by default *)
     ; obs : Signal.t (* 40 bits, current cycle *)
     ; prev : Signal.t (* 40 bits, previous observed cycle *)
     ; prev_valid : Signal.t
     ; active : Signal.t (* rst_sync_n *)
     }
 
-  let create (i : _ I.t) =
+  let create ?(tick = vdd) (i : _ I.t) =
     let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
     let s1_ui = reg spec i.ui_in -- "mon_s1_ui" in
     let s2_ui = reg spec s1_ui -- "mon_s2_ui" in
     let s1_uio = reg spec i.uio_in -- "mon_s1_uio" in
     let s2_uio = reg spec s1_uio -- "mon_s2_uio" in
     let obs = concat_lsb [ i.uo_out; i.uio_out; i.uio_oe; s2_ui; s2_uio ] in
-    let prev = reg spec obs -- "mon_prev" in
-    let prev_valid = reg spec vdd -- "mon_prev_valid" in
-    { spec; obs; prev; prev_valid; active = i.rst_sync_n }
+    let prev = reg spec ~enable:tick obs -- "mon_prev" in
+    let prev_valid = reg spec ~enable:tick vdd -- "mon_prev_valid" in
+    { spec; tick; obs; prev; prev_valid; active = i.rst_sync_n }
   ;;
 
   (* value of atom (source index, kind) in the current cycle *)
@@ -115,8 +116,8 @@ let verdict (f : Front.t) (outs : outcome list) =
   in
   let fail_now, fail_code_now = first_of (fires false)
   and blame_now, blame_code_now = first_of (fires true) in
-  let fail_now = fail_now &: f.active
-  and blame_now = blame_now &: f.active in
+  let fail_now = fail_now &: f.active &: f.tick
+  and blame_now = blame_now &: f.active &: f.tick in
   let fail_r = wire 1
   and blame_r = wire 1
   and ffv_r = wire 1
@@ -168,9 +169,9 @@ module Hardwired = struct
     and cnt_d = wire cw
     and stop_d = wire 1 in
     let nm s = sprintf "mon_w%d_%s" wi s in
-    let pc = reg f.spec pc_d -- nm "pc"
-    and cnt = reg f.spec cnt_d -- nm "cnt"
-    and stopped = reg f.spec stop_d -- nm "stopped" in
+    let pc = reg f.spec ~enable:f.tick pc_d -- nm "pc"
+    and cnt = reg f.spec ~enable:f.tick cnt_d -- nm "cnt"
+    and stopped = reg f.spec ~enable:f.tick stop_d -- nm "stopped" in
     let k = uresize cnt (cw + 1) +:. 1 in
     (* per-instruction decisions, gated by pc == j *)
     let per =
@@ -227,8 +228,8 @@ module Hardwired = struct
     { fire; fire_role = frole; fire_code = fcode }
   ;;
 
-  let create (p : Program.t) (i : _ I.t) =
-    let f = Front.create i in
+  let create ?tick (p : Program.t) (i : _ I.t) =
+    let f = Front.create ?tick i in
     let cw = count_width p in
     let outs = Array.to_list (Array.mapi p.watchers ~f:(watcher f p ~cw)) in
     verdict f outs

@@ -38,3 +38,15 @@ Command: formal/prove_one.sh <harness> <verilog dir> <aig dir> <timeout> <expect
 | u_rtl_uart_d8 | PASS | dprove | PASS |  | i/o = 34/ 1 lat = 111 and = 1306 | 373 |  |
 | u_spec_uart_d12 | PASS | dprove | PASS |  | i/o = 18/ 1 lat = 83 and = 1333 | 533 |  |
 | u_spec_uart_d16 | PASS | dprove | PASS |  | i/o = 18/ 1 lat = 85 and = 1366 | 1001 |  |
+
+## Tick spike (decision G1)
+
+| presc_lemma | PASS | dprove | PASS |  | i/o = 10/ 1 lat = 26 and = 239 | 0 |  |
+| presc_lemma_neg | FAIL | dprove | FAIL | 39 | i/o = 10/ 1 lat = 26 and = 248 | 6 | replay ok |
+| u_spec_tick_d4 | PASS | dprove | PASS |  | i/o = 19/ 1 lat = 81 and = 1497 | 29 |  |
+| n1_spec_tick_d4 | PASS | dprove | PASS |  | i/o = 19/ 1 lat = 82 and = 1498 | 8 |  |
+| u_spec_tick_noassume_neg_d4 | FAIL | dprove | FAIL | 5 | i/o = 19/ 1 lat = 78 and = 1470 | 0 | replay ok |
+| u_spec_presc_d4 | PASS | dprove | PASS |  | i/o = 26/ 1 lat = 97 and = 1587 | 27 |  |
+| u_spec_uart_d4 | PASS | dprove | PASS |  | i/o = 18/ 1 lat = 81 and = 1311 | 21 |  |
+| a1mon_uart_d4 | PASS | dprove | PASS |  | i/o = 42/ 1 lat = 91 and = 1292 | 1 |  |
+| a1_miter | PASS | dprove | PASS |  | i/o = 34/ 1 lat = 2202 and = 12720 | 14 |  |
