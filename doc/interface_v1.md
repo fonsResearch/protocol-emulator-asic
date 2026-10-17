@@ -93,3 +93,25 @@ To be specified as interface v1.1:
 - **Pin trace:** per cycle, `uo_out`, `uio_out` and `uio_oe`, plus the raw input pins.
 - **Host-interface events:** TX FIFO writes and RX FIFO pushes per lane, with their data. These are the contract streams.
 - **Observation relation for A1:** spec and RTL agree on all of the above in every cycle, given the same raw input sequence and the same imem contents at the start of the run.
+
+## 9. Clarifications v1.0.1 (normative)
+
+Implemented in `rtl_v1/src/top_v1.ml`.
+
+1. **Program-write acceptance** (user decision 2026-10-17).
+   - A lane accepts an instruction-memory write only if it was not running in the current cycle nor in the previous one (`imem_wack`).
+   - The loader advances the load address, and counts the word towards `loaded`, only on acceptance.
+   - A refused PROG_DATA word is dropped and sets the lane's FLAGS bit 3. The host retries.
+2. **FLAGS register** at lane offset +13 (R, write 1 to clear):
+   - bit 0: TX overflow (a TXF write to a full FIFO);
+   - bit 1: RX underflow (an RXF read of an empty FIFO);
+   - bit 2: `loaded` (read-only);
+   - bit 3: program word dropped.
+
+   Bits 0, 1 and 3 are sticky. PROG_START also clears bit 3.
+3. **FIFO_ST** layout: bits [3:0] TX level, bits [7:4] RX level.
+4. **Read sampling.**
+   - A read value is sampled, without side effects, in the cycle after the last rising SCK edge of the previous byte, so that a pop of the byte just completed is visible.
+   - An RXF pop happens when the data byte that carried the value completes. The final sample of a read transaction therefore consumes nothing.
+   - The host timing requirement of section 4 (SCK high for at least 4 cycles) keeps the sample ahead of the falling edge that shifts it out.
+5. **Instruction-memory macro instances** are named `u_imem_l0` and `u_imem_l1`, for macro placement in the hardening configuration.

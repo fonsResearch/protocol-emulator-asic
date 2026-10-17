@@ -98,7 +98,11 @@ let free_read_sram ~rdata (i : _ S.I.t) =
   and read = i.a_men &: i.a_ren in
   let dout_en = (write &: i.a_ren) |: (~:write &: read) in
   let d = mux2 write i.a_din rdata in
-  { S.O.a_dout = reg spec ~enable:dout_en d -- "rtl_imem_dout" }
+  (* explicit hold multiplexer (see Sram256.behavioural) *)
+  let q = wire 16 in
+  let r = reg spec (mux2 dout_en d q) -- "rtl_imem_dout" in
+  q <== r;
+  { S.O.a_dout = r }
 ;;
 
 (* Ghost tracking of the word held in A_DOUT, from the SRAM port signals. *)
@@ -184,6 +188,7 @@ let spec_indep ?debug ?(neg = false) ~name () =
 let all ?debug () =
   [ full ?debug ~name:"a1_lane_full" ()
   ; full ?debug ~bug:`No_write_through ~name:"a1_lane_full_nowt_neg" ()
+  ; full ?debug ~bug:`No_prev_running_gate ~name:"a1_lane_full_gate_neg" ()
   ; fetch ?debug ~name:"a1_lane_fetch" ()
   ; fetch ?debug ~bug:`No_write_through ~name:"a1_lane_fetch_nowt_neg" ()
   ; fetch ?debug ~bug:`No_prev_running_gate ~name:"a1_lane_fetch_gate_neg" ()

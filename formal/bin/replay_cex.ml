@@ -38,8 +38,21 @@ let () =
     Hashtbl.find_or_add reg_cache n ~default:(fun () ->
       Option.is_some (Cyclesim.lookup_reg_by_name sim n))
   in
+  (* Prefer user-given names: generated names (_<uid>) refer to the emitted Verilog's uids, and
+     the replay circuit is a separate (debug) build whose uids differ, so a generated alias can
+     name an unrelated simulation register (seen on the 4,096-bit memory harness). *)
+  let generated n =
+    String.length n > 1
+    && Char.equal n.[0] '_'
+    && String.for_all (String.drop_prefix n 1) ~f:Char.is_digit
+  in
   Hashtbl.iteri inits ~f:(fun ~key:idx ~data ->
-    match List.find data ~f:(fun (n, _) -> is_reg n) with
+    let preferred = List.filter data ~f:(fun (n, _) -> not (generated n)) in
+    match
+      Option.first_some
+        (List.find preferred ~f:(fun (n, _) -> is_reg n))
+        (List.find data ~f:(fun (n, _) -> is_reg n))
+    with
     | None ->
       failwithf
         "init input %d: no alias is a simulation register (%s)"

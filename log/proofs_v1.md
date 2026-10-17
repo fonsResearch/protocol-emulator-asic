@@ -65,7 +65,11 @@ Together with L1–L3, the RTL with the real SRAM is observably equal to the spe
 - `stuff5` (frame 14) and `fifo_full_7` (frame 75) are dprove FAILs with no bmc3 counterexample within 300 s, so they are not replayed.
 - The text mutant without the previous-cycle gate did not compile (unused binding). It is covered by `a1_lane_fetch_gate_neg`.
 
-**Open item.** The monolithic `a1_lane_full_nowt_neg` replays fine. On the first run, `a1_lane_gate_neg` failed at depth 3 with REPLAY MISMATCH: cyclesim saw `bad` at frame 2. The suspect is the replayer's alias choice for free-init bits with many aliases (up to 10) in the 4,096-bit array harness. Not yet resolved; the decomposed harnesses replay cleanly.
+**Replay mismatch, resolved.** On the first run, the monolithic `a1_lane_gate_neg` failed at depth 3 with REPLAY MISMATCH: cyclesim saw `bad` at frame 2. There were two causes:
+1. Hardcaml cyclesim's `Reg.of_int` does not persist on a register built with `~enable` while its enable is 0; the value reverts at the next edge (minimal reproduction: plain register keeps 0xd3, enable register reads 0x00 after one cycle). The replayer therefore never really loaded the free memory contents.
+2. The replayer could pick a generated alias (`_<uid>`), whose uid differs between the emitted and the replay builds.
+
+Fixes: the SRAM word and A_DOUT registers (`Sram256.behavioural`, `A1_lane.free_read_sram`) use explicit hold multiplexers, with identical behaviour, and the replayer prefers user-given names. After the fix, `a1_lane_full_gate_neg` (FAIL, depth 3) and `a1_lane_full_nowt_neg` (FAIL, depth 2) both replay OK. Earlier replays of other harnesses were unaffected: A_DOUT is reloaded in the reset frame, and the abstract harnesses use free read data.
 
 ## Prescaler (`formal/src/presc16.ml`)
 
@@ -84,6 +88,37 @@ Yosys 0.69 + ABC with sg13cmos5l_stdcell, macro as a black box (`rtl/macros/.../
 - **Fetch path.** Clock-to-DOUT (liberty: 5.13 ns slow, 3.06 ns typ) plus the cone gives at most 12.95 ns slow, against 16.67 ns at 60 MHz. Roughly 3.4 ns remain for wiring, skew and setup. Unverified until STA after place and route.
 - **Hold.** A_ADDR hold up to 0.85 ns (slow) needs hold buffers on the next-pc path.
 
-## Interface consequence (flagged, not yet in interface_v1.md)
+## Interface consequence (now interface v1.0.1, section 9; user decision)
 
 The lane drops a program write in the first cycle after it stops running. The loader (interface section 6) must advance the load address only on `imem_wack`; otherwise `loaded` could rise with a word unwritten. Alternative: no gate in the lane, with the host block guaranteeing no write in that cycle. A1 would then need that guarantee as an assumption.
+
+## Core v1 top level (`rtl_v1/src/top_v1.ml`)
+
+The top level contains the SPI target (mode 0, oversampled), the register block with per-lane loaders, two lanes with prescalers, the pin OR, and the `uo_out` map. The monitor is not present yet: fail = blame = 0.
+
+**Cyclesim through the pins** (`rtl_v1/test/test_top.ml`): a bit-banged SPI host with SCK half-period 6 cycles.
+- ID reads 0xA1.
+- Lane 0 loads UART TX over SPI (FLAGS 0x04 = loaded), runs with P = 9, and the frame decoded from `uio[0]` is start 0, data 0xA5, stop 1.
+- A lane-1 OWN of 0x03 overlapping lane 0 is rejected; 0x02 is accepted.
+- Lane 1 pushes 0x42 and 0x43 and halts: STATUS 0x2D, FAULT 0x30 (cause 3 = HALT), `uo_out[7]` = 1. A 2-byte RXF read returns 0x42 0x43 and the FIFO is empty afterwards.
+- The first version of the port returned 0x42 0x42 (peek and pop in the same cycle); fixed by sampling one cycle later (interface v1.0.1, section 9, item 4).
+
+**Formal** (`formal/src/top_props.ml`; every input free):
+
+| harness | expected | result | depth | latches | wall s |
+|---|---|---|---|---|---|
+| load_gate (section 6.3, symbolic address a*) | PASS | PASS | - | 28 | 26 |
+| load_gate_neg (loaded one word early) | FAIL | FAIL, replay ok | 3 | 28 | 0 |
+| own_disjoint (own0 & own1 = 0) | PASS | PASS | - | 16 | 0 |
+| own_disjoint_neg (overlap check removed) | FAIL | FAIL, replay ok | 2 | 16 | 0 |
+| lane_pin_gate (lane drives nothing outside own) | PASS | PASS | - | 268 | 0 |
+
+`own_disjoint` and `lane_pin_gate` together give no contention on `uio`.
+
+**Structural non-interference** (expect test, Hardcaml `Signal_graph`): the fan-in cone of every input of lane L reaches no signal built by the other lane's prescaler or `Lane_rtl.create`, except through the other lane's OWN register. That boundary is the designed host-side coupling: OWN overlap rejection, and whether the other lane is halted decides whether its OWN can change. Result: 0 signals with the boundary and 3,712 without it (sensitivity), in both directions.
+
+**Verilog** (`rtl_v1/bin/emit_lane_rtl.exe top_macro`; `tools/fix_combdly.py`; `tools/check_combdly_equiv.sh`):
+- No X literals; two macro instances (`u_imem_l0`, `u_imem_l1`); Yosys `check -assert` passes with 0 warnings.
+- Hardcaml emits non-blocking assignments in 23 combinational `always @*` blocks (Verilator 5.052: 23 COMBDLY). After the post-process (197 assignments): 0 COMBDLY. The only remaining lint warning is the black-box stub's undriven A_DOUT.
+- Yosys equivalence original == processed: proved, both with the macro as a black box and with a stand-in model. Negative control: one corrupted assignment gives 8 unproven equivalence cells.
+- Area estimate (typ): 6,761 cells, 897 flip-flops, 97,914 µm² of standard cells, plus 2 × 28,127 µm² of macros, about 154,000 µm² (12.8% of 8x4).

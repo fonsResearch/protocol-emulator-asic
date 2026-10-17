@@ -51,19 +51,28 @@ let behavioural ?(mem_name = "imem_word") ?(dout_name = "rtl_imem_dout") (i : _ 
   let spec = Reg_spec.create ~clock:i.a_clk () in
   let write = i.a_men &: i.a_wen in
   let read = i.a_men &: i.a_ren in
+  (* Explicit hold multiplexers instead of ~enable: cyclesim's Reg.of_int does not persist on
+     a held enable register (it reverts at the next edge), which broke counterexample replay
+     of free initial contents. Behaviour is identical. *)
+  let hold_reg ~en d name =
+    let q = wire (width d) in
+    let r = reg spec (mux2 en d q) -- name in
+    q <== r;
+    r
+  in
   let mem_q = List.init depth ~f:(fun _ -> wire data_width) in
   let cur = mux i.a_addr mem_q in
   let merged = (cur &: ~:(i.a_bm)) |: (i.a_din &: i.a_bm) in
   List.iteri mem_q ~f:(fun a q ->
-    q <== (reg spec ~enable:(write &: (i.a_addr ==:. a)) merged -- sprintf "%s_%d" mem_name a));
+    q <== hold_reg ~en:(write &: (i.a_addr ==:. a)) merged (sprintf "%s_%d" mem_name a));
   let dout_en = (write &: i.a_ren) |: (~:write &: read) in
-  let dout = reg spec ~enable:dout_en (mux2 write merged cur) -- dout_name in
+  let dout = hold_reg ~en:dout_en (mux2 write merged cur) dout_name in
   { O.a_dout = dout }, mem_q
 ;;
 
-let blackbox (i : _ I.t) =
+let blackbox ?(instance = "u_imem") (i : _ I.t) =
   let module Inst = Instantiation.With_interface (I) (O) in
-  Inst.create ~instance:"u_imem" ~name:macro_name i
+  Inst.create ~instance ~name:macro_name i
 ;;
 
 (* Tie-offs for the functional port only (lane use). *)
