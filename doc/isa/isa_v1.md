@@ -1,6 +1,6 @@
 # ISA v1 (driver lanes)
 
-Status: DRAFT for freeze (2026-10-17). Requires user approval; on approval it is frozen and changes go through `doc/CHANGES.md`. Architecture decisions: `doc/decisions/arch_v1_options.md`. Pin and host interface: `doc/interface_v1.md`.
+Status: FROZEN v1 (2026-10-17). The user delegated approval to the agent; it was frozen after a consistency review (USB fixes in section 6, see `doc/CHANGES.md`). Changes go through `doc/CHANGES.md`. Architecture decisions: `doc/decisions/arch_v1_options.md`. Pin and host interface: `doc/interface_v1.md`.
 
 This document and `doc/interface_v1.md` are the only sources for the spec (S1) and RTL contexts. They are written so that two implementers working separately produce identical pin traces, cycle for cycle.
 
@@ -113,15 +113,18 @@ Operations (`SER a, x`):
 
 | a | name | effect |
 |---|---|---|
-| 0 | `SEND x` | blocking until ready. Load the byte from x; the serializer emits 8 bits, one per bit period, LSB or MSB first. With nrzi: a 0 bit toggles the line level, a 1 bit keeps it. With stuff: after six consecutive 1 data bits, a 0 bit is inserted (with NRZI applied). With crc_en: data bits (not stuffed bits) update `crc` |
+| 0 | `SEND x` | blocking until ready. Load the byte from x; the serializer emits 8 bits, one per bit period, LSB or MSB first (`cfg.msb_first`). With nrzi: a 0 bit toggles the line level, a 1 bit keeps it. With stuff: after six consecutive 1 bits (counted after any previous stuffed bit), a 0 bit is inserted and NRZI-coded like any other bit. Does not update `crc` (for SYNC and PID) |
 | 1 | `CRCI` | crc <- all ones |
-| 2 | `CRCS` | blocking until ready. Send the complement of `crc` (5 or 16 bits) through the same coding |
+| 2 | `CRCS` | blocking until ready. Send the ones complement of `crc` (5 or 16 bits), most significant bit first regardless of `cfg.msb_first` (USB 2.0 section 8.3.5), through the same stuffing and NRZI coding |
 | 3 | `EOP` | blocking until ready. Drive SE0 (both pair pins low) for 2 bit periods, then J for 1 bit period, then idle (ready) |
 | 4 | `PERIOD x` | bit_period <- x |
 | 5 | `IDLE` | blocking until ready (all bits sent) |
-| 6-7 | reserved | NOP |
+| 6 | `SENDC x` | as `SEND x`, and with `cfg.crc_en` each data bit (never a stuffed bit) updates `crc`: CRC16 x^16+x^15+x^2+1 or CRC5 x^5+x^2+1, data in transmission order |
+| 7 | reserved | NOP |
 
-Line value of a bit: push-pull on owned pin `cfg.ser_pin`, or a J/K pair in pair mode (J = D+ high, D- low for low speed; K the opposite) [choice: low-speed polarity].
+Line value of a bit: push-pull on owned pin `cfg.ser_pin`, or a J/K pair in pair mode. Low-speed polarity: J = D+ low, D- high; K = D+ high, D- low; idle is J; SE0 = both low. Coding order per USB 2.0: CRC over data bits, then bit stuffing, then NRZI.
+
+Coding state reset: `nrzi_level` <- J and `ones` <- 0 at the end of every `EOP` and whenever the lane is halted.
 
 Ready means the serializer is not shifting and has no pending bit. `ser_status` = {busy, crc_ok placeholder 0, bitcnt}.
 

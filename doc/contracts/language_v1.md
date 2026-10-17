@@ -1,6 +1,6 @@
 # Contract language v1 (changes from v0)
 
-Status: DRAFT for freeze (2026-10-17). Base document: `doc/contracts/language_v0.md`. Everything not changed here stays as in v0. Choices made in this draft are marked **[choice]**.
+Status: FROZEN v1 (2026-10-17); approval delegated by the user to the agent. Base document: `doc/contracts/language_v0.md`. Everything not changed here stays as in v0. Choices made in this draft are marked **[choice]**.
 
 ## C1. Time unit: steps of a lane (decision G1)
 

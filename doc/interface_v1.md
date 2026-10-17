@@ -1,6 +1,6 @@
 # Interface contract v1 (shared by spec and RTL)
 
-Status: DRAFT for freeze (2026-10-17), with `doc/isa/isa_v1.md`. Monitor-engine programming registers (section 7) are reserved here and specified at plan step 6 as interface v1.1. Choices made in this draft are marked **[choice]**.
+Status: FROZEN v1 (2026-10-17), with `doc/isa/isa_v1.md`; approval delegated by the user to the agent. Monitor-engine programming registers (section 7) are reserved here and specified at plan step 6 as interface v1.1. Choices made in this draft are marked **[choice]**.
 
 ## 1. Boundary and reset
 
