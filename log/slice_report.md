@@ -118,4 +118,4 @@ equivalent, 12 timeout, 20 not run (stopped; resumable).
 | B (independent oracles) measured on a mutant set | met: 446 mutants, kill matrix |
 | verification runtime fits local compute | met: base suite ~30 s (excluding the anyinit experiment); campaign ~23 min |
 | flow equivalence to a synthesised netlist | met for the generic netlist; not for SG13CMOS5L |
-| silicon path (C) exercised | not started: wrapper, CI, pads |
+| silicon path (C) exercised | met 2026-10-17 for both cores: TT CMOS5L precheck + gate-level replay green, RTL == final netlist (E5/E5m); see log/build_path_report.md. Pads and silicon: not verifiable pre-shuttle |
