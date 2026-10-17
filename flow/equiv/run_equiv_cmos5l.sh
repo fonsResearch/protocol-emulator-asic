@@ -12,16 +12,32 @@
 # Negative controls (must FAIL): N1 uo_out[0] inverted (observable at once), N2 uio_in[5] input
 # buffer replaced by an inverter (needs a loaded program to become visible).
 #
-# usage: flow/equiv/run_equiv_cmos5l.sh <ci-artifacts-dir> [timeout_s]   (repo root, tools/env.sh)
+# Macro variant (VARIANT=macro): the RTL side is the wrapper + pemu_core_macro.v, and BOTH sides use the
+# unmodified IHP functional model of RM_IHPSG13_1P_64x16_c2 (rtl/macros, -DFUNCTIONAL) for the macro
+# instance, so the check covers all standard-cell logic around the SRAM; E1 relates that model to the
+# behavioural memory of pemu_core. SRAM-model registers start at zero like every other flop.
+#
+# usage: [VARIANT=flop|macro] flow/equiv/run_equiv_cmos5l.sh <ci-artifacts-dir> [timeout_s]
+#   CI dir layout: GDS_logs*/ and tt_submission*/ (a trailing '-' from the browser download is accepted)
 set -u
 CI=${1:?ci artifacts dir}; TMO=${2:-900}
 TOP=tt_um_dean_protocol_emulator
 W=${WORK:-flow/equiv/work_cmos5l}; mkdir -p "$W"
 LIB=.toolchain/pdk/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/lib/sg13cmos5l_stdcell_typ_1p20V_25C.lib
 [ -f "$LIB" ] || { echo "missing $LIB (run tools/fetch_pdk.sh)"; exit 2; }
-SRC="$CI/GDS_logs/src"   # the RTL exactly as hardened
-N_SYN="$CI/GDS_logs/runs/wokwi/06-yosys-synthesis/$TOP.nl.v"
-N_FIN="$CI/tt_submission/tt_submission/$TOP.v"
+VARIANT=${VARIANT:-flop}
+GD=$(ls -d "$CI"/GDS_logs* | head -1); TS=$(ls -d "$CI"/tt_submission* | head -1)
+SRC="$GD/src"   # the RTL exactly as hardened
+N_SYN="$GD/runs/wokwi/06-yosys-synthesis/$TOP.nl.v"
+N_FIN="$TS/tt_submission/$TOP.v"
+if [ "$VARIANT" = macro ]; then
+  M=rtl/macros/RM_IHPSG13_1P_64x16_c2
+  RTL_SRC="$SRC/$TOP.v $SRC/pemu_core_macro.v"
+  EXTRA="read_verilog -DFUNCTIONAL $M/RM_IHPSG13_1P_64x16_c2.v $M/RM_IHPSG13_1P_core_behavioral.v;"
+else
+  RTL_SRC="$SRC/$TOP.v $SRC/pemu_core.v"; EXTRA=""
+fi
+echo "variant=$VARIANT commit=$(grep -o '"commit": *"[0-9a-f]*' "$TS/tt_submission/commit_id.json" | grep -o '[0-9a-f]*$' | cut -c1-7)"
 
 yosys -q -p "read_liberty -ignore_miss_func $LIB; write_verilog -noattr $W/cells.v" || exit 2
 cat > "$W/miter.v" <<EOF
@@ -37,7 +53,7 @@ prove() {  # <name> <netlist>
   local n=$1 nl=$2
   sed -E "s/^module $TOP([ (])/module ${TOP}_b\\1/" "$nl" > "$W/$n.nl.v"
   grep -q -E "^module ${TOP}_b[ (]" "$W/$n.nl.v" || { echo "$n: rename failed"; return; }
-  yosys -q -l "$W/$n.yosys.log" -p "read_verilog $W/cells.v; read_verilog $SRC/$TOP.v $SRC/pemu_core.v;
+  yosys -q -l "$W/$n.yosys.log" -p "read_verilog $W/cells.v; $EXTRA read_verilog $RTL_SRC;
     read_verilog $W/$n.nl.v; read_verilog $W/miter.v; hierarchy -check -top eq_top; proc -norom; flatten;
     memory -nomap -nordff; memory_map; setundef -zero -init; async2sync;
     opt -keepdc -fast; techmap; opt -keepdc -fast; dffunmap; aigmap; setundef -zero;

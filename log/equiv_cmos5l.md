@@ -25,3 +25,21 @@ uo_out/uio_out/uio_oe in every cycle, starting from the all-zero state of every 
 
 Consequence: chained with A1 (spec == RTL on all pins, zero-init) this gives spec == SG13CMOS5L final netlist on all pins, under the
 union of both sets of assumptions.
+
+## Macro variant: core-macro @ 0f4d84e (CI run 3, 2026-10-17)
+
+`VARIANT=macro flow/equiv/run_equiv_cmos5l.sh <ci-artifacts>/core-macro`. RTL side: wrapper + `pemu_core_macro.v` as hardened. Both sides
+instantiate the unmodified IHP functional model of RM_IHPSG13_1P_64x16_c2 (`rtl/macros`, `-DFUNCTIONAL`), so the check covers all
+standard-cell logic around the SRAM. E1 (log/proofs.md) relates that model to pemu_core's behavioural memory.
+
+| check | netlist side | result | AIG | time |
+|---|---|---|---|---|
+| E4m | LibreLane post-synthesis netlist | **PASS** | 19 in / 1 out, 2240 latches, 14259 AND | 2 s |
+| E5m | final netlist (placed, CTS, resizer, routed) | **PASS** | same | 2 s |
+| N1m (must fail) | final netlist, `uo_out[0]` inverted | FAIL as required, frame 0 | | 0 s |
+| N2m (must fail) | final netlist, `uio_in[5]` buffer replaced by an inverter | FAIL as required, frame 8 | | 0 s |
+
+Regression on the flop variant with the same script revision: E4/E5 PASS, N1/N2 FAIL (unchanged).
+Same assumptions as above (zero initial state, including the SRAM-model array and output register; async2sync; liberty cell semantics).
+Chain for the macro variant: spec ==(A1, zero-init) pemu_core ==(E1) pemu_core_macro + IHP model ==(E5m) final netlist + IHP model.
+The last link treats the SRAM as its IHP functional model; the SRAM's silicon behaviour is outside every claim here.
