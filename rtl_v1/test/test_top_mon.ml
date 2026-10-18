@@ -128,3 +128,112 @@ let%expect_test "structural non-interference between lanes, engine present" =
     lane 1 inputs: other-lane signals reached with OWN boundary 0, without 4110
     |}]
 ;;
+
+(* UART program on uio[1] *)
+let on_pin1 prog =
+  List.map prog ~f:(function
+    | Isa1.Out 1 -> Isa1.Out 2
+    | Oen 1 -> Oen 2
+    | Pin (0, a) -> Pin (1, a)
+    | x -> x)
+;;
+
+let write_store h ~lane img =
+  let b = 0x50 + (8 * lane) in
+  (* consecutive image words from address a0 *)
+  let img = List.sort img ~compare:(fun (a, _) (b, _) -> Int.compare a b) in
+  let a0 = fst (List.hd_exn img) in
+  List.iteri img ~f:(fun k (a, _) -> assert (a = a0 + k));
+  write h (b + 4) [ a0 ];
+  write h (b + 5) (List.concat_map img ~f:(fun (_, w) -> [ w land 0xFF; w lsr 8 ]))
+;;
+
+(* Lane 0 runs a program with the UART package from ROM (units 0, 1); lane 1 runs the same
+   program on uio[1] with the same package loaded into its store (units 6, 7). Both start
+   with one CTRL write and use the same P, so their steps coincide: verdict stamps must be
+   equal. *)
+let lockstep ?(debug = false) ?(quiet = false) ~bad0 ~bad1 () =
+  let rom0 = Compile.compile_exn (Library_v1.uart_tx ~d:3 ~pin:0)
+  and ld1 = Compile.compile_exn (Library_v1.uart_tx ~d:3 ~pin:1) in
+  let h = create ~lib:[ rom0 ] () in
+  let printf fmt = if quiet then Printf.ifprintf stdout fmt else printf fmt in
+  let pr b = if b then Programs_v1.uart_tx_bad_start ~d:3 else Programs_v1.uart_tx ~d:3 in
+  (* lane 0: ROM package *)
+  write h 0x10 [ 0x01 ];
+  write h 0x12 [ 13; 0 ];
+  load h ~lane:0 (pr bad0);
+  set_pkg h ~lane:0 ~idx:0 rom0;
+  (* lane 1: loadable package: header at 0, unit 6 program at 56, unit 7 at 56 + 6 * 12 *)
+  write h 0x20 [ 0x02 ];
+  write h 0x22 [ 13; 0 ];
+  load h ~lane:1 (on_pin1 (pr bad1));
+  let n6 = Array.length ld1.units.(0).code in
+  let img = Mprog.store_image ld1 ~ctx_base:0 ~bases:[ 56; 56 + (6 * n6) ] in
+  write_store h ~lane:1 img;
+  write h 0x5A [ 0 ];
+  write h 0x58 [ 0x80 ];
+  write h 0x70 (Array.to_list ld1.remap);
+  write h 0x59 [ 0x03 ];
+  printf "  loadable, context not loaded: L1 LOAD_UNITS 0x%02X\n" (List.hd_exn (read h 0x59 1));
+  write h 0x01 [ 0x02 ];
+  printf "  RUN L1 refused (ctx not loaded): STATUS 0x%02X L1 FLAGS 0x%02X\n" (List.hd_exn (read h 0x02 1))
+    (List.hd_exn (read h 0x2D 1));
+  write h 0x01 [ 0x00 ];
+  write h 0x59 [ 0x83 ];
+  printf "  after LOAD: L1 LOAD_UNITS 0x%02X (bit5 ctx_loaded)\n" (List.hd_exn (read h 0x59 1));
+  write h 0x22 [ 12; 0 ];
+  write h 0x01 [ 0x02 ];
+  printf "  P=12, two loadable units: STATUS 0x%02X L1 FLAGS 0x%02X\n" (List.hd_exn (read h 0x02 1))
+    (List.hd_exn (read h 0x2D 1));
+  write h 0x01 [ 0x00 ];
+  write h 0x22 [ 13; 0 ];
+  write h 0x19 [ 0xA5 ];
+  write h 0x29 [ 0xA5 ];
+  write h 0x19 [ 0x5A ];
+  write h 0x29 [ 0x5A ];
+  if debug
+  then (
+    let g n = match Hardcaml.Cyclesim.lookup_node_or_reg_by_name h.sim n with
+      | Some x -> Hardcaml.Cyclesim.Node.to_int x | None -> -1 in
+    let c = ref 0 and on = ref false and shown = ref 0 in
+    (Test_top.cycle_hook := fun () ->
+      incr c;
+      if g "lane_running" >= 0 then ();
+      if (g "mon_dbg_issue1" = 1 || g "mon_dbg_tick1" = 1 || g "mon_dbg_act1" = 1) then on := true;
+      if !on && !shown < 40 then (
+        incr shown;
+        printf "c%5d tick %d cur %d act %d pc6 %d pc7 %d irv6 %d irpc6 %d irv7 %d irpc7 %d issue %d u %d ipc %d late %d\n" !c
+        (g "mon_dbg_tick1") (g "mon_dbg_cur1") (g "mon_dbg_act1") (g "mon_dbg_pc6_1") (g "mon_dbg_pc7_1")
+        (g "mon_dbg_irv6_1") (g "mon_dbg_irpc6_1") (g "mon_dbg_irv7_1") (g "mon_dbg_irpc7_1")
+        (g "mon_dbg_issue1") (g "mon_dbg_issu1") (g "mon_dbg_isspc1") (g "mon_dbg_late_now1")));
+    write h 0x01 [ 0x03 ];
+    wait h 1500;
+    Test_top.cycle_hook := fun () -> ())
+  else (write h 0x01 [ 0x03 ]; wait h 1500);
+  let st = List.hd_exn (read h 0x02 1) in
+  let v = verdict h in
+  printf "  P=13 both lanes: STATUS 0x%02X\n  %s\n" st v;
+  v
+;;
+
+let%expect_test "ROM package (lane 0) and the same package loaded (lane 1) in lockstep" =
+  print_endline "correct program on both lanes:";
+  ignore (lockstep ~bad0:false ~bad1:false () : string);
+  print_endline "start bit d+1 on lane 0 only (ROM package):";
+  print_endline (lockstep ~quiet:true ~bad0:true ~bad1:false ());
+  print_endline "start bit d+1 on lane 1 only (loaded package):";
+  print_endline (lockstep ~quiet:true ~bad0:false ~bad1:true ());
+  [%expect {|
+    correct program on both lanes:
+      loadable, context not loaded: L1 LOAD_UNITS 0x03
+      RUN L1 refused (ctx not loaded): STATUS 0x0C L1 FLAGS 0x14
+      after LOAD: L1 LOAD_UNITS 0x23 (bit5 ctx_loaded)
+      P=12, two loadable units: STATUS 0x0C L1 FLAGS 0x14
+      P=13 both lanes: STATUS 0x0F
+      VERDICT 0x00 FIRST_FAIL 0x00 FIRST_BLAME 0x00 UNITS 0x00 FAIL_TIME 0 BLAME_TIME 0
+    start bit d+1 on lane 0 only (ROM package):
+    VERDICT 0x01 FIRST_FAIL 0x13 FIRST_BLAME 0x00 UNITS 0x00 FAIL_TIME 42208 BLAME_TIME 0
+    start bit d+1 on lane 1 only (loaded package):
+    VERDICT 0x09 FIRST_FAIL 0x13 FIRST_BLAME 0x00 UNITS 0x06 FAIL_TIME 42208 BLAME_TIME 0
+    |}]
+;;

@@ -26,7 +26,9 @@ let () =
     in
     let circ =
       CT.create_exn ~name:"pemu_core_v1m"
-        (Top_v1.create ~lib ~sram:(fun l -> Sram256.blackbox ~instance:(sprintf "u_imem_l%d" l)))
+        (Top_v1.create ~lib ~sram:(fun l ->
+           Sram256.blackbox
+             ~instance:(if l < 2 then sprintf "u_imem_l%d" l else sprintf "u_lstore_l%d" (l - 2))))
     in
     Rtl.print Verilog circ;
     exit 0);

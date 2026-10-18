@@ -3,7 +3,9 @@
    Monitor engine and verdict block (section 7): present when a package library [?lib] is
    given (Pemu_monitor_v1.Mon_engine, registers 0x40-0x7F). Then: blame_in of lane L is the
    engine's registered blame of lane L; RUN of a lane with an enabled package is refused
-   unless P >= 7 (assumption T8 of the time-multiplexed engine), shown in FLAGS bit 4;
+   unless P >= min_p (7, or 13 with two loadable units; assumption T8 and the fetch bound) and,
+   in loadable mode, the context is loaded; shown in FLAGS bit 4. Loadable stores: [sram 2]
+   and [sram 3];
    STATUS bits 6/7 and uo_out[1]/[2] carry fail/blame; CTRL bit4 clears the verdict.
    Without [?lib]: fail = blame = 0 and blame_in = 0, as in core v1.
 
@@ -388,7 +390,17 @@ let create_with_debug ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
           ; pop_ev = o.pop_ev; pop_data = o.pop_data; push_ev = o.push_ev
           ; push_data = o.push_data })
       in
-      Pemu_monitor_v1.Mon_engine.create ~clock:i.clock ~rst_sync_n:i.rst_sync_n ~lib
+      (* loadable stores: [sram 2] and [sram 3] (one 256x16 per lane), port tie-offs as the
+         lanes' instruction memories *)
+      let store l (p : Pemu_monitor_v1.Mon_engine.store_port) =
+        (sram (2 + l)
+           { Sram256.I.a_clk = i.clock; a_men = vdd; a_wen = p.wen; a_ren = p.ren; a_addr = p.addr
+           ; a_din = p.din; a_dly = vdd; a_bm = ones 16; a_bist_clk = gnd; a_bist_en = gnd
+           ; a_bist_men = gnd; a_bist_wen = gnd; a_bist_ren = gnd; a_bist_addr = zero 8
+           ; a_bist_din = zero 16; a_bist_bm = zero 16 })
+          .a_dout
+      in
+      Pemu_monitor_v1.Mon_engine.create ~clock:i.clock ~rst_sync_n:i.rst_sync_n ~lib ~store
         ~host:{ wr = spi.wr; addr = spi.addr; wdata = spi.wdata
               ; clr_verdict = ctrl_wr &: bit spi.wdata 4 }
         ~lanes ~ui_in:i.ui_in ~uio_in:i.uio_in)
@@ -401,7 +413,7 @@ let create_with_debug ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
   Array.iteri admit_w ~f:(fun l w ->
     w
     <== (match eng with
-         | Some e -> ~:(e.pkg_en.(l)) |: (ctl.(l).p >=:. 7)
+         | Some e -> ~:(e.pkg_en.(l)) |: (e.ready.(l) &: (ctl.(l).p >=: e.min_p.(l)))
          | None -> vdd));
   (* read mux *)
   let status =

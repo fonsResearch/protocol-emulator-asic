@@ -1,24 +1,30 @@
-(* Monitor engine v1, ROM packages (doc/contracts/monitor_isa_v1.md sections 1, 1a, 6, 8):
-   two time-multiplexed lanes (Mon_lane), a ROM package library selected per lane, host
-   remap registers, the verdict block and the blame outputs to the lanes.
-   Not here yet: the loadable store and units 6/7 fetching from it (section 7); the
-   LOAD_* registers exist and read back but have no effect.
+(* Monitor engine v1 (doc/contracts/monitor_isa_v1.md sections 1, 1a, 6, 7, 8): two
+   time-multiplexed lanes (Mon_lane), a ROM package library selected per lane, a loadable
+   store per lane (user decision 2026-10-18) with context registers, host remap registers, the
+   verdict block and the blame outputs to the lanes.
 
    Register window 0x40-0x7F (interface v1.1 draft):
      0x40 VERDICT   R  bit0 fail, bit1 blame, bit2 first-blame lane, bit3 first-fail lane,
-                       bit4/5 overrun seen L0/L1 (sticky; T8 violated)
+                       bit4/5 overrun seen L0/L1 (T8 violated), bit6/7 fetch late L0/L1 (sticky)
      0x41 FIRST_FAIL  R cause code      0x42 FIRST_BLAME R cause code
      0x43 FIRST_UNITS R first-fail unit [2:0], first-blame unit [6:4]
      0x44-0x47 FAIL_TIME, 0x48-0x4B BLAME_TIME  R  step cycle (32-bit, wraps), LSB first
-     0x4C LSTORE_ADDR W, 0x4D LSTORE_DATA W,P (moved from 0x7C/0x7D, which collide with REMAP)
-     0x50 + 8L PKG R/W while L halted: bit7 enable, [3:0] library index
-       +1 LOAD_UNITS, +2 LOAD_BASE6, +3 LOAD_BASE7  R/W while L halted (no effect yet)
-     0x60 + 16L + i REMAP R/W while L halted: local observable i -> global source [5:0]
-   Context writes (PKG, LOAD_*, REMAP) are accepted only while lane L is halted and its slot
-   sequencer is idle: a lane can halt (fault, CTRL) while slots of its last step are
-   pending, and those slots must see the tables of that step.
-   Verdict clearing: CTRL.CLR_VERDICT (caller passes [clr_verdict]); a firing recorded in
-   the same cycle survives the clear [choice]. *)
+     0x50 + 8L  PKG        R/W ctx  bit7 monitor enable, [3:0] ROM library index
+       +1 LOAD_UNITS R/W ctx  bit0/1: units 6/7 run from the loadable store (loadable mode if
+                              either is set: units 0-5 idle, context from the context
+                              registers); write bit7 = 1: load the context header
+                              R: bit5 ctx_loaded, bit6 loading
+       +2 LOAD_CTX   R/W ctx  word address of the 56-word context header
+       +4 LSTORE_ADDR R/W ctx store word address (auto-increments after each word)
+       +5 LSTORE_DATA W,P ctx low byte, then high byte; the word is written at LSTORE_ADDR
+     0x60 + 16L + i REMAP R/W ctx local observable i -> global source [5:0]
+   "ctx": accepted only while lane L is halted, its slot sequencer is idle and no context load
+   is in progress. Any accepted ctx write except the LOAD strobe clears ctx_loaded.
+   Admission (exported for the core): a lane with the monitor enabled may run only if
+   P >= min_p (7; 13 in loadable mode with both units 6 and 7) and, in loadable mode,
+   ctx_loaded.
+   Verdict clearing: CTRL.CLR_VERDICT (caller passes [clr_verdict]); a firing recorded in the
+   same cycle survives the clear [choice]. *)
 open! Core
 open Hardcaml
 open Signal
@@ -48,6 +54,14 @@ type host =
   ; clr_verdict : Signal.t
   }
 
+(* one 256x16 store per lane; [store l port] returns A_DOUT (registered in the macro) *)
+type store_port =
+  { addr : Signal.t
+  ; din : Signal.t
+  ; wen : Signal.t
+  ; ren : Signal.t
+  }
+
 type firing =
   { fire : Signal.t
   ; unit_ : Signal.t
@@ -61,18 +75,26 @@ type t =
   ; fail : Signal.t
   ; blame : Signal.t
   ; blame_to_lane : Signal.t array (* registered *)
-  ; pkg_en : Signal.t array (* lane L has an enabled package (T8 admission applies) *)
+  ; pkg_en : Signal.t array (* lane L has the monitor enabled (admission applies) *)
+  ; min_p : Signal.t array (* 16 bits *)
+  ; ready : Signal.t array (* ROM mode, or loadable mode with the context loaded *)
   ; firings : firing array (* per lane, for tests *)
   }
 
-let is_port a = a ==:. 0x4D
+let is_port a = (a ==:. 0x55) |: (a ==:. 0x5D)
+
+(* mux over the library; a one-package library needs no select *)
+let lmux_idx idx = function
+  | [ x ] -> x
+  | l -> mux idx l
+;;
 
 (* ---- package library tables, selected by a 4-bit index ---- *)
 let lib_tables (lib : M.t list) ~idx ~remap : S.tables * Signal.t array =
   let tabs = List.map lib ~f:S.tables_of_package in
   let n = List.length lib in
   if n = 0 then raise_s [%message "empty package library"];
-  let pick f = mux idx (List.map tabs ~f) in
+  let pick f = lmux_idx idx (List.map tabs ~f) in
   let arr len f = Array.init len ~f:(fun k -> pick (fun (t : S.tables) -> f t k)) in
   let in_lib = idx <:. n in
   let tables : S.tables =
@@ -93,7 +115,7 @@ let lib_tables (lib : M.t list) ~idx ~remap : S.tables * Signal.t array =
   let present =
     Array.init S.n_units ~f:(fun k ->
       in_lib
-      &: mux idx (List.map lib ~f:(fun p -> if k < Array.length p.units then vdd else gnd)))
+      &: lmux_idx idx (List.map lib ~f:(fun p -> if k < Array.length p.units then vdd else gnd)))
   in
   tables, present
 ;;
@@ -115,54 +137,251 @@ let lib_fetch (lib : M.t list) ~idx u pc =
            in
            mux2 (pc <:. n) (mux (select pc (aw - 1) 0) words) (zero M.instr_width))))
   in
-  mux idx (List.map lib ~f:per_pkg)
+  lmux_idx idx (List.map lib ~f:per_pkg)
 ;;
 
-let create ~clock ~rst_sync_n ~(lib : M.t list) ~(host : host) ~(lanes : lane_view array)
-  ~ui_in ~uio_in =
+(* behavioural 256x16 store for engine-level simulation (single port, synchronous read,
+   write has priority; DOUT holds otherwise; read-during-write returns the new word) *)
+let behavioural_store ~clock (p : store_port) =
+  let spec = Reg_spec.create ~clock () in
+  let words =
+    Array.init 256 ~f:(fun a ->
+      let q = wire 16 in
+      let r = reg spec (mux2 (p.wen &: (p.addr ==:. a)) p.din q) in
+      q <== r;
+      r)
+  in
+  let dq = wire 16 in
+  let d = reg spec (mux2 p.wen p.din (mux2 p.ren (mux p.addr (Array.to_list words)) dq)) in
+  dq <== d;
+  d
+;;
+
+let create ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> Signal.t)
+  ~(host : host) ~(lanes : lane_view array) ~ui_in ~uio_in =
   let spec = Reg_spec.create ~clock ~clear:~:rst_sync_n () in
   let wr_at a = host.wr &: (host.addr ==:. a) in
   (* free-running cycle counter (wraps) *)
   let now = wire 32 in
   let now_q = reg spec now -- "mon_now" in
   now <== now_q +:. 1;
-  let idle = Array.init 2 ~f:(fun _ -> wire 1) in
-  let regs_lane l =
-    let halted = ~:(lanes.(l).running) &: idle.(l) in
-    let r8 off name = reg spec ~enable:(wr_at (0x50 + (8 * l) + off) &: halted) host.wdata -- name in
-    let pkg = r8 0 (sprintf "mon_pkg%d" l)
-    and load_units = r8 1 (sprintf "mon_load_units%d" l)
-    and base6 = r8 2 (sprintf "mon_load_base6_%d" l)
-    and base7 = r8 3 (sprintf "mon_load_base7_%d" l) in
+  let nspec = Reg_spec.create ~clock () in
+  let lane_build l =
+    let v = lanes.(l) in
+    let base = 0x50 + (8 * l) in
+    (* forward wires from Mon_lane *)
+    let busy = wire 1
+    and act = wire 1
+    and cur = wire 3
+    and pc6 = wire 7
+    and pc7 = wire 7 in
+    let loading = wire 1 in
+    let loading_q = reg spec loading -- sprintf "mon_loading%d" l in
+    let ctx_ok = ~:(v.running) &: ~:busy &: ~:loading_q in
+    let wr_ctx off = wr_at (base + off) &: ctx_ok in
+    let r8 off name = reg spec ~enable:(wr_ctx off) host.wdata -- name in
+    let pkg = r8 0 (sprintf "mon_pkg%d" l) in
+    let lu = reg spec ~enable:(wr_ctx 1) (select host.wdata 1 0) -- sprintf "mon_load_units%d" l in
+    let ctx_base = r8 2 (sprintf "mon_load_ctx%d" l) in
     let remap =
       Array.init 16 ~f:(fun k ->
-        reg spec ~enable:(wr_at (0x60 + (16 * l) + k) &: halted) (select host.wdata 5 0)
+        reg spec ~enable:(wr_at (0x60 + (16 * l) + k) &: ctx_ok) (select host.wdata 5 0)
         -- sprintf "mon_remap%d_%d" l k)
     in
-    pkg, [| pkg; uresize (select load_units 1 0) 8; base6; base7 |], remap
+    let en = bit pkg 7
+    and idx = select pkg 3 0 in
+    let ld_mode = lu <>:. 0 in
+    (* ---- host store port: LSTORE_ADDR (+4), LSTORE_DATA (+5, low then high byte) ---- *)
+    let st_wr_data = wr_ctx 5 in
+    let st_phase_d = wire 1 in
+    let st_phase = reg spec st_phase_d -- sprintf "mon_lst_phase%d" l in
+    let st_lo = reg spec ~enable:(st_wr_data &: ~:st_phase) host.wdata -- sprintf "mon_lst_lo%d" l in
+    let st_we = st_wr_data &: st_phase in
+    let st_addr_d = wire 8 in
+    let st_addr = reg spec st_addr_d -- sprintf "mon_lst_addr%d" l in
+    st_addr_d <== mux2 (wr_ctx 4) host.wdata (mux2 st_we (st_addr +:. 1) st_addr);
+    st_phase_d <== mux2 (wr_ctx 4) gnd (mux2 st_wr_data ~:st_phase st_phase);
+    (* ---- context loader: 56 reads from LOAD_CTX ---- *)
+    let start_load = wr_ctx 1 &: bit host.wdata 7 in
+    let ld_k_d = wire 6 in
+    let ld_k = reg spec ld_k_d -- sprintf "mon_ld_k%d" l in
+    let ld_issue = loading_q &: (ld_k <:. M.ctx_words) in
+    ld_k_d <== mux2 start_load (zero 6) (mux2 ld_issue (ld_k +:. 1) ld_k);
+    let cap = reg spec ld_issue -- sprintf "mon_ld_cap%d" l
+    and cap_k = reg spec ld_k -- sprintf "mon_ld_cap_k%d" l in
+    let ld_done = cap &: (cap_k ==:. M.ctx_words - 1) in
+    loading <== (start_load |: (loading_q &: ~:ld_done));
+    let any_ctx_write =
+      List.reduce_exn
+        ((List.map [ 0; 1; 2; 4; 5 ] ~f:wr_ctx)
+         @ List.init 16 ~f:(fun k -> wr_at (0x60 + (16 * l) + k) &: ctx_ok))
+        ~f:( |: )
+    in
+    let ctx_loaded_d = wire 1 in
+    let ctx_loaded = reg spec ctx_loaded_d -- sprintf "mon_ctx_loaded%d" l in
+    ctx_loaded_d <== mux2 ld_done vdd (mux2 any_ctx_write gnd ctx_loaded);
+    (* ---- fetcher (running only): IR_u = store[base_u + 6 pc_eff_u ..] for u = 6, 7 ---- *)
+    let dout = wire 16 in
+    let ir = Array.init 2 ~f:(fun _ -> Array.init 6 ~f:(fun _ -> wire 16)) in
+    let irv = Array.init 2 ~f:(fun _ -> wire 1)
+    and ir_pc = Array.init 2 ~f:(fun _ -> wire 7) in
+    (* context registers (filled by the loader) *)
+    let cfield i hi lo name =
+      reg nspec ~enable:(cap &: (cap_k ==:. i)) (select dout hi lo) -- sprintf "mon_ctx%d_%s" l name
+    in
+    let c_preds =
+      Array.init 16 ~f:(fun k ->
+        if k = 0 || k = 15
+        then zero M.pred_width
+        else cfield ((2 * (k - 1)) + 1) 12 0 (sprintf "pred%d_hi" k) @: cfield (2 * (k - 1)) 15 0 (sprintf "pred%d_lo" k))
+    in
+    let c_windows = Array.init 8 ~f:(fun k -> if k = 0 then zero 12 else cfield (28 + k - 1) 11 0 (sprintf "win%d" k)) in
+    let c_role = Array.init 16 ~f:(fun k -> if k = 0 then gnd else cfield (35 + k - 1) 8 8 (sprintf "crole%d" k)) in
+    let c_val = Array.init 16 ~f:(fun k -> if k = 0 then zero 8 else cfield (35 + k - 1) 7 0 (sprintf "cval%d" k)) in
+    let c_hdr u =
+      let o = 50 + (3 * u) in
+      let n x = sprintf "u%d_%s" (6 + u) x in
+      let start = cfield o 6 0 (n "start")
+      and gen = cfield o 7 7 (n "gen")
+      and gp = cfield o 11 8 (n "gp")
+      and gs = cfield (o + 1) 6 0 (n "gs")
+      and ge = cfield (o + 1) 13 7 (n "ge")
+      and gh = cfield (o + 2) 6 0 (n "gh")
+      and pbase = cfield (o + 2) 15 8 (n "base") in
+      start, (gen, gp, gs, ge, gh), pbase
+    in
+    let h6 = c_hdr 0
+    and h7 = c_hdr 1 in
+    let rom_tables, rom_present = lib_tables lib ~idx ~remap in
+    let lmux a b = mux2 ld_mode a b in
+    let tables : S.tables =
+      { remap
+      ; preds = Array.mapi rom_tables.preds ~f:(fun k r -> lmux c_preds.(k) r)
+      ; windows = Array.mapi rom_tables.windows ~f:(fun k r -> lmux c_windows.(k) r)
+      ; code_role = Array.mapi rom_tables.code_role ~f:(fun k r -> lmux c_role.(k) r)
+      ; code_val = Array.mapi rom_tables.code_val ~f:(fun k r -> lmux c_val.(k) r)
+      ; starts =
+          Array.mapi rom_tables.starts ~f:(fun u r ->
+            match u with
+            | 6 -> lmux (fst3 h6) r
+            | 7 -> lmux (fst3 h7) r
+            | _ -> r)
+      ; guards =
+          Array.mapi rom_tables.guards ~f:(fun u ((a, b, c, d, e) as r) ->
+            let pick (a', b', c', d', e') = lmux a' a, lmux b' b, lmux c' c, lmux d' d, lmux e' e in
+            match u with
+            | 6 -> pick (snd3 h6)
+            | 7 -> pick (snd3 h7)
+            | _ -> r)
+      ; present = rom_tables.present
+      }
+    in
+    let present =
+      Array.mapi rom_present ~f:(fun u r ->
+        en
+        &:
+        match u with
+        | 6 -> mux2 ld_mode (bit lu 0) r
+        | 7 -> mux2 ld_mode (bit lu 1) r
+        | _ -> ~:ld_mode &: r)
+    in
+    let pcs = [| pc6; pc7 |]
+    and pbases = [| trd3 h6; trd3 h7 |] in
+    let f_busy_d = wire 1 in
+    let f_busy = reg spec f_busy_d -- sprintf "mon_f_busy%d" l in
+    let f_u_d = wire 1 and f_pc_d = wire 7 and f_k_d = wire 3 in
+    let f_u = reg spec f_u_d -- sprintf "mon_f_u%d" l
+    and f_pc = reg spec f_pc_d -- sprintf "mon_f_pc%d" l
+    and f_k = reg spec f_k_d -- sprintf "mon_f_k%d" l in
+    let fcap = wire 1 and fcap_u = wire 1 and fcap_pc = wire 7 and fcap_k = wire 3 in
+    (* IR state as it will be after this cycle's capture: a fetch completing now (word 5
+       captured) counts as valid, so it does not restart itself *)
+    let want u =
+      let completing = fcap &: (fcap_u ==:. u) &: (fcap_k ==:. 5) in
+      let valid = irv.(u) |: completing
+      and at = mux2 completing fcap_pc ir_pc.(u) in
+      v.running &: ld_mode &: bit lu u &: ~:(valid &: (at ==: pcs.(u)))
+    in
+    (* a fetch starts combinationally in the cycle the mismatch is seen (word 0 issued then) *)
+    let start_f = ~:f_busy &: (want 0 |: want 1) in
+    let su = mux2 (want 0) gnd vdd in
+    let iss_u = mux2 f_busy f_u su
+    and iss_pc = mux2 f_busy f_pc (mux2 su pc7 pc6)
+    and iss_k = mux2 f_busy f_k (zero 3) in
+    let issue = (f_busy |: start_f) &: v.running in
+    let last = iss_k ==:. 5 in
+    f_busy_d <== (issue &: ~:last);
+    f_u_d <== iss_u;
+    f_pc_d <== iss_pc;
+    f_k_d <== mux2 issue (iss_k +:. 1) f_k;
+    let six_pc = let x = uresize iss_pc 8 in sll x 2 +: sll x 1 in
+    let f_addr = mux2 iss_u pbases.(1) pbases.(0) +: six_pc +: uresize iss_k 8 in
+    fcap <== reg spec issue -- sprintf "mon_f_cap%d" l;
+    fcap_u <== reg spec iss_u -- sprintf "mon_f_cap_u%d" l;
+    fcap_k <== reg spec iss_k -- sprintf "mon_f_cap_k%d" l;
+    fcap_pc <== reg spec iss_pc -- sprintf "mon_f_cap_pc%d" l;
+    Array.iteri ir ~f:(fun u words ->
+      let mine = fcap &: (fcap_u ==:. u) in
+      Array.iteri words ~f:(fun w d ->
+        d <== reg nspec ~enable:(mine &: (fcap_k ==:. w)) dout -- sprintf "mon_ir%d_u%d_w%d" l (6 + u) w);
+      (* valid: cleared when a fetch for u starts or the lane stops; set by the last word *)
+      let starts_u = issue &: (iss_k ==:. 0) &: (iss_u ==:. u) in
+      let v_d = wire 1 in
+      let vq = reg spec v_d -- sprintf "mon_irv%d_u%d" l (6 + u) in
+      v_d <== mux2 (~:(v.running) |: starts_u) gnd (mux2 (mine &: (fcap_k ==:. 5)) vdd vq);
+      irv.(u) <== vq;
+      ir_pc.(u) <== reg spec ~enable:(mine &: (fcap_k ==:. 5)) fcap_pc -- sprintf "mon_ir_pc%d_u%d" l (6 + u));
+    let ir_word u = select (concat_lsb (Array.to_list ir.(u))) (M.instr_width - 1) 0 in
+    (* ---- the store: host writes (halted), loader reads (halted), fetcher reads (running) ---- *)
+    dout
+    <== store l
+          { addr = mux2 st_we st_addr (mux2 ld_issue (ctx_base +: uresize ld_k 8) f_addr)
+          ; din = host.wdata @: st_lo
+          ; wen = st_we
+          ; ren = ld_issue |: issue
+          };
+    (* ---- the lane ---- *)
+    let rom_fetch = lib_fetch lib ~idx in
+    let fetch c pc =
+      let lf = mux2 (c ==:. 7) (ir_word 1) (ir_word 0) in
+      mux2 ld_mode lf (rom_fetch c pc)
+    in
+    let i =
+      { S.I.clock; rst_sync_n; running = v.running; tick = v.tick; ui_in; uio_in
+      ; uo_out = v.uo_out; uio_out = v.uio_out; uio_oe = v.uio_oe; pop_ev = v.pop_ev
+      ; pop_data = v.pop_data; push_ev = v.push_ev; push_data = v.push_data }
+    in
+    let o = Mon_lane.create ~tables ~present ~fetch i in
+    busy <== o.busy;
+    act <== o.act;
+    cur <== o.unit_;
+    pc6 <== o.pc6;
+    pc7 <== o.pc7;
+    (* a loadable unit's slot with a stale IR (admission makes this unreachable; sticky flag) *)
+    let late_now =
+      ld_mode &: act
+      &: (((cur ==:. 6) &: ~:(irv.(0) &: (ir_pc.(0) ==: pc6)))
+          |: ((cur ==:. 7) &: ~:(irv.(1) &: (ir_pc.(1) ==: pc7))))
+    in
+    ignore (late_now -- sprintf "mon_late_now%d" l : Signal.t);
+    let step = rst_sync_n &: v.running &: v.tick in
+    let stamp_l = reg spec ~enable:step now_q -- sprintf "mon_stamp%d" l in
+    let stamp = mux2 step now_q stamp_l in
+    let min_p = mux2 (ld_mode &: (lu ==:. 3)) (of_int ~width:16 13) (of_int ~width:16 7) in
+    let ready = ~:ld_mode |: ctx_loaded in
+    let regs8 =
+      [| pkg; zero 1 @: loading_q @: ctx_loaded @: zero 3 @: lu; ctx_base; zero 8; st_addr; zero 8
+       ; zero 8; zero 8 |]
+    in
+    ( (en, o, { fire = o.fire; unit_ = o.unit_; role = o.role; code = o.code; stamp })
+    , late_now
+    , (regs8, remap)
+    , (min_p, ready) )
   in
-  let lregs = Array.init 2 ~f:regs_lane in
-  let lane_out =
-    Array.init 2 ~f:(fun l ->
-      let pkg, _, remap = lregs.(l) in
-      let en = bit pkg 7
-      and idx = select pkg 3 0 in
-      let tables, present = lib_tables lib ~idx ~remap in
-      let present = Array.map present ~f:(fun p -> p &: en) in
-      let fetch = lib_fetch lib ~idx in
-      let v = lanes.(l) in
-      let i =
-        { S.I.clock; rst_sync_n; running = v.running; tick = v.tick; ui_in; uio_in
-        ; uo_out = v.uo_out; uio_out = v.uio_out; uio_oe = v.uio_oe; pop_ev = v.pop_ev; pop_data = v.pop_data; push_ev = v.push_ev
-        ; push_data = v.push_data }
-      in
-      let o = Mon_lane.create ~tables ~present ~fetch i in
-      let step = rst_sync_n &: v.running &: v.tick in
-      let stamp_l = reg spec ~enable:step now_q -- sprintf "mon_stamp%d" l in
-      let stamp = mux2 step now_q stamp_l in
-      en, o, { fire = o.fire; unit_ = o.unit_; role = o.role; code = o.code; stamp })
-  in
-  Array.iteri lane_out ~f:(fun l (_, o, _) -> idle.(l) <== ~:(o.busy));
+  let built = Array.init 2 ~f:lane_build in
+  let lane_out = Array.map built ~f:(fun (a, _, _, _) -> a) in
+  let late_now = Array.map built ~f:(fun (_, b, _, _) -> b) in
+  let lregs = Array.map built ~f:(fun (_, _, (r, m), _) -> (), r, m) in
   let fir l = let _, _, f = lane_out.(l) in f in
   (* ---- verdict ---- *)
   let clr = host.clr_verdict in
@@ -224,6 +443,13 @@ let create ~clock ~rst_sync_n ~(lib : M.t list) ~(host : host) ~(lanes : lane_vi
       d <== (o.overrun |: (q &: ~:clr));
       q)
   in
+  let late =
+    Array.init 2 ~f:(fun l ->
+      let d = wire 1 in
+      let q = reg spec d -- sprintf "mon_late%d" l in
+      d <== (late_now.(l) |: (q &: ~:clr));
+      q)
+  in
   let blame_to_lane =
     Array.init 2 ~f:(fun l ->
       let f = fir l in
@@ -234,7 +460,7 @@ let create ~clock ~rst_sync_n ~(lib : M.t list) ~(host : host) ~(lanes : lane_vi
     let lo = select a 3 0 in
     let w4 = select a 6 4 in
     let verdict =
-      zero 2 @: overrun.(1) @: overrun.(0) @: fail_lane @: blame_lane @: blame @: fail
+      late.(1) @: late.(0) @: overrun.(1) @: overrun.(0) @: fail_lane @: blame_lane @: blame @: fail
     in
     let w4_0 =
       mux lo
@@ -246,7 +472,7 @@ let create ~clock ~rst_sync_n ~(lib : M.t list) ~(host : host) ~(lanes : lane_vi
     let w4_1 =
       let l = bit lo 3 in
       let off = select lo 2 0 in
-      let regs l = let _, r, _ = lregs.(l) in Array.to_list r @ List.init 4 ~f:(fun _ -> zero 8) in
+      let regs l = let _, r, _ = lregs.(l) in Array.to_list r in
       mux2 l (mux off (regs 1)) (mux off (regs 0))
     in
     let remap_rd l = let _, _, r = lregs.(l) in mux lo (Array.to_list r |> List.map ~f:(fun x -> uresize x 8)) in
@@ -257,6 +483,8 @@ let create ~clock ~rst_sync_n ~(lib : M.t list) ~(host : host) ~(lanes : lane_vi
   ; blame
   ; blame_to_lane
   ; pkg_en = Array.map lane_out ~f:(fun (en, _, _) -> en)
+  ; min_p = Array.map built ~f:(fun (_, _, _, (m, _)) -> m)
+  ; ready = Array.map built ~f:(fun (_, _, _, (_, r)) -> r)
   ; firings = Array.init 2 ~f:fir
   }
 ;;

@@ -15,7 +15,9 @@ let%expect_test "PKG write refused during pending slots" =
       ; push_ev = gnd; push_data = zero 8 })
   in
   let e =
-    Mon_engine.create ~clock:(inp "clock" 1) ~rst_sync_n:(inp "rst_sync_n" 1) ~lib:[ p; p ]
+    let clock = inp "clock" 1 in
+    Mon_engine.create ~clock ~rst_sync_n:(inp "rst_sync_n" 1) ~lib:[ p; p ]
+      ~store:(fun _ port -> Mon_engine.behavioural_store ~clock port)
       ~host:{ wr = inp "wr" 1; addr = inp "addr" 7; wdata = inp "wdata" 8; clr_verdict = gnd }
       ~lanes ~ui_in:(zero 8) ~uio_in:(zero 8)
   in

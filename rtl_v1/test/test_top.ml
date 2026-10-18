@@ -17,6 +17,8 @@ type h =
   ; mutable trace : (int * int * int) list (* uo_out, uio_out, uio_oe per cycle, reversed *)
   }
 
+let cycle_hook : (unit -> unit) ref = ref (fun () -> ())
+
 let cycle h =
   let i = Cyclesim.inputs h.sim
   and o = Cyclesim.outputs ~clock_edge:Before h.sim in
@@ -27,6 +29,7 @@ let cycle h =
         lor (h.ui_hi lsl 3));
   i.uio_in := Bits.of_int ~width:8 h.uio_in;
   Cyclesim.cycle h.sim;
+  !cycle_hook ();
   h.trace <- (Bits.to_int !(o.uo_out), Bits.to_int !(o.uio_out), Bits.to_int !(o.uio_oe)) :: h.trace
 ;;
 

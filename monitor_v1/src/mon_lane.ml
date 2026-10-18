@@ -29,11 +29,20 @@ module O = struct
     ; code : 'a [@bits 8]
     ; overrun : 'a (* a tick while slots of the previous step are pending (assumption broken) *)
     ; busy : 'a (* slots 1-7 of a step are pending in this cycle *)
+    ; act : 'a (* the unit of this cycle's slot evaluates *)
+    ; pc6 : 'a [@bits 7] (* effective pc of units 6/7 at their next slot (lazy mask applied) *)
+    ; pc7 : 'a [@bits 7]
     }
   [@@deriving hardcaml]
 end
 
+(* Proof hooks (formal harnesses only):
+   [only_unit j]: the state entries of units other than j are free inputs (fresh every cycle)
+   instead of registers; sound for properties about slot j only, which reads entry j only.
+   [bug]: planted defects for negative controls. *)
 let create
+  ?only_unit
+  ?(bug : [ `Smask_unlatched ] option)
   ~(tables : S.tables)
   ~(present : Signal.t array)
   ~(fetch : Signal.t -> Signal.t -> Signal.t)
@@ -68,13 +77,19 @@ let create
   let mask_q = reg nspec mask -- "mon_mask" in
   mask <== mux2 (~:running) (ones S.n_units) (mux2 step (zero S.n_units) mask_q);
   let smask = reg nspec ~enable:step mask_q -- "mon_smask" in
-  let eff_mask = mux2 step mask_q smask in
+  let eff_mask =
+    match bug with
+    | Some `Smask_unlatched -> mask_q
+    | None -> mux2 step mask_q smask
+  in
   (* unit state file *)
   let ds = Array.init S.n_units ~f:(fun _ -> List.map S.ustate_widths ~f:wire) in
   let qs =
     Array.mapi ds ~f:(fun u d ->
       List.map2_exn d [ "pc"; "k"; "m0"; "m1"; "reg"; "stopped" ] ~f:(fun d n ->
-        reg nspec d -- sprintf "mon_u%d_%s" u n))
+        match only_unit with
+        | Some j when j <> u -> input (sprintf "free_in_u%d_%s" u n) (width d)
+        | _ -> reg nspec d -- sprintf "mon_u%d_%s" u n))
   in
   let sel l = mux cur (Array.to_list l) in
   let st_raw =
@@ -87,6 +102,14 @@ let create
     S.ustate_of_list
       (List.map2_exn (S.ustate_to_list rst_st) (S.ustate_to_list st_raw) ~f:(fun r q ->
          mux2 masked r q))
+  in
+  (* pc a unit will use at its next slot. If its slot in the current window is still pending
+     the step mask applies (smask, latched at the tick); otherwise the accumulating mask. In
+     the tick cycle itself smask is not latched yet, and mask_q is what it will latch. *)
+  let pc_eff u =
+    let pending = busy_q &: (slot_q <=:. u) in
+    let m = mux2 pending (bit smask u) (bit mask_q u) in
+    mux2 m tables.starts.(u) (List.hd_exn qs.(u))
   in
   let present_cur = sel present in
   let act = active &: present_cur &: ~:(st.stopped) in
@@ -113,6 +136,9 @@ let create
   ; code = mux2 fire (mux code_idx (Array.to_list tables.code_val)) (zero 8)
   ; overrun = step &: busy_q
   ; busy = busy_q
+  ; act
+  ; pc6 = pc_eff 6
+  ; pc7 = pc_eff 7
   }
 ;;
 

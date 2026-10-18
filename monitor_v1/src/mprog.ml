@@ -192,3 +192,62 @@ let decode_pred bits : pred =
   { l0 = lit (List.take bits 9); l1 = lit (List.sub bits ~pos:9 ~len:9)
   ; l2 = lit (List.sub bits ~pos:18 ~len:9); or1 = List.nth_exn bits 27; or2 = List.nth_exn bits 28 }
 ;;
+
+(* ---- loadable store image (doc/contracts/monitor_isa_v1.md section 7) ----
+   Context header, 56 words at [ctx_base]:
+     0-27   predicates 1-14: predicate k at 2(k-1) (bits 15:0) and 2(k-1)+1 (bits 28:16)
+     28-34  windows 1-7 (12 bits)
+     35-49  codes 1-15: bit 8 role (1 = blame), bits 7:0 code
+     50-52  unit 6 header: start | gen << 7 | gp << 8; gs | ge << 7; gh | base << 8
+     53-55  unit 7 header, same layout
+   Program of unit 6/7 at its base: instruction a in words base + 6a .. base + 6a + 5, the
+   82-bit encoding LSB first, 16 bits per word. Package watchers 0 and 1 map to units 6, 7. *)
+let ctx_words = 56
+
+let bits_to_int bs = List.foldi bs ~init:0 ~f:(fun k a b -> if b then a lor (1 lsl k) else a)
+
+let store_image (p : t) ~ctx_base ~bases =
+  let nu = Array.length p.units in
+  if nu > 2 then raise_s [%message "a loadable package has at most 2 watchers" (nu : int)];
+  let hdr = Array.create ~len:ctx_words 0 in
+  for k = 1 to 14 do
+    let pr = p.preds.(k) in
+    let v =
+      if equal_pred pr pred_true || equal_pred pr pred_false then 0 else bits_to_int (encode_pred pr)
+    in
+    hdr.(2 * (k - 1)) <- v land 0xFFFF;
+    hdr.((2 * (k - 1)) + 1) <- v lsr 16
+  done;
+  for k = 1 to 7 do
+    hdr.(28 + k - 1) <- p.windows.(k)
+  done;
+  for k = 1 to 15 do
+    hdr.(35 + k - 1)
+    <- (match p.codes.(k) with
+        | None -> 0
+        | Some (r, c) -> ((match r with Lang.Blame -> 1 | Lang.Fail -> 0) lsl 8) lor c)
+  done;
+  let progs =
+    List.concat
+      (List.init nu ~f:(fun u ->
+         let up = p.units.(u) in
+         let base = List.nth_exn bases u in
+         let gen, gp, gs, ge, gh =
+           match up.guard with None -> 0, 0, 0, 0, 0 | Some (g, s, e, h) -> 1, g, s, e, h
+         in
+         let o = 50 + (3 * u) in
+         hdr.(o) <- up.start lor (gen lsl 7) lor (gp lsl 8);
+         hdr.(o + 1) <- gs lor (ge lsl 7);
+         hdr.(o + 2) <- gh lor (base lsl 8);
+         List.concat
+           (List.mapi (Array.to_list up.code) ~f:(fun a ins ->
+              let bits = encode_instr ins in
+              List.init 6 ~f:(fun w ->
+                let chunk = List.filteri bits ~f:(fun i _ -> i / 16 = w) in
+                base + (6 * a) + w, bits_to_int chunk)))))
+  in
+  let img = List.init ctx_words ~f:(fun i -> ctx_base + i, hdr.(i)) @ progs in
+  List.iter img ~f:(fun (a, _) ->
+    if a < 0 || a > 255 then raise_s [%message "store image out of range" (a : int)]);
+  img
+;;
