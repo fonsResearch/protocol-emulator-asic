@@ -19,7 +19,7 @@ let%expect_test "PKG write refused during pending slots" =
     Mon_engine.create ~loadable:[| true; true |] ~clock ~rst_sync_n:(inp "rst_sync_n" 1) ~lib:[ p; p ]
       ~store:(fun _ port -> Mon_engine.behavioural_store ~clock port)
       ~host:{ wr = inp "wr" 1; addr = inp "addr" 7; wdata = inp "wdata" 8; clr_verdict = gnd }
-      ~lanes ~ui_in:(zero 8) ~uio_in:(zero 8)
+      ~lanes ~ui_in:(zero 8) ~uio_in:(zero 8) ()
   in
   let circ = Circuit.create_exn ~name:"eng" [ output "pkg0" (e.read (of_int ~width:7 0x50)) ] in
   let sim = Cyclesim.create circ in

@@ -1,6 +1,6 @@
 # Monitor engine ISA v1
 
-Status: DRAFT (2026-10-18), plan step 6. This document fixes the items that `language_v1.md` section C8 left to this step. User decisions: 8 watcher units per lane; a loadable store in one extra RM_IHPSG13_1P_256x16_c2_bm_bist shared by both lanes, used by 4 loadable-capable units (2 per lane) with a minimum-divisor rule. Choices made here are marked **[choice]**.
+Status: implemented and verified (2026-10-18), plan step 6; results in `log/monitor_engine.md`. This document fixes the items that `language_v1.md` section C8 left to this step. User decisions: 8 watcher units per lane; a loadable store in one extra RM_IHPSG13_1P_256x16_c2_bm_bist shared by both lanes, used by 4 loadable-capable units (2 per lane) with a minimum-divisor rule. Choices made here are marked **[choice]**.
 
 Implementations, all from this document:
 - `monitor_v1/src/lang.ml`: language v1 EDSL;
@@ -42,6 +42,7 @@ Implementations, all from this document:
 - **Refinement statement.** A firing of unit u in step t of `Mon_spec` appears in `Mon_lane` in cycle t + u, with the same role and code, and `Mon_lane` fires nothing else. This holds for steps whose window t..t+7 contains no reset cycle. A reset clears the verdict, so an in-flight step cut short by reset has no observable effect.
 - **Verdict timestamps.** Firings are stamped with the step cycle t, not the slot cycle, so verdict contents equal those of the parallel engine.
 - **Blame release latency [choice, flagged for review].** All monitor blames reach the lane through a register, so a blame found in step t is consumed by the lane at its next step. The parallel engine would gate step t itself, combinationally. Theorem U is unaffected (a fail still needs a blame at or before it). The cost: the lane executes one more step after a blame. The benefit: no combinational monitor-to-lane path, and the same latency for every unit.
+- **Refinement proof R1 (formal/src/mon_ref.ml).** Proved for every unit (u0-u7, ABC k-induction, 3-5 s each): the statement above, under T8, with arbitrary constant tables and an arbitrary instruction source (a fetch-address check makes the word abstraction sound for any ROM or store). Strengthening invariants, part of the checked property: ghost pre-step state, ghost successor, masked state-file correspondence, sequencer consistency. Negative controls (unlatched step mask; T8 relaxed to 7) fail, with replayed counterexamples.
 - **Measured (Yosys/ABC, IHP sg13cmos5l, free tables, one lane, no wire load):** parallel `Mon_spec` 190,884 um^2 typ (579 flops); time-multiplexed `Mon_lane` 118,782 um^2 typ (626 flops); logic delay at the slow corner 7.67 ns and 7.41 ns respectively. The instruction-fetch path is excluded, because fetch is a free input in this measurement.
 
 ## 2. Observation per step
@@ -132,30 +133,58 @@ In each step of the lane, for a unit that is not stopped:
 
 ## 6. Verdict block and blame release
 
-- **State.** Sticky `fail_flag` and `blame_flag`; first-fail and first-blame cause codes (8 bits) with 32-bit cycle timestamps; and the lane attribution of the first blame.
-- **Clearing.** The verdict is cleared by CTRL.CLR_VERDICT.
-- **Blame release (ISA section 3, decision V1).** A blame fired by a unit of lane L asserts `blame_in` of lane L in that cycle.
+- **State.** Per lane and role (fail, blame): a sticky flag, and the first firing's cause code (8 bits), unit (3 bits) and step stamp. The stamp is a 32-bit free-running cycle count; it wraps after 2^32 cycles (71.6 s at 60 MHz). A global first-lane bit per role is decided when a lane records its first firing of that role. The lane precedes the other lane if the other has no record (now or in this cycle), or if the other's stamp is 1-7 cycles later. On equal stamps, lane 0 precedes. Stamps differ by at most 7 whenever the order is in question, so the comparison is exact modulo 2^32, wrap included.
+- **Sticky overrun flags** per lane record any T8 violation (VERDICT bits 4-5).
+- **Clearing.** CTRL.CLR_VERDICT clears flags and overrun bits. A firing recorded in the same cycle survives **[choice]**. A firing of a step in flight (stamp before the clear, recorded up to 7 cycles after it) may be recorded after the clear. Code, unit and time read 0 while their flag is clear.
+- **Blame release (ISA section 3, decision V1).** A blame fired by a unit of lane L asserts lane L's `blame_in` in the next cycle (registered; section 1a).
+- **Pins.** `uo_out[1]` = fail flag, `uo_out[2]` = blame flag; STATUS bits 6/7.
 
 ## 7. Loadable store and fetch
 
-- **Store.** One RM_IHPSG13_1P_256x16_c2_bm_bist with 256 words. A program is a header plus instructions, at 6 words per instruction.
-- **Unit side.** Each loadable-capable unit has an 82-bit instruction register (IR) and a fetch state. After a completion that changes `pc`, the unit requests the 6 words of the new instruction. A single arbiter serves requests in fixed order, one SRAM read per cycle with 1-cycle latency.
-- **Minimum divisor [choice].** A package that uses loadable units may be started only if P ≥ 6·u + 1, where u is the number of its units running from the loadable store (u ≤ 2 per lane, so P ≥ 13 for one lane). If both lanes use loadable units, P ≥ 25 on each. This guarantees that the IR holds the new instruction before the next step. The loader refuses RUN otherwise (FLAGS bit 4, interface v1.1).
-- **Proof obligation (V6).** In every step of a loadable unit, IR = store[pc] (fetch lemma, as L1 for the lane). The engine datapath equals the ISA model for any instruction (as L2).
+User decisions 2026-10-18: one RM_IHPSG13_1P_256x16_c2_bm_bist per loadable lane; a loadable package's context comes from context registers loaded from the store; default build: lane 1 loadable, lane 0 ROM only (`Top_v1 ?loadable`, `Mon_engine ~loadable`).
+
+- **Loadable mode** (LOAD_UNITS bit 0/1 set): units 6/7 run from the store; units 0-5 of the lane are idle. Predicates, windows, codes and the unit 6/7 headers come from the context registers; REMAP stays a host register.
+- **Store image** (`Mprog.store_image`). Context header: 56 words at LOAD_CTX.
+  - 0-27: predicates 1-14 (word 2(k-1) = bits 15:0, next word = bits 28:16);
+  - 28-34: windows 1-7;
+  - 35-49: codes 1-15 (bit 8 role, 7:0 code);
+  - 50-52 / 53-55: unit 6 / 7 header (start, guard enable/predicate in w0; guard range in w1; handler and program base in w2).
+
+  Instruction a of a unit occupies words base + 6a .. base + 6a + 5 (82 bits, LSB first). Package watchers 0 and 1 map to units 6 and 7.
+- **Loader.** Writing LOAD_UNITS with bit 7 = 1 (context write rules) reads the 56 header words, one per cycle, into the context registers, then sets `ctx_loaded`. Any other accepted context or store write clears `ctx_loaded`.
+- **Fetcher** (`Mon_engine.fetcher`). Enabled while the lane runs or slots of its last step are pending. It keeps IR_u = store[base_u + 6 pc_eff_u .. + 5] for u = 6, 7, where pc_eff is the pc the unit will use at its next slot (lazy mask applied). A fetch starts in the cycle the mismatch appears; one read per cycle, data one cycle later. Unit 6's next instruction is ready 7 cycles after its slot; with both units, unit 7's is ready exactly at its next slot when P = 12.
+- **Admission.** RUN of a lane with the monitor enabled needs P ≥ min_p and, in loadable mode, `ctx_loaded`. min_p = 7, or 13 with both loadable units [choice: 12 is sufficient, proved by the P = 11 negative control failing and the P = 13 proof; 13 keeps one cycle of margin].
+- **Sticky fetch_late flag** (VERDICT bits 6/7). Set by a loadable slot whose IR is not valid for its pc. The admission rule makes this unreachable (F1).
+- **Proofs** (formal/src/mon_fetch.ml):
+  - F0: pc_eff changes only after the unit's own slot, or after a non-running cycle while no slot of it is pending. Slots occur exactly at t + u, and a slot fetches with pc_eff.
+  - F1t (timing): under the admission bound and T8, every loadable slot finds a valid IR for its pc.
+  - F1d (data): every valid IR word equals the store word at its address (symbolic address).
+  - F2 (loader): while `ctx_loaded`, every context register bit equals the stored header bit (symbolic address, host writes free).
+  - Composition with R1: a loadable unit's slot evaluates the instruction the store holds at its pc, with the context the store held at LOAD.
 
 ## 8. Host interface (interface v1.1, registers 0x40-0x7F) [choice]
 
+As implemented in `monitor_v1/src/mon_engine.ml` and `rtl_v1/src/top_v1.ml` (`?lib`).
+
 | addr | name | access | content |
 |---|---|---|---|
-| 0x40 | VERDICT | R | bit0 fail, bit1 blame, bit2 first-blame lane |
+| 0x40 | VERDICT | R | bit0 fail, bit1 blame, bit2 first-blame lane, bit3 first-fail lane, bit4/5 overrun seen L0/L1 (T8 violated), bit6/7 fetch late L0/L1 |
 | 0x41, 0x42 | FIRST_FAIL, FIRST_BLAME | R | cause codes |
-| 0x44-0x47 | FAIL_TIME | R | 32-bit cycle count, LSB first |
-| 0x48-0x4B | BLAME_TIME | R | 32-bit cycle count |
-| 0x50 + 8L | PKG | R/W while lane L halted | bit7 enable, [3:0] ROM package index |
-| +1 | LOAD_UNITS | R/W | bit0/1: units 6/7 of lane L run from the loadable store |
-| +2 | LOAD_BASE6, LOAD_BASE7 | R/W | loadable header word address >> 2 (+2 and +3) |
-| 0x60 + 16L .. | REMAP | R/W while halted | 16 bytes: local observable i → global source [5:0] |
-| 0x7C | LSTORE_ADDR | W | loadable store word address (auto-increment) |
-| 0x7D | LSTORE_DATA | W, P | low byte, then high byte of a 16-bit word |
+| 0x43 | FIRST_UNITS | R | first-fail unit [2:0], first-blame unit [6:4] |
+| 0x44-0x47 | FAIL_TIME | R | step stamp, 32-bit, LSB first |
+| 0x48-0x4B | BLAME_TIME | R | step stamp |
+| 0x50 + 8L | PKG | R/W, context | bit7 monitor enable, [3:0] ROM library index (an index outside the library = no units) |
+| +1 | LOAD_UNITS | R/W, context | bit0/1: units 6/7 run from the store (loadable mode); write bit7 = 1: LOAD the context header. R: bit5 ctx_loaded, bit6 loading |
+| +2 | LOAD_CTX | R/W, context | word address of the 56-word context header |
+| +4 | LSTORE_ADDR | R/W, context | store word address (auto-increments after each word) |
+| +5 | LSTORE_DATA | W, P, context | low byte, then high byte; the word is written at LSTORE_ADDR |
+| 0x60 + 16L + i | REMAP | R/W, context | local observable i -> global source [5:0]; values 50-63 read constant 0 |
+
+On a lane built without the loadable path (lane 0 in the default build), LOAD_UNITS writes have no effect and the store ports have no store.
+
+- **Context registers** accept writes only while lane L is halted, its slot sequencer is idle and no LOAD is in progress. A lane can halt (fault, CTRL) while slots 1-7 of its last step are pending, and those slots must see the tables of that step. Found while setting up the refinement proof; directed test in `monitor_v1/test/test_mon_engine.ml`.
+- **Observation masking (user decision 2026-10-18).** Lane L's monitor observes lane L's `uio_out`/`uio_oe` masked by OWN_L, and only lane L's `xo` bits of `uo_out` (other `uo_out` bits read 0). Pad inputs `ui_in`/`uio_in` are not masked. Structural lane non-interference holds with the engine present (`rtl_v1/test/test_top_mon.ml`).
+- **Admission.** RUN is refused unless P ≥ min_p and the context is ready (section 7). FLAGS bit 4 (lane block +13) shows a refused RUN.
+- **CTRL bit 4** = CLR_VERDICT (write 1).
 
 Per C9, the theorem of a package covers exactly the ROM index, remap, loadable contents and P with which it was proved.

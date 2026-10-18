@@ -287,10 +287,14 @@ let unit_step ~pb ~win ~guard ~w ~(st : ustate) ~act ~(ev : events) =
   next, fire, code_idx
 ;;
 
-let create ~(tables : tables) ~(fetch : int -> Signal.t -> Signal.t) (i : _ I.t) =
+(* Proof hooks (formal harnesses only): [front] supplies the observation front end (one
+   shared instance of [observe]); [probe u st] receives unit u's state registers. *)
+let create ?front ?probe ~(tables : tables) ~(fetch : int -> Signal.t -> Signal.t) (i : _ I.t) =
   (* unit registers have no clear: under reset [running] is low, so restart loads them *)
   let nspec = Reg_spec.create ~clock:i.clock () in
-  let running, step, bank = observe ~tables i in
+  let running, step, bank =
+    match front with Some f -> f | None -> observe ~tables i
+  in
   let pb idx = mux idx bank in
   let win idx = mux idx (Array.to_list tables.windows) in
   let crole idx = mux idx (Array.to_list tables.code_role)
@@ -307,6 +311,7 @@ let create ~(tables : tables) ~(fetch : int -> Signal.t -> Signal.t) (i : _ I.t)
             reg nspec d -- sprintf "mon_u%d_%s" u n)
         in
         let st = ustate_of_list qs in
+        Option.iter probe ~f:(fun f -> f u st);
         let act = step &: ~:(st.stopped) in
         let w = fetch u st.pc in
         let next, fire, code_idx =

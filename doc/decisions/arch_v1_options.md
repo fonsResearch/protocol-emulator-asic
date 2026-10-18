@@ -225,3 +225,16 @@ Options: (a) 50 MHz; (b) 60 MHz; (c) 48 or 40 MHz; (d) any clock, with a fractio
 6. V1-V7.
 
 Steps 1-4 fix the area budget; the rest can follow in any order before the freeze.
+
+
+## M. Monitor engine (plan step 6, 2026-10-18)
+
+| item | decision | basis |
+|---|---|---|
+| M1 watcher units | 8 per lane (user) | language v1 packages need up to 8 watchers |
+| M2 engine structure | time-multiplexed units, parallel predicate bank (user, option C); assumption T8: steps >= 8 cycles apart | one lane with free tables: parallel 190,884 um2, multiplexed 118,782 um2 (Yosys typ) |
+| M3 lane isolation | lane L's monitor observes only lane L's OWN-masked outputs (user) | keeps structural non-interference with the engine |
+| M4 loadable context | context registers loaded from the store (user) | full loadable contracts |
+| M5 loadable store | one 256x16 per loadable lane (user) | no shared-store channel between lanes; per-lane admission |
+| M6 loadable lanes | lane 1 only in the default build (user) | std-cell area: ROM only 183.6k, lane 1 loadable 353.8k, both 524.5k um2 (both = ~63% of 8x4 placeable area at an estimated 1.3x post-route growth, vs 60% target) |
+| M7 agent choices, flagged | restart rule (watchers restart in every non-running cycle); registered blame (one extra step before release); firing in the same cycle as a verdict clear survives; min_p 13 (12 suffices); register layout extras (VERDICT bits 3-7, FIRST_UNITS); proof engine `ind` for strengthened harnesses | see doc/contracts/monitor_isa_v1.md and log/monitor_engine.md |

@@ -404,7 +404,7 @@ let create_with_debug ?(loadable = [| false; true |]) ?lib ~(sram : int -> Lane_
       Pemu_monitor_v1.Mon_engine.create ~loadable ~clock:i.clock ~rst_sync_n:i.rst_sync_n ~lib ~store
         ~host:{ wr = spi.wr; addr = spi.addr; wdata = spi.wdata
               ; clr_verdict = ctrl_wr &: bit spi.wdata 4 }
-        ~lanes ~ui_in:i.ui_in ~uio_in:i.uio_in)
+        ~lanes ~ui_in:i.ui_in ~uio_in:i.uio_in ())
   in
   let fail, blame =
     match eng with Some e -> e.fail, e.blame | None -> gnd, gnd

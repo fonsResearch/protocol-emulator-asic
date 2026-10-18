@@ -69,19 +69,25 @@ let harness ?debug ?bug ?(spacing = 8) ~j ~name () =
     ; present = Array.init S.n_units ~f:(fun u -> u = j)
     }
   in
+  (* one shared observation front end (both circuits instantiate the same deterministic
+     [observe] on the same inputs from the same reset state) *)
+  let front = S.observe ~tables i in
+  let _, step, bank = front in
+  let bankv = concat_lsb bank in
   (* spec: unit j only, free instruction word, its fetch address captured *)
   let w_spec = inp "free_w" M.instr_width in
   let spec_pc = wire 7 in
+  let spec_st = ref None in
   let so =
-    S.create ~tables
+    S.create ~front ~probe:(fun _ st -> spec_st := Some st) ~tables
       ~fetch:(fun u pc ->
         assert (u = j);
         spec_pc <== pc;
         w_spec)
       i
   in
-  let step = rst_sync_n &: i.running &: i.tick in
-  (* ghosts of step t: word, fetch address, firing of unit j *)
+  let spec_st = Option.value_exn !spec_st in
+  (* ghosts of step t *)
   let ghost x n = reg gs ~enable:step x -- ("ghost_" ^ n) in
   let g_w = ghost w_spec "w"
   and g_pc = ghost spec_pc "pc"
@@ -90,17 +96,27 @@ let harness ?debug ?bug ?(spacing = 8) ~j ~name () =
   and s_code = List.nth_exn so.codes j in
   let g_fire = ghost s_fire "fire"
   and g_role = ghost s_role "role"
-  and g_code = ghost s_code "code" in
+  and g_code = ghost s_code "code"
+  and g_bank = ghost bankv "bank"
+  and g_pre =
+    S.ustate_of_list
+      (List.mapi (S.ustate_to_list spec_st) ~f:(fun k x -> ghost x (sprintf "pre%d" k)))
+  and g_ev : S.events =
+    { pop_ev = ghost i.pop_ev "pop_ev"; pop_data = ghost i.pop_data "pop_data"
+    ; push_ev = ghost i.push_ev "push_ev"; push_data = ghost i.push_data "push_data" }
+  in
   (* lane: word = spec word of this step (slot 0) or the ghost (slots 1-7) *)
   let lane_pc = wire 7 in
+  let lint = ref None in
   let present = Array.init S.n_units ~f:(fun u -> if u = j then vdd else inp (sprintf "free_in_present%d" u) 1) in
   let lo =
-    L.create ~only_unit:j ?bug ~tables ~present
+    L.create ~front ~probe:(fun x -> lint := Some x) ~only_unit:j ?bug ~tables ~present
       ~fetch:(fun _cur pc ->
         lane_pc <== pc;
         mux2 step w_spec g_w)
       i
   in
+  let lint = Option.value_exn !lint in
   (* window bookkeeping *)
   let since_d = wire 4 in
   let since = reg gs since_d -- "h_since" in
@@ -114,12 +130,12 @@ let harness ?debug ?bug ?(spacing = 8) ~j ~name () =
   (* slot window without reset: for j = 0 the window is the step cycle itself (never a reset
      cycle); for j > 0, no reset cycle after the step up to and including this cycle *)
   let clean = if j = 0 then vdd else ~:(rst_win |: ~:rst_sync_n) in
-  (* environment assumption T8 (sticky) *)
+  (* environment assumption T8 (sticky; stored inverted so that init 0 = holds so far) *)
   let env_ok_d = wire 1 in
   let env_ok = reg gs env_ok_d -- "h_env_ok_n" in
-  (* stored inverted so that init 0 = assumption holds so far *)
   env_ok_d <== (env_ok |: (step &: seen &: (since <:. spacing)));
   let ok_so_far = ~:env_ok_d in
+  (* ---- refinement property ---- *)
   let lane_fj = lo.fire &: (lo.unit_ ==:. j) in
   let at_slot = if j = 0 then step else seen &: (since ==:. j) in
   let exp_fire, exp_role, exp_code, exp_pc =
@@ -131,11 +147,51 @@ let harness ?debug ?bug ?(spacing = 8) ~j ~name () =
   let lane_at_j = lo.unit_ ==:. j in
   let bad_slot = at_slot &: clean &: (mism |: (lane_at_j &: (lane_pc <>: exp_pc)))
   and bad_extra = lane_fj &: ~:at_slot in
-  let bad = ok_so_far &: (bad_slot |: bad_extra) in
+  (* ---- strengthening invariants (each implied by the claim; together inductive) ---- *)
+  let st_eq a b =
+    List.map2_exn (S.ustate_to_list a) (S.ustate_to_list b) ~f:( ==: ) |> reduce ~f:( &: )
+  in
+  let st_mux c a b =
+    S.ustate_of_list (List.map2_exn (S.ustate_to_list a) (S.ustate_to_list b) ~f:(mux2 c))
+  in
+  let rst_st = S.ustate_reset ~start:tables.starts.(j) in
+  let entry = lint.entries.(j) in
+  let pending = lint.busy_q &: (lint.slot_q <=:. j) in
+  (* what the spec computed at step t, recomputed from the ghosts *)
+  let pb idx = mux idx (bits_lsb g_bank) in
+  let win idx = mux idx (Array.to_list tables.windows) in
+  let r_next, r_fire, r_idx =
+    S.unit_step ~pb ~win ~guard:tables.guards.(j) ~w:g_w ~st:g_pre ~act:~:(g_pre.stopped) ~ev:g_ev
+  in
+  let r_role = r_fire &: mux r_idx (Array.to_list tables.code_role)
+  and r_code = mux2 r_fire (mux r_idx (Array.to_list tables.code_val)) (zero 8) in
+  let i_ghost =
+    ~:seen
+    |: ((g_fire ==: r_fire) &: (g_role ==: r_role) &: (g_code ==: r_code)
+        &: (g_pc ==: g_pre.pc))
+  in
+  let m_pend = bit lint.smask j
+  and m_now = bit lint.mask_q j in
+  let i_pend =
+    ~:pending
+    |: (st_eq (st_mux m_pend rst_st entry) g_pre
+        &: st_eq (st_mux m_now rst_st r_next) spec_st
+        &: (lint.bank_l ==: g_bank)
+        &: (lint.ev_l.pop_ev ==: g_ev.pop_ev) &: (lint.ev_l.pop_data ==: g_ev.pop_data)
+        &: (lint.ev_l.push_ev ==: g_ev.push_ev) &: (lint.ev_l.push_data ==: g_ev.push_data))
+  in
+  let i_np = pending |: st_eq (st_mux m_now rst_st entry) spec_st in
+  let i_seq =
+    (lint.busy_q ==: (seen &: (since >=:. 1) &: (since <=:. 7) &: ~:rst_win))
+    &: (~:(lint.busy_q) |: (uresize lint.slot_q 4 ==: since))
+  in
+  let inv_bad = ~:(i_ghost &: i_pend &: i_np &: i_seq) in
+  let bad = ok_so_far &: (bad_slot |: bad_extra |: inv_bad) in
   Harness.bad_circuit ?debug
     ~dbg:
       [ "step", step; "since", since; "lane_fire", lo.fire; "lane_unit", lo.unit_; "exp_fire", exp_fire
-      ; "lane_pc", lane_pc; "exp_pc", exp_pc ]
+      ; "lane_pc", lane_pc; "exp_pc", exp_pc; "i_ghost", i_ghost; "i_pend", i_pend; "i_np", i_np
+      ; "i_seq", i_seq; "pending", pending ]
     ~name bad
 ;;
 

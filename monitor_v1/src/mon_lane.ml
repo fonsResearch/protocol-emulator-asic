@@ -40,9 +40,21 @@ end
    [only_unit j]: the state entries of units other than j are free inputs (fresh every cycle)
    instead of registers; sound for properties about slot j only, which reads entry j only.
    [bug]: planted defects for negative controls. *)
+type internals =
+  { entries : S.ustate array (* state registers (or free inputs, see only_unit) *)
+  ; mask_q : Signal.t
+  ; smask : Signal.t
+  ; busy_q : Signal.t
+  ; slot_q : Signal.t
+  ; bank_l : Signal.t
+  ; ev_l : S.events
+  }
+
 let create
+  ?front
+  ?probe
   ?only_unit
-  ?(bug : [ `Smask_unlatched ] option)
+  ?(bug : [ `Smask_unlatched | `Pc_eff_mask_only ] option)
   ~(tables : S.tables)
   ~(present : Signal.t array)
   ~(fetch : Signal.t -> Signal.t -> Signal.t)
@@ -50,7 +62,9 @@ let create
   =
   let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
   let nspec = Reg_spec.create ~clock:i.clock () in
-  let running, step, bank = S.observe ~tables i in
+  let running, step, bank =
+    match front with Some f -> f | None -> S.observe ~tables i
+  in
   let bankv = concat_lsb bank in
   (* slot sequencer *)
   let busy = wire 1
@@ -65,11 +79,18 @@ let create
   let bank_l = reg nspec ~enable:step bankv -- "mon_bank_l" in
   let pbv = mux2 step bankv bank_l in
   let ev_l x name = reg nspec ~enable:step x -- name in
+  let evl : S.events =
+    { pop_ev = ev_l i.pop_ev "mon_pop_ev_l"
+    ; pop_data = ev_l i.pop_data "mon_pop_data_l"
+    ; push_ev = ev_l i.push_ev "mon_push_ev_l"
+    ; push_data = ev_l i.push_data "mon_push_data_l"
+    }
+  in
   let ev : S.events =
-    { pop_ev = mux2 step i.pop_ev (ev_l i.pop_ev "mon_pop_ev_l")
-    ; pop_data = mux2 step i.pop_data (ev_l i.pop_data "mon_pop_data_l")
-    ; push_ev = mux2 step i.push_ev (ev_l i.push_ev "mon_push_ev_l")
-    ; push_data = mux2 step i.push_data (ev_l i.push_data "mon_push_data_l")
+    { pop_ev = mux2 step i.pop_ev evl.pop_ev
+    ; pop_data = mux2 step i.pop_data evl.pop_data
+    ; push_ev = mux2 step i.push_ev evl.push_ev
+    ; push_data = mux2 step i.push_data evl.push_data
     }
   in
   (* lazy restart: no clear, so reset (running low) sets the mask *)
@@ -80,7 +101,7 @@ let create
   let eff_mask =
     match bug with
     | Some `Smask_unlatched -> mask_q
-    | None -> mux2 step mask_q smask
+    | Some `Pc_eff_mask_only | None -> mux2 step mask_q smask
   in
   (* unit state file *)
   let ds = Array.init S.n_units ~f:(fun _ -> List.map S.ustate_widths ~f:wire) in
@@ -91,6 +112,9 @@ let create
         | Some j when j <> u -> input (sprintf "free_in_u%d_%s" u n) (width d)
         | _ -> reg nspec d -- sprintf "mon_u%d_%s" u n))
   in
+  Option.iter probe ~f:(fun f ->
+    f { entries = Array.map qs ~f:S.ustate_of_list; mask_q; smask; busy_q; slot_q; bank_l
+      ; ev_l = evl });
   let sel l = mux cur (Array.to_list l) in
   let st_raw =
     S.ustate_of_list (List.init 6 ~f:(fun f -> sel (Array.map qs ~f:(fun q -> List.nth_exn q f))))
@@ -107,7 +131,9 @@ let create
      the step mask applies (smask, latched at the tick); otherwise the accumulating mask. In
      the tick cycle itself smask is not latched yet, and mask_q is what it will latch. *)
   let pc_eff u =
-    let pending = busy_q &: (slot_q <=:. u) in
+    let pending =
+      match bug with Some `Pc_eff_mask_only -> gnd | _ -> busy_q &: (slot_q <=:. u)
+    in
     let m = mux2 pending (bit smask u) (bit mask_q u) in
     mux2 m tables.starts.(u) (List.hd_exn qs.(u))
   in

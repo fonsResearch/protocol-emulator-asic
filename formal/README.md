@@ -17,6 +17,14 @@ formal/prove_one.sh <harness> <vdir> <workdir> <timeout-s> <expected>
 formal/mutation/run_mutants.sh [timeout-s] [jobs] [nprog]   # resumable; then kill_matrix.py
 ```
 
+Engine per harness: `dprove` by default (user decision 2026-09-27). `prove_one.sh` also
+takes `ENGINE=ind` (ABC k-induction, `ind -F $IND_K`; proves or is undecided) and
+`ENGINE=bmc` (bmc3 to `$BMC_F` frames; refutes only, then the usual shortest-trace replay).
+`ind` is used for the monitor harnesses whose property carries explicit strengthening
+invariants (r1_*, f1d, f2); dprove timed out on them (3,600 s), k-induction closes them in
+seconds [agent choice 2026-10-18, flagged for review]. Negative controls of the monitor
+harnesses use `bmc`.
+
 Engine choice, measured on the positive harnesses before the switch (pdr / dprove, seconds):
 a2 2.1-8.7 / 0.6-1.5; b1 1.2-2.7 / 0.1-0.3; a1_rom 1.2-9.3 / 7.3-9.3; a1_miter UNDECIDED at
 1200 / 5.5. After its reductions, dprove closes most harnesses by interpolation, a1_rom_d3 by
@@ -34,6 +42,11 @@ base is ABC's reduction pipeline plus whichever engine closes the proof.
 | `a2_rtl_uart_d{3,4}` | A2 on the RTL directly (ROM SRAM model): spec-free | as A2 |
 | `b1_qed_spec_d{3,4}` | timed QED on the spec alone (ROM imem) | as A2 |
 | `a1_miter_anyinit` | A1 with arbitrary initial instruction memory, required only on runs where spec and RTL memories start equal | as A1; experimental (TIMEOUT at 300 s; see xcheck/) |
+| `r1_mon_lane_u{0..7}` | monitor refinement (formal/src/mon_ref.ml): a Mon_spec firing of unit j at step t appears in the time-multiplexed Mon_lane at t+j with the same role and code, and nowhere else; slot j fetches at the spec's pc. The property includes its strengthening invariants | every input free (reset may recur; windows with a reset are excluded); tables free constants; T8 (steps >= 8 cycles apart); engine `ind` |
+| `f0_mon_pc_eff` | Mon_lane: pc_eff of units 6/7 changes only after its slot or after a non-running cycle with no slot pending; slots exactly at t+u; slots fetch with pc_eff | as R1; dprove |
+| `f1t_mon_fetch` | fetcher timing: every loadable slot finds a valid IR for its pc | pc changes as F0 guarantees; steps >= min_p+1 apart and >= min_p after RUN; dprove |
+| `f1d_mon_fetch_data` | fetcher data: valid IR words equal the store word at their address (symbolic address) | as F1t; engine `ind` |
+| `f2_mon_ctx_load` | context loader: while ctx_loaded, every context register bit equals the stored header bit (symbolic address) | Mon_engine, every input free incl. host writes; engine `ind` |
 | `*_neg*` | negative controls: must FAIL (bad-start program vs monitor; T'(P) with one WAIT one cycle short; `a1_miter_neg` = RTL with SRAM write-through removed) | as the positive twin |
 
 What A2 does not claim yet: that the transmitted byte equals the sampled uio_in (data

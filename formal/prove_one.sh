@@ -50,9 +50,18 @@ stats=$(yosys-abc -c "read_aiger $A/$h.aig; print_stats" 2>&1 | sed 's/\x1b\[[0-
 # than pdr on most harnesses; pdr cannot prove a1_miter (UNDECIDED at 1200 s).
 # BMC (bmc3) is used below only to produce a shortest counterexample for cyclesim replay.
 t0=$(date +%s)
-engine="dprove"
+# ENGINE (default dprove, the project default): ind = ABC k-induction (ind -F ${IND_K:-12}),
+# for harnesses whose property carries explicit strengthening invariants; it proves or is
+# undecided, never reports a counterexample itself. bmc = bmc3 to ${BMC_F:-60} frames
+# (refutation only). The engine is printed in the results row.
+engine="${ENGINE:-dprove}"
+case "$engine" in
+  ind) out=$(formal/tlimit.sh $TMO yosys-abc -c "read_aiger $A/$h.aig; ind -F ${IND_K:-12}" 2>&1) ;;
+  bmc) out=$(formal/tlimit.sh $TMO yosys-abc -c "read_aiger $A/$h.aig; bmc3 -F ${BMC_F:-60}" 2>&1) ;;
+  *)
 # -T bounds only dprove's final PDR stage; the whole call is bounded by formal/tlimit.sh.
-out=$(formal/tlimit.sh $TMO yosys-abc -c "read_aiger $A/$h.aig; dprove -v -T $TMO" 2>&1)
+out=$(formal/tlimit.sh $TMO yosys-abc -c "read_aiger $A/$h.aig; dprove -v -T $TMO" 2>&1) ;;
+esac
 # Latch-free models (e.g. a miter that Hardcaml constant-folded) go to CEC, which prints
 # UNSATISFIABLE (proved) or SATISFIABLE (counterexample).
 if echo "$out" | grep -q -E "Networks are equivalent|^UNSATISFIABLE"; then res=PASS

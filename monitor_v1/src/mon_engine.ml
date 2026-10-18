@@ -140,6 +140,105 @@ let lib_fetch (lib : M.t list) ~idx u pc =
   lmux_idx idx (List.map lib ~f:per_pkg)
 ;;
 
+(* IR fetcher of one lane's loadable units 6 and 7 (section 7). [pcs]: effective pc of each
+   unit (Mon_lane pc6/pc7); [pbases]: program base addresses; [dout]: store A_DOUT.
+   [en] = the lane runs or slots of its last step are pending: a lane can halt just after a
+   tick, and slots 6/7 of that step still need their instruction (a fetch gated by running
+   alone was aborted there; found while writing the F1 proof). While enabled in loadable
+   mode it keeps IR_u = store[base_u + 6 pc_u .. + 5]; a fetch starts in
+   the cycle the mismatch appears (word 0 issued then), one read per cycle, data captured one
+   cycle later. Formal: formal/src/mon_fetch.ml (F1). *)
+type fetch_out =
+  { irv : Signal.t array
+  ; ir_pc : Signal.t array
+  ; ir_word : int -> Signal.t
+  ; ir_words : Signal.t array array
+  ; issue : Signal.t
+  ; f_addr : Signal.t
+  ; f_busy : Signal.t (* internals, for proofs *)
+  ; f_u : Signal.t
+  ; f_pc : Signal.t
+  ; f_k : Signal.t
+  ; fcap : Signal.t
+  ; fcap_u : Signal.t
+  ; fcap_k : Signal.t
+  ; fcap_pc : Signal.t
+  }
+
+(* [bug] (negative controls only): `Restart_on_complete = a completing fetch sees the stale
+   valid bit (the defect found in the first end-to-end run). *)
+let fetcher ?bug ~spec ~nspec ~l ~en ~ld_mode ~lu ~pcs ~pbases ~dout () =
+  let running = en in
+  let pc6 = pcs.(0)
+  and pc7 = pcs.(1) in
+  let ir = Array.init 2 ~f:(fun _ -> Array.init 6 ~f:(fun _ -> wire 16)) in
+  let irv = Array.init 2 ~f:(fun _ -> wire 1)
+  and ir_pc = Array.init 2 ~f:(fun _ -> wire 7) in
+  let f_busy_d = wire 1 in
+  let f_busy = reg spec f_busy_d -- sprintf "mon_f_busy%d" l in
+  let f_u_d = wire 1 and f_pc_d = wire 7 and f_k_d = wire 3 in
+  let f_u = reg spec f_u_d -- sprintf "mon_f_u%d" l
+  and f_pc = reg spec f_pc_d -- sprintf "mon_f_pc%d" l
+  and f_k = reg spec f_k_d -- sprintf "mon_f_k%d" l in
+  let fcap = wire 1 and fcap_u = wire 1 and fcap_pc = wire 7 and fcap_k = wire 3 in
+  (* IR state as it will be after this cycle's capture: a fetch completing now (word 5
+     captured) counts as valid, so it does not restart itself *)
+  let want u =
+    let completing = fcap &: (fcap_u ==:. u) &: (fcap_k ==:. 5) in
+    let completing = match bug with Some `Restart_on_complete -> gnd | _ -> completing in
+    let valid = irv.(u) |: completing
+    and at = mux2 completing fcap_pc ir_pc.(u) in
+    running &: ld_mode &: bit lu u &: ~:(valid &: (at ==: pcs.(u)))
+  in
+  (* a fetch starts combinationally in the cycle the mismatch is seen (word 0 issued then) *)
+  let start_f = ~:f_busy &: (want 0 |: want 1) in
+  let su = mux2 (want 0) gnd vdd in
+  let iss_u = mux2 f_busy f_u su
+  and iss_pc = mux2 f_busy f_pc (mux2 su pc7 pc6)
+  and iss_k = mux2 f_busy f_k (zero 3) in
+  let issue = (f_busy |: start_f) &: running in
+  let last = iss_k ==:. 5 in
+  f_busy_d <== (issue &: ~:last);
+  f_u_d <== iss_u;
+  f_pc_d <== iss_pc;
+  f_k_d <== mux2 issue (iss_k +:. 1) f_k;
+  let six_pc = let x = uresize iss_pc 8 in sll x 2 +: sll x 1 in
+  let f_addr =
+    mux2 iss_u pbases.(1) pbases.(0) +: six_pc
+    +: uresize (match bug with Some `Addr_off_by_one -> iss_k +:. 1 | _ -> iss_k) 8
+  in
+  fcap <== reg spec issue -- sprintf "mon_f_cap%d" l;
+  fcap_u <== reg spec iss_u -- sprintf "mon_f_cap_u%d" l;
+  fcap_k <== reg spec iss_k -- sprintf "mon_f_cap_k%d" l;
+  fcap_pc <== reg spec iss_pc -- sprintf "mon_f_cap_pc%d" l;
+  Array.iteri ir ~f:(fun u words ->
+    let mine = fcap &: (fcap_u ==:. u) in
+    Array.iteri words ~f:(fun w d ->
+      d <== reg nspec ~enable:(mine &: (fcap_k ==:. w)) dout -- sprintf "mon_ir%d_u%d_w%d" l (6 + u) w);
+    (* valid: cleared when a fetch for u starts or the lane stops; set by the last word *)
+    let starts_u = issue &: (iss_k ==:. 0) &: (iss_u ==:. u) in
+    let v_d = wire 1 in
+    let vq = reg spec v_d -- sprintf "mon_irv%d_u%d" l (6 + u) in
+    v_d <== mux2 (~:(running) |: starts_u) gnd (mux2 (mine &: (fcap_k ==:. 5)) vdd vq);
+    irv.(u) <== vq;
+    ir_pc.(u) <== reg spec ~enable:(mine &: (fcap_k ==:. 5)) fcap_pc -- sprintf "mon_ir_pc%d_u%d" l (6 + u));
+  { irv
+  ; ir_pc
+  ; ir_word = (fun u -> select (concat_lsb (Array.to_list ir.(u))) (M.instr_width - 1) 0)
+  ; ir_words = ir
+  ; issue
+  ; f_addr
+  ; f_busy
+  ; f_u
+  ; f_pc
+  ; f_k
+  ; fcap
+  ; fcap_u
+  ; fcap_k
+  ; fcap_pc
+  }
+;;
+
 (* behavioural 256x16 store for engine-level simulation (single port, synchronous read,
    write has priority; DOUT holds otherwise; read-during-write returns the new word) *)
 let behavioural_store ~clock (p : store_port) =
@@ -159,8 +258,26 @@ let behavioural_store ~clock (p : store_port) =
 
 (* [loadable.(l)] = false builds lane l without the loadable path (no store, no context
    registers, no fetcher; LOAD_UNITS writes have no effect): a build-time configuration. *)
-let create ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> Signal.t)
-  ~(host : host) ~(lanes : lane_view array) ~ui_in ~uio_in =
+(* Proof hooks (formal harnesses only): [probe_ctx l words ld] receives, for lane l, the 56
+   context header words as reconstructed from the context registers, each with the mask of
+   the bits that are stored, and the loader's internals. [bug]: planted defects for negative
+   controls. *)
+type loader_probe =
+  { ld_k : Signal.t
+  ; loading_q : Signal.t
+  ; cap : Signal.t
+  ; cap_k : Signal.t
+  ; ld_dout : Signal.t
+  ; ld_issue : Signal.t
+  ; ctx_base_q : Signal.t
+  ; ctx_loaded_q : Signal.t
+  }
+
+let create
+  ?probe_ctx
+  ?(bug : [ `Fetch_running_only | `Ld_no_delay ] option)
+  ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> Signal.t)
+  ~(host : host) ~(lanes : lane_view array) ~ui_in ~uio_in () =
   let spec = Reg_spec.create ~clock ~clear:~:rst_sync_n () in
   let wr_at a = host.wr &: (host.addr ==:. a) in
   (* free-running cycle counter (wraps) *)
@@ -210,7 +327,11 @@ let create ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store
     let ld_issue = loading_q &: (ld_k <:. M.ctx_words) in
     ld_k_d <== mux2 start_load (zero 6) (mux2 ld_issue (ld_k +:. 1) ld_k);
     let cap = reg spec ld_issue -- sprintf "mon_ld_cap%d" l
-    and cap_k = reg spec ld_k -- sprintf "mon_ld_cap_k%d" l in
+    and cap_k =
+      match bug with
+      | Some `Ld_no_delay -> ld_k
+      | _ -> reg spec ld_k -- sprintf "mon_ld_cap_k%d" l
+    in
     let ld_done = cap &: (cap_k ==:. M.ctx_words - 1) in
     loading <== (start_load |: (loading_q &: ~:ld_done));
     let any_ctx_write =
@@ -224,9 +345,6 @@ let create ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store
     ctx_loaded_d <== mux2 ld_done vdd (mux2 any_ctx_write gnd ctx_loaded);
     (* ---- fetcher (running only): IR_u = store[base_u + 6 pc_eff_u ..] for u = 6, 7 ---- *)
     let dout = wire 16 in
-    let ir = Array.init 2 ~f:(fun _ -> Array.init 6 ~f:(fun _ -> wire 16)) in
-    let irv = Array.init 2 ~f:(fun _ -> wire 1)
-    and ir_pc = Array.init 2 ~f:(fun _ -> wire 7) in
     (* context registers (filled by the loader) *)
     let cfield i hi lo name =
       reg nspec ~enable:(cap &: (cap_k ==:. i)) (select dout hi lo) -- sprintf "mon_ctx%d_%s" l name
@@ -254,6 +372,25 @@ let create ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store
     in
     let h6 = c_hdr 0
     and h7 = c_hdr 1 in
+    Option.iter probe_ctx ~f:(fun f ->
+      let w v m = uresize v 16, of_int ~width:16 m in
+      let hdr (start, (gen, gp, gs, ge, gh), pbase) =
+        [ w (gp @: gen @: start) 0xFFF; w (ge @: gs) 0x3FFF; w (pbase @: gnd @: gh) 0xFF7F ]
+      in
+      let words =
+        List.concat
+          [ List.concat_map (List.init 14 ~f:(fun k -> k + 1)) ~f:(fun k ->
+              [ w (select c_preds.(k) 15 0) 0xFFFF; w (select c_preds.(k) 28 16) 0x1FFF ])
+          ; List.init 7 ~f:(fun k -> w c_windows.(k + 1) 0xFFF)
+          ; List.init 15 ~f:(fun k -> w (c_role.(k + 1) @: c_val.(k + 1)) 0x1FF)
+          ; hdr h6
+          ; hdr h7
+          ]
+      in
+      assert (List.length words = M.ctx_words);
+      f l (Array.of_list words)
+        { ld_k; loading_q; cap; cap_k; ld_dout = dout; ld_issue; ctx_base_q = ctx_base
+        ; ctx_loaded_q = ctx_loaded });
     let rom_tables, rom_present = lib_tables lib ~idx ~remap in
     let lmux a b = mux2 ld_mode a b in
     let tables : S.tables =
@@ -289,51 +426,16 @@ let create ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store
     in
     let pcs = [| pc6; pc7 |]
     and pbases = [| trd3 h6; trd3 h7 |] in
-    let f_busy_d = wire 1 in
-    let f_busy = reg spec f_busy_d -- sprintf "mon_f_busy%d" l in
-    let f_u_d = wire 1 and f_pc_d = wire 7 and f_k_d = wire 3 in
-    let f_u = reg spec f_u_d -- sprintf "mon_f_u%d" l
-    and f_pc = reg spec f_pc_d -- sprintf "mon_f_pc%d" l
-    and f_k = reg spec f_k_d -- sprintf "mon_f_k%d" l in
-    let fcap = wire 1 and fcap_u = wire 1 and fcap_pc = wire 7 and fcap_k = wire 3 in
-    (* IR state as it will be after this cycle's capture: a fetch completing now (word 5
-       captured) counts as valid, so it does not restart itself *)
-    let want u =
-      let completing = fcap &: (fcap_u ==:. u) &: (fcap_k ==:. 5) in
-      let valid = irv.(u) |: completing
-      and at = mux2 completing fcap_pc ir_pc.(u) in
-      v.running &: ld_mode &: bit lu u &: ~:(valid &: (at ==: pcs.(u)))
+    let fe =
+      fetcher ~spec ~nspec ~l
+        ~en:(match bug with Some `Fetch_running_only -> v.running | _ -> v.running |: busy)
+        ~ld_mode ~lu ~pcs ~pbases ~dout ()
     in
-    (* a fetch starts combinationally in the cycle the mismatch is seen (word 0 issued then) *)
-    let start_f = ~:f_busy &: (want 0 |: want 1) in
-    let su = mux2 (want 0) gnd vdd in
-    let iss_u = mux2 f_busy f_u su
-    and iss_pc = mux2 f_busy f_pc (mux2 su pc7 pc6)
-    and iss_k = mux2 f_busy f_k (zero 3) in
-    let issue = (f_busy |: start_f) &: v.running in
-    let last = iss_k ==:. 5 in
-    f_busy_d <== (issue &: ~:last);
-    f_u_d <== iss_u;
-    f_pc_d <== iss_pc;
-    f_k_d <== mux2 issue (iss_k +:. 1) f_k;
-    let six_pc = let x = uresize iss_pc 8 in sll x 2 +: sll x 1 in
-    let f_addr = mux2 iss_u pbases.(1) pbases.(0) +: six_pc +: uresize iss_k 8 in
-    fcap <== reg spec issue -- sprintf "mon_f_cap%d" l;
-    fcap_u <== reg spec iss_u -- sprintf "mon_f_cap_u%d" l;
-    fcap_k <== reg spec iss_k -- sprintf "mon_f_cap_k%d" l;
-    fcap_pc <== reg spec iss_pc -- sprintf "mon_f_cap_pc%d" l;
-    Array.iteri ir ~f:(fun u words ->
-      let mine = fcap &: (fcap_u ==:. u) in
-      Array.iteri words ~f:(fun w d ->
-        d <== reg nspec ~enable:(mine &: (fcap_k ==:. w)) dout -- sprintf "mon_ir%d_u%d_w%d" l (6 + u) w);
-      (* valid: cleared when a fetch for u starts or the lane stops; set by the last word *)
-      let starts_u = issue &: (iss_k ==:. 0) &: (iss_u ==:. u) in
-      let v_d = wire 1 in
-      let vq = reg spec v_d -- sprintf "mon_irv%d_u%d" l (6 + u) in
-      v_d <== mux2 (~:(v.running) |: starts_u) gnd (mux2 (mine &: (fcap_k ==:. 5)) vdd vq);
-      irv.(u) <== vq;
-      ir_pc.(u) <== reg spec ~enable:(mine &: (fcap_k ==:. 5)) fcap_pc -- sprintf "mon_ir_pc%d_u%d" l (6 + u));
-    let ir_word u = select (concat_lsb (Array.to_list ir.(u))) (M.instr_width - 1) 0 in
+    let irv = fe.irv
+    and ir_pc = fe.ir_pc
+    and issue = fe.issue
+    and f_addr = fe.f_addr
+    and ir_word = fe.ir_word in
     (* ---- the store: host writes (halted), loader reads (halted), fetcher reads (running) ---- *)
     dout
     <== if not loadable.(l) then zero 16 else store l
