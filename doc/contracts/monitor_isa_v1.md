@@ -34,6 +34,16 @@ Implementations, all from this document:
 - **Time base.** A unit of lane L evaluates only in steps of lane L: cycles with L's tick = 1. Ticks occur only while L runs (ISA v1.0.2). The `cycles` time base is used only by the fixed host_spi monitor, which is not part of the engine **[choice]**.
 - **Restart rule [choice, flagged for review].** All units, the predicate-bank history and the stream state of lane L return to their reset state in every cycle in which lane L is not running. This mirrors the lane reset (ISA v1.0.2): a stopped lane restarts its program at `pc` 0, and its package's watchers restart with it. The verdict block is not cleared by this rule.
 
+## 1a. Implementation: time-multiplexed units (user decision 2026-10-18, option C)
+
+- **Structure.** Per lane, the observation front end and the predicate bank are evaluated in parallel once per step, as in sections 2-3. A single unit datapath serves the 8 unit states in slots: unit u is evaluated in cycle t + u, where t is the tick cycle. Slot 0 uses the live bank and stream events; slots 1-7 use copies latched at t. Code: `monitor_v1/src/mon_lane.ml`. The unit next-state function (`Mon_spec.unit_step`) is shared with the parallel spec circuit `Mon_spec`.
+- **Assumption T8.** While a package runs, the ticks of a lane are at least 8 cycles apart, i.e. at least 8 cycles from one step to the next. Violations are visible: the `overrun` output is asserted by a tick that arrives while slots are still pending. T8 becomes a loader admission rule (ISA prescaler setting) and an assumption of the refinement proof.
+- **Restart rule, implementation.** Applied lazily. Every non-running cycle sets a per-unit mask; a unit whose mask bit was set before the current step reads its reset state at its slot. A non-running cycle inside a slot window does not change the units that are still to be processed in that step.
+- **Refinement statement.** A firing of unit u in step t of `Mon_spec` appears in `Mon_lane` in cycle t + u, with the same role and code, and `Mon_lane` fires nothing else. This holds for steps whose window t..t+7 contains no reset cycle. A reset clears the verdict, so an in-flight step cut short by reset has no observable effect.
+- **Verdict timestamps.** Firings are stamped with the step cycle t, not the slot cycle, so verdict contents equal those of the parallel engine.
+- **Blame release latency [choice, flagged for review].** All monitor blames reach the lane through a register, so a blame found in step t is consumed by the lane at its next step. The parallel engine would gate step t itself, combinationally. Theorem U is unaffected (a fail still needs a blame at or before it). The cost: the lane executes one more step after a blame. The benefit: no combinational monitor-to-lane path, and the same latency for every unit.
+- **Measured (Yosys/ABC, IHP sg13cmos5l, free tables, one lane, no wire load):** parallel `Mon_spec` 190,884 um^2 typ (579 flops); time-multiplexed `Mon_lane` 118,782 um^2 typ (626 flops); logic delay at the slow corner 7.67 ns and 7.41 ns respectively. The instruction-fetch path is excluded, because fetch is a free input in this measurement.
+
 ## 2. Observation per step
 
 For lane L:

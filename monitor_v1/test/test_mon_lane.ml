@@ -1,0 +1,136 @@
+(* Time-multiplexed lane (Mon_lane) against the ISA spec circuit (Mon_spec), cyclesim.
+   Ticks are at least [spacing] cycles apart; non-running cycles are frequent, including
+   inside slot windows. A Mon_spec firing of unit u at step c must appear in Mon_lane at
+   cycle c + u (same role and code), and Mon_lane must fire nothing else; steps whose
+   window c..c+7 contains a reset cycle are excluded. *)
+open! Core
+open Hardcaml
+open Pemu_monitor_v1
+module Sim_l = Cyclesim.With_interface (Mon_lane.I) (Mon_lane.O)
+
+let set_inputs (si : Bits.t ref Mon_spec.I.t) (i : Interp.inputs) =
+  let b x = Bits.of_bool x
+  and n w x = Bits.of_int ~width:w x in
+  si.rst_sync_n := b i.rst_sync_n;
+  si.running := b i.running;
+  si.tick := b i.tick;
+  si.ui_in := n 8 i.ui_in;
+  si.uio_in := n 8 i.uio_in;
+  si.uo_out := n 8 i.uo_out;
+  si.uio_out := n 8 i.uio_out;
+  si.uio_oe := n 8 i.uio_oe;
+  si.pop_ev := b i.pop_ev;
+  si.pop_data := n 8 i.pop_data;
+  si.push_ev := b i.push_ev;
+  si.push_data := n 8 i.push_data
+;;
+
+(* inputs with tick spacing >= spacing among ticks of running cycles *)
+let spaced_inputs ~spacing st =
+  let last = ref (-1000) in
+  fun cy ->
+    let i = Test_mmodel.random_inputs st cy in
+    let i = { i with running = i.running && Random.State.int st 6 <> 0 } in
+    let tick = i.tick && cy - !last >= spacing in
+    let stepping = tick && i.running && i.rst_sync_n in
+    if stepping then last := cy;
+    { i with tick }
+;;
+
+(* fill all 8 units by repeating the compiled watchers (shared tables, so still valid) *)
+let fill8 (p : Mprog.t) =
+  let n = Array.length p.units in
+  { p with units = Array.init Mon_spec.n_units ~f:(fun k -> p.units.(k mod n)) }
+;;
+
+let run ?(fill = false) ~spacing ~packages ~cycles ~seed0 () =
+  let pk = ref 0 and steps = ref 0 and firings = ref 0 and mism = ref 0 and overruns = ref 0 in
+  let excluded = ref 0 and first = ref None in
+  let seed = ref seed0 in
+  while !pk < packages do
+    incr seed;
+    let st = Random.State.make [| !seed; 23 |] in
+    match Compile.compile (Test_mmodel.gen_contract st) with
+    | Error _ -> ()
+    | Ok p ->
+      let p = if fill then fill8 p else p in
+      incr pk;
+      let ss = Test_mon_spec.sim_of p
+      and sl = Sim_l.create (Mon_lane.of_package p) in
+      let inp = spaced_inputs ~spacing st in
+      let lo : _ Mon_lane.O.t = Cyclesim.outputs ~clock_edge:Before sl in
+      let expected = Hashtbl.create (module Int) (* cycle -> (unit, role, code) *)
+      and got = Hashtbl.create (module Int)
+      and rst_cycles = Hash_set.create (module Int)
+      and step_cycles = ref [] in
+      for cy = 0 to cycles - 1 do
+        let i = inp cy in
+        if not i.rst_sync_n then Hash_set.add rst_cycles cy;
+        if i.rst_sync_n && i.running && i.tick then step_cycles := cy :: !step_cycles;
+        set_inputs (Cyclesim.inputs sl) i;
+        let fs = Test_mon_spec.step_sim ss i in
+        Cyclesim.cycle sl;
+        if Bits.to_bool !(lo.overrun) then incr overruns;
+        if Bits.to_bool !(lo.fire)
+        then
+          Hashtbl.set got ~key:cy
+            ~data:
+              ( Bits.to_int !(lo.unit_)
+              , (if Bits.to_bool !(lo.role) then Lang.Blame else Lang.Fail)
+              , Bits.to_int !(lo.code) );
+        (* the spec reports per unit; recover the unit index from its fire vector *)
+        let so : _ Mon_spec.O.t = Cyclesim.outputs ~clock_edge:Before ss in
+        let fv = Bits.to_int !(so.fire) in
+        ignore fs;
+        for u = 0 to Mon_spec.n_units - 1 do
+          if (fv lsr u) land 1 = 1
+          then
+            Hashtbl.set expected ~key:(cy + u)
+              ~data:
+                ( u
+                , (if (Bits.to_int !(so.role) lsr u) land 1 = 1 then Lang.Blame else Lang.Fail)
+                , Bits.to_int !(List.nth_exn so.codes u) )
+        done
+      done;
+      (* compare over windows of steps with no reset cycle *)
+      List.iter !step_cycles ~f:(fun c ->
+        if List.exists (List.init 8 ~f:(fun d -> c + d)) ~f:(Hash_set.mem rst_cycles)
+           || c + 7 >= cycles
+        then incr excluded
+        else (
+          incr steps;
+          for d = 0 to 7 do
+            let e = Hashtbl.find expected (c + d)
+            and g = Hashtbl.find got (c + d) in
+            Option.iter e ~f:(fun _ -> incr firings);
+            if not ([%equal: (int * Lang.role * int) option] e g)
+            then (
+              incr mism;
+              if Option.is_none !first
+              then
+                first
+                := Some
+                     (sprintf "seed %d step %d slot %d: spec %s lane %s" !seed c d
+                        (Sexp.to_string ([%sexp_of: (int * Lang.role * int) option] e))
+                        (Sexp.to_string ([%sexp_of: (int * Lang.role * int) option] g))))
+          done))
+  done;
+  Option.iter !first ~f:print_endline;
+  printf "%sspacing %d: packages %d steps %d (excluded %d) firings %d mismatches %d overruns %d\n"
+    (if fill then "8 units, " else "") spacing !pk !steps !excluded !firings !mism !overruns
+;;
+
+let%expect_test "time-multiplexed lane = spec circuit" =
+  run ~spacing:8 ~packages:200 ~cycles:3000 ~seed0:0 ();
+  run ~fill:true ~spacing:8 ~packages:200 ~cycles:3000 ~seed0:500 ();
+  run ~spacing:13 ~packages:50 ~cycles:3000 ~seed0:1000 ();
+  (* assumption broken: shows it is needed *)
+  run ~fill:true ~spacing:7 ~packages:50 ~cycles:3000 ~seed0:2000 ();
+  [%expect {|
+    spacing 8: packages 200 steps 66623 (excluded 1323) firings 24673 mismatches 0 overruns 0
+    8 units, spacing 8: packages 200 steps 66656 (excluded 1319) firings 109065 mismatches 0 overruns 0
+    spacing 13: packages 50 steps 10636 (excluded 224) firings 4188 mismatches 0 overruns 0
+    seed 2006 step 2990 slot 7: spec ((7 Blame 6)) lane ()
+    8 units, spacing 7: packages 50 steps 18780 (excluded 362) firings 30921 mismatches 3310 overruns 10237
+    |}]
+;;

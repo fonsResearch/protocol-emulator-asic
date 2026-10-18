@@ -1,0 +1,5 @@
+(executable
+ (name emit_mon)
+ (libraries core hardcaml pemu_monitor_v1)
+ (preprocess
+  (pps ppx_jane ppx_hardcaml)))

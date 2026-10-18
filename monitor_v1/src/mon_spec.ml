@@ -96,7 +96,37 @@ let field =
 
 let sat12 x = mux2 (x ==:. 4095) x (x +:. 1)
 
-let create ~(tables : tables) ~(fetch : int -> Signal.t -> Signal.t) (i : _ I.t) =
+(* unit state *)
+type ustate =
+  { pc : Signal.t
+  ; k : Signal.t
+  ; m0 : Signal.t
+  ; m1 : Signal.t
+  ; rg : Signal.t
+  ; stopped : Signal.t
+  }
+
+let ustate_widths = [ 7; 12; 12; 12; 16; 1 ]
+let ustate_to_list s = [ s.pc; s.k; s.m0; s.m1; s.rg; s.stopped ]
+
+let ustate_of_list = function
+  | [ pc; k; m0; m1; rg; stopped ] -> { pc; k; m0; m1; rg; stopped }
+  | _ -> raise_s [%message "ustate_of_list"]
+;;
+
+(* reset state of a unit: pc = start, everything else 0 *)
+let ustate_reset ~start = { pc = start; k = zero 12; m0 = zero 12; m1 = zero 12; rg = zero 16; stopped = gnd }
+
+type events =
+  { pop_ev : Signal.t
+  ; pop_data : Signal.t
+  ; push_ev : Signal.t
+  ; push_data : Signal.t
+  }
+
+(* Observation front end of one lane (sections 2-3): synchronisers, remap, history and the
+   predicate bank. Returns the gated running/step signals and the 16 bank bits. *)
+let observe ~(tables : tables) (i : _ I.t) =
   let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
   let regw name w =
     let d = wire w in
@@ -121,11 +151,11 @@ let create ~(tables : tables) ~(fetch : int -> Signal.t -> Signal.t) (i : _ I.t)
   Array.iteri hist ~f:(fun k (q, d) ->
     d <== mux2 (~:running) (zero 4) (mux2 step (select (q @: now.(k)) 3 0) q));
   seen_d <== mux2 (~:running) (zero 3) (mux2 (step &: (seen <:. 4)) (seen +:. 1) seen);
-  let value obs d =
-    (* value of local observable [obs] (4-bit signal) at delay d (int 0..4) *)
-    let col = List.init 16 ~f:(fun k ->
-      if d = 0 then now.(k) else bit (fst hist.(k)) (d - 1) &: (seen >=:. d)) in
-    mux obs col
+  (* per observable, its values at delays 0..4 (delay d > 0 reads 0 until observed) *)
+  let col =
+    List.init 16 ~f:(fun k ->
+      concat_lsb
+        (now.(k) :: List.init 4 ~f:(fun d -> bit (fst hist.(k)) d &: (seen >=:. d + 1))))
   in
   let eval_pred (w : Signal.t) =
     let lit off =
@@ -133,9 +163,10 @@ let create ~(tables : tables) ~(fetch : int -> Signal.t -> Signal.t) (i : _ I.t)
       and kind = select w (off + 5) (off + 4)
       and delay = select w (off + 7) (off + 6)
       and neg = bit w (off + 8) in
-      let at d = mux delay (List.init 4 ~f:(fun dd -> value obs (dd + d))) in
-      let x = at 0
-      and y = at 1
+      (* one observable select, then the delay tap *)
+      let v5 = mux obs col in
+      let x = mux delay (List.init 4 ~f:(fun dd -> bit v5 dd))
+      and y = mux delay (List.init 4 ~f:(fun dd -> bit v5 (dd + 1)))
       and valid = mux delay (List.init 4 ~f:(fun dd -> seen >=:. dd + 1)) in
       let r = mux kind [ x; valid &: x &: ~:y; valid &: ~:x &: y; valid &: (x ^: y) ] in
       r ^: neg
@@ -148,121 +179,141 @@ let create ~(tables : tables) ~(fetch : int -> Signal.t -> Signal.t) (i : _ I.t)
       if k = 0 then vdd else if k = 15 then gnd else eval_pred tables.preds.(k))
     |> Array.to_list
   in
+  running, step, bank
+;;
+
+(* One step of one unit (section 5) given its fetched instruction [w]. [act] = this unit
+   evaluates in this cycle (a step of the lane and the unit is not stopped). Returns the
+   next state (restart excluded), the firing and the code-table index of the firing. *)
+let unit_step ~pb ~win ~guard ~w ~(st : ustate) ~act ~(ev : events) =
+  let { pc; k; m0; m1; rg; stopped } = st in
+    let ki = sat12 k
+    and m0i = sat12 m0
+    and m1i = sat12 m1 in
+    let gen, gp, gs, ge, gh = guard in
+    let guard_hit = gen &: (pc >=: gs) &: (pc <=: ge) &: pb gp in
+        let f = field w in
+    let op = f "op" in
+    let since = f "since" in
+    let kappa = mux since [ ki; m0i; m1i; ki ] in
+    let lo = win (f "lo")
+    and hi = win (f "hi") in
+    let mode = f "mod"
+    and marg = f "marg" in
+    let modv ~reg_v ~m0v ~m1v x =
+      let regb = mux (select marg 3 0) (bits_lsb reg_v) in
+      let mv = mux2 (bit marg 3) m1v m0v in
+      let el = mv >=: win (select marg 2 0) in
+      mux mode [ x; x &: regb; ~:(x ^: regb); x &: el ]
+    in
+    let e_val = pb (f "pe") &: pb (f "pcond") in
+    let pr0 = pb (f "pr") in
+    let r_val =
+      ~:(pb (f "pcond"))
+      |: mux2 (f "md_pr") (modv ~reg_v:rg ~m0v:m0i ~m1v:m1i pr0) pr0
+    in
+    let is o = op ==:. M.op_code o in
+    let take = is Take_tx |: is Take_rx in
+    let ev_take = mux2 (is Take_tx) ev.pop_ev ev.push_ev in
+    let evv = mux2 take ev_take e_val in
+    let chk = f "chk"
+    and early = f "early" in
+    let await_complete = evv &: (kappa >=: lo)
+    and await_early = evv &: (kappa <: lo) &: (early <>:. 0)
+    and await_to = ~:evv &: (kappa >=: hi) &: (chk <>:. 0) in
+    let hu_complete = e_val &: (kappa >=: lo) in
+    let hu_early = e_val &: (kappa <: lo) &: (early <>:. 0) in
+    let hu_viol = ~:r_val |: (kappa >=: hi) in
+    let complete =
+      mux op
+        [ await_complete; e_val; r_val &: (ki >=: hi); hu_complete; ki >=: hi; await_complete
+        ; await_complete; gnd ]
+    in
+    let op_fire =
+      mux op
+        [ await_early |: await_to; gnd; ~:r_val; ~:hu_complete &: (hu_early |: hu_viol); gnd
+        ; await_early |: await_to; await_early |: await_to; gnd ]
+    in
+    let op_code_idx =
+      mux op
+        [ mux2 await_early early chk; zero 4; chk; mux2 hu_early early chk; zero 4
+        ; mux2 await_early early chk; mux2 await_early early chk; zero 4 ]
+    in
+    (* completion bundle *)
+    let mark = f "mark" in
+    let m0b = mux2 (mark ==:. 1) (zero 12) m0i
+    and m1b = mux2 (mark ==:. 2) (zero 12) m1i in
+    let tsel = f "tsel" in
+    let tdata = mux2 (is Take_tx) ev.pop_data ev.push_data in
+    let reg1 =
+      mux2 take (mux2 tsel (tdata @: select rg 7 0) (select rg 15 8 @: tdata)) rg
+    in
+    let smp_bit = f "smp_bit" in
+    let smp_val = pb (f "smp_p") in
+    let reg2 =
+      mux2 (f "smp_en")
+        (let oh = binary_to_onehot smp_bit in
+         (reg1 &: ~:oh) |: mux2 smp_val oh (zero 16))
+        reg1
+    in
+    let mat_fire =
+      f "mat_en" &: ~:(ev.push_ev &: (ev.push_data ==: select reg2 7 0))
+    in
+    let exp_idx = f "exp" in
+    let e0 = pb exp_idx in
+    let exp_v = mux2 (f "md_exp") (modv ~reg_v:reg2 ~m0v:m0b ~m1v:m1b e0) e0 in
+    (* an expect is present iff its predicate index is non-zero or it carries the modifier
+       (a bare Reg_bit / Elapsed_ge requirement compiles to index 0 = true + modifier) *)
+    let exp_fire = ((exp_idx <>:. 0) |: f "md_exp") &: ~:exp_v in
+    let b_fire = complete &: (mat_fire |: exp_fire) in
+    let b_code_idx = mux2 mat_fire (f "mat_chk") (f "exp_chk") in
+    let fire = act &: ~:guard_hit &: (op_fire |: b_fire) in
+    let code_idx = mux2 op_fire op_code_idx b_code_idx in
+    let ok_complete = act &: ~:guard_hit &: complete &: ~:b_fire in
+    let bp = f "bp" in
+    let nxt = mux2 ((bp <>:. 0) &: pb bp) (f "alt") (f "next") in
+    let to_stop = nxt ==:. M.stop_addr in
+  let next =
+    { pc = mux2 (act &: guard_hit) gh (mux2 (ok_complete &: ~:to_stop) nxt pc)
+    ; k = mux2 (act &: (guard_hit |: ok_complete)) (zero 12) (mux2 act ki k)
+    ; m0 = mux2 ok_complete m0b (mux2 act m0i m0)
+    ; m1 = mux2 ok_complete m1b (mux2 act m1i m1)
+    ; rg = mux2 ok_complete reg2 rg
+    ; stopped = stopped |: fire |: (ok_complete &: to_stop)
+    }
+  in
+  next, fire, code_idx
+;;
+
+let create ~(tables : tables) ~(fetch : int -> Signal.t -> Signal.t) (i : _ I.t) =
+  (* unit registers have no clear: under reset [running] is low, so restart loads them *)
+  let nspec = Reg_spec.create ~clock:i.clock () in
+  let running, step, bank = observe ~tables i in
   let pb idx = mux idx bank in
   let win idx = mux idx (Array.to_list tables.windows) in
   let crole idx = mux idx (Array.to_list tables.code_role)
   and cval idx = mux idx (Array.to_list tables.code_val) in
+  let ev = { pop_ev = i.pop_ev; pop_data = i.pop_data; push_ev = i.push_ev; push_data = i.push_data } in
   let units =
     List.init n_units ~f:(fun u ->
       if not tables.present.(u)
       then gnd, gnd, zero 8
       else (
-        let pc, pc_d = regw (sprintf "mon_u%d_pc" u) 7 in
-        let k, k_d = regw (sprintf "mon_u%d_k" u) 12 in
-        let m0, m0_d = regw (sprintf "mon_u%d_m0" u) 12 in
-        let m1, m1_d = regw (sprintf "mon_u%d_m1" u) 12 in
-        let rg, rg_d = regw (sprintf "mon_u%d_reg" u) 16 in
-        let stopped, stopped_d = regw (sprintf "mon_u%d_stopped" u) 1 in
-        let restart = ~:running in
-        let act = step &: ~:stopped in
-        let ki = sat12 k
-        and m0i = sat12 m0
-        and m1i = sat12 m1 in
-        let gen, gp, gs, ge, gh = tables.guards.(u) in
-        let guard_hit = gen &: (pc >=: gs) &: (pc <=: ge) &: pb gp in
-        let w = fetch u pc in
-        let f = field w in
-        let op = f "op" in
-        let since = f "since" in
-        let kappa = mux since [ ki; m0i; m1i; ki ] in
-        let lo = win (f "lo")
-        and hi = win (f "hi") in
-        let mode = f "mod"
-        and marg = f "marg" in
-        let modv ~reg_v ~m0v ~m1v x =
-          let regb = mux (select marg 3 0) (bits_lsb reg_v) in
-          let mv = mux2 (bit marg 3) m1v m0v in
-          let el = mv >=: win (select marg 2 0) in
-          mux mode [ x; x &: regb; ~:(x ^: regb); x &: el ]
+        let ds = List.map ustate_widths ~f:wire in
+        let qs =
+          List.map2_exn ds [ "pc"; "k"; "m0"; "m1"; "reg"; "stopped" ] ~f:(fun d n ->
+            reg nspec d -- sprintf "mon_u%d_%s" u n)
         in
-        let e_val = pb (f "pe") &: pb (f "pcond") in
-        let pr0 = pb (f "pr") in
-        let r_val =
-          ~:(pb (f "pcond"))
-          |: mux2 (f "md_pr") (modv ~reg_v:rg ~m0v:m0i ~m1v:m1i pr0) pr0
+        let st = ustate_of_list qs in
+        let act = step &: ~:(st.stopped) in
+        let w = fetch u st.pc in
+        let next, fire, code_idx =
+          unit_step ~pb ~win ~guard:tables.guards.(u) ~w ~st ~act ~ev
         in
-        let is o = op ==:. M.op_code o in
-        let take = is Take_tx |: is Take_rx in
-        let ev_take = mux2 (is Take_tx) i.pop_ev i.push_ev in
-        let evv = mux2 take ev_take e_val in
-        let chk = f "chk"
-        and early = f "early" in
-        let await_complete = evv &: (kappa >=: lo)
-        and await_early = evv &: (kappa <: lo) &: (early <>:. 0)
-        and await_to = ~:evv &: (kappa >=: hi) &: (chk <>:. 0) in
-        let hu_complete = e_val &: (kappa >=: lo) in
-        let hu_early = e_val &: (kappa <: lo) &: (early <>:. 0) in
-        let hu_viol = ~:r_val |: (kappa >=: hi) in
-        let complete =
-          mux op
-            [ await_complete; e_val; r_val &: (ki >=: hi); hu_complete; ki >=: hi; await_complete
-            ; await_complete; gnd ]
-        in
-        let op_fire =
-          mux op
-            [ await_early |: await_to; gnd; ~:r_val; ~:hu_complete &: (hu_early |: hu_viol); gnd
-            ; await_early |: await_to; await_early |: await_to; gnd ]
-        in
-        let op_code_idx =
-          mux op
-            [ mux2 await_early early chk; zero 4; chk; mux2 hu_early early chk; zero 4
-            ; mux2 await_early early chk; mux2 await_early early chk; zero 4 ]
-        in
-        (* completion bundle *)
-        let mark = f "mark" in
-        let m0b = mux2 (mark ==:. 1) (zero 12) m0i
-        and m1b = mux2 (mark ==:. 2) (zero 12) m1i in
-        let tsel = f "tsel" in
-        let tdata = mux2 (is Take_tx) i.pop_data i.push_data in
-        let reg1 =
-          mux2 take (mux2 tsel (tdata @: select rg 7 0) (select rg 15 8 @: tdata)) rg
-        in
-        let smp_bit = f "smp_bit" in
-        let smp_val = pb (f "smp_p") in
-        let reg2 =
-          mux2 (f "smp_en")
-            (let oh = binary_to_onehot smp_bit in
-             (reg1 &: ~:oh) |: mux2 smp_val oh (zero 16))
-            reg1
-        in
-        let mat_fire =
-          f "mat_en" &: ~:(i.push_ev &: (i.push_data ==: select reg2 7 0))
-        in
-        let exp_idx = f "exp" in
-        let e0 = pb exp_idx in
-        let exp_v = mux2 (f "md_exp") (modv ~reg_v:reg2 ~m0v:m0b ~m1v:m1b e0) e0 in
-        (* an expect is present iff its predicate index is non-zero or it carries the modifier
-           (a bare Reg_bit / Elapsed_ge requirement compiles to index 0 = true + modifier) *)
-        let exp_fire = ((exp_idx <>:. 0) |: f "md_exp") &: ~:exp_v in
-        let b_fire = complete &: (mat_fire |: exp_fire) in
-        let b_code_idx = mux2 mat_fire (f "mat_chk") (f "exp_chk") in
-        let fire = act &: ~:guard_hit &: (op_fire |: b_fire) in
-        let code_idx = mux2 op_fire op_code_idx b_code_idx in
-        let ok_complete = act &: ~:guard_hit &: complete &: ~:b_fire in
-        let bp = f "bp" in
-        let nxt = mux2 ((bp <>:. 0) &: pb bp) (f "alt") (f "next") in
-        let to_stop = nxt ==:. M.stop_addr in
-        let start = tables.starts.(u) in
-        pc_d
-        <== mux2 restart start
-              (mux2 (act &: guard_hit) gh (mux2 (ok_complete &: ~:to_stop) nxt pc));
-        k_d
-        <== mux2 restart (zero 12)
-              (mux2 (act &: (guard_hit |: ok_complete)) (zero 12) (mux2 act ki k));
-        m0_d <== mux2 restart (zero 12) (mux2 ok_complete m0b (mux2 act m0i m0));
-        m1_d <== mux2 restart (zero 12) (mux2 ok_complete m1b (mux2 act m1i m1));
-        rg_d <== mux2 restart (zero 16) (mux2 ok_complete reg2 rg);
-        stopped_d <== mux2 restart gnd (stopped |: fire |: (ok_complete &: to_stop));
+        let rst_st = ustate_reset ~start:tables.starts.(u) in
+        List.iter2_exn ds
+          (List.map2_exn (ustate_to_list rst_st) (ustate_to_list next) ~f:(fun r n -> mux2 (~:running) r n))
+          ~f:( <== );
         fire, crole code_idx, cval code_idx))
   in
   { O.fire = concat_lsb (List.map units ~f:(fun (f, _, _) -> f))
