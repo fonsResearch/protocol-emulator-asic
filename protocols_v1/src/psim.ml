@@ -54,13 +54,15 @@ type result =
   ; model_mismatch : int (* Interp vs Mmodel firing disagreements *)
   }
 
-let run ?(tx_bytes = []) ?(rx_pop_every = 1) ~setup ~cycles ~(peer : chip_view -> peer_drive) () =
+(* [tx_times]: earliest cycle at which the host may write each TX byte (default 0; shorter
+   lists leave the rest at 0) *)
+let run ?(tx_bytes = []) ?(tx_times = []) ?(rx_pop_every = 1) ~setup ~cycles ~(peer : chip_view -> peer_drive) () =
   let words = Isa1.assemble setup.prog in
   let lane = L.create words in
   let pkg = Compile.compile_exn setup.contract in
   let mon = Interp.create setup.contract
   and mm = Mmodel.create pkg in
-  let tx = Queue.of_list tx_bytes in
+  let tx = Queue.of_list (List.mapi tx_bytes ~f:(fun i b -> b, Option.value (List.nth tx_times i) ~default:0)) in
   let events = Queue.create () in
   let pads = Array.create ~len:cycles 0xFF
   and outs = Array.create ~len:cycles (0, 0) in
@@ -104,8 +106,10 @@ let run ?(tx_bytes = []) ?(rx_pop_every = 1) ~setup ~cycles ~(peer : chip_view -
     let running = rst && not lane.L.faulted in
     let tick = running && !cnt = setup.p in
     (* the host writes TXF only while FIFO_ST shows room (as a driver polling FIFO_ST) *)
-    let tx_push = (not (Queue.is_empty tx)) && cy % 7 = 3 && !tx_level < 8 in
-    let tx_wdata = if tx_push then Queue.dequeue_exn tx else 0 in
+    let tx_push =
+      (match Queue.peek tx with Some (_, t) -> cy >= t | None -> false) && cy % 7 = 3 && !tx_level < 8
+    in
+    let tx_wdata = if tx_push then fst (Queue.dequeue_exn tx) else 0 in
     let o =
       L.step lane
         { rst_sync_n = rst; tick; run = run_in; loaded = true; len = List.length setup.prog

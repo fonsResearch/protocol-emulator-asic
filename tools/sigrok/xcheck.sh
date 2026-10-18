@@ -27,6 +27,15 @@ for f in $D/${P}_*.rle; do
       if cmp -s $D/$n.decoded_pushes $D/$n.bytes; then echo "$n pushes: bus-derived $(wc -l < $D/$n.bytes | tr -d ' ') = lane pushes"
       else echo "$n pushes: MISMATCH"; diff $D/$n.decoded_pushes $D/$n.bytes | head -5; fail=1; fi
       continue ;;
+    i2c_tgt)
+      $SRD/srd_run 60000000 $f -d i2c -c scl=0 -c sda=1 > $D/$n.ann
+      python3 "$(dirname "$0")/i2c_tokens.py" $D/$n.ann $D/$n.tokens /dev/null 50 $D/$n.dec_w $D/$n.dec_r
+      for pair in tokens:bus dec_w:wbytes dec_r:rbytes; do
+        a=${pair%%:*}; b=${pair##*:}
+        if cmp -s $D/$n.$a $D/$n.$b; then echo "$n $a: sigrok $(wc -l < $D/$n.$a | tr -d ' ') = $b"
+        else echo "$n $a: MISMATCH vs $b"; diff $D/$n.$a $D/$n.$b | head -5; fail=1; fi
+      done
+      continue ;;
     uart_rx|uart_tx) $SRD/srd_run 60000000 $f -d uart -o baudrate=115200 -c rx=0 > $D/$n.ann ;;
   esac
   # uart annotation class 0 = RX data (hex text)

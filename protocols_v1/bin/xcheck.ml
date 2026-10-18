@@ -169,6 +169,40 @@ let i2c_ctl dir =
         ([%equal: string list] got expected))
 ;;
 
+(* I2C target at P = 3: random transactions from the controller peer (UM10204 minima), Sm and
+   Fm, one Fm run with read data arriving late (stretching). Writes the pad trace, the
+   controller transcript (.bus), the lane's pushes (.wbytes: expected = decoded writes to
+   0x50) and pops (.rbytes: expected = decoded reads from 0x50). *)
+let i2c_tgt dir =
+  List.iter [ "sm", Peers.i2c_sm, 0; "fm", Peers.i2c_fm, 0; "fm_stretch", Peers.i2c_fm, 20_000 ] ~f:(fun (gname, t, late) ->
+    let rng = Random.State.make [| 53 + t.tlow + late |] in
+    let txs =
+      List.init 14 ~f:(fun _ ->
+        let a = if Random.State.int rng 5 = 0 then 0x51 else 0x50 in
+        let n = 1 + Random.State.int rng 5 in
+        let tx = if Random.State.bool rng then `R (a, n) else `W (a, List.init n ~f:(fun _ -> Random.State.int rng 256)) in
+        tx, Random.State.int rng 3 = 0)
+    in
+    let rdata = List.init 64 ~f:(fun _ -> Random.State.int rng 256) in
+    let c = Peers.i2c_controller ~t txs in
+    let f x = Int.max 2 ((x / 4) - 1) in
+    let setup =
+      { Psim.prog = P1.i2c_tgt ~addr:0x50; own = P1.i2c_own; od = P1.i2c_od; cfg = 0; cfg2 = 0; p = 3
+      ; contract = Lib.i2c_tgt ~h_min:(f t.thigh) ~l_min:(f t.tlow) ~hd:(f t.thd_sta); open_drain_wired_and = P1.i2c_own }
+    in
+    let tx_times = 0 :: List.map rdata ~f:(fun _ -> late) in
+    let r = Psim.run ~tx_bytes:(0x50 :: rdata) ~tx_times ~setup ~cycles:(if t.tlow > 100 then 1_200_000 else 400_000) ~peer:c.cdrive () in
+    let name = "i2c_tgt_" ^ gname in
+    Psim.write_rle ~file:(dir ^/ name ^ ".rle") ~pins:[ Peers.i2c_scl; Peers.i2c_sda ] r.pads;
+    write_bytes (dir ^/ name ^ ".wbytes") (Psim.pushes r);
+    write_bytes (dir ^/ name ^ ".rbytes") (List.drop (Psim.pops r) 1);
+    Out_channel.write_all (dir ^/ name ^ ".bus")
+      ~data:(String.concat (List.map (String.split (c.clog ()) ~on:' ') ~f:(fun t -> t ^ "\n")));
+    let stretched = Array.count r.outs ~f:(fun (_, oe) -> (oe lsr Peers.i2c_scl) land 1 = 1) in
+    printf "%s: done %b, %d pushes, %d pops, lane SCL-pull cycles %d, firings [%s], model_mismatch %d\n" name
+      (c.cdone ()) (List.length (Psim.pushes r)) (List.length (Psim.pops r)) stretched (Psim.show_firings r) r.model_mismatch)
+;;
+
 let () =
   match Sys.get_argv () with
   | [| _; "spi_ctl"; dir |] -> spi_ctl dir
@@ -176,5 +210,6 @@ let () =
   | [| _; "uart_rx"; dir |] -> uart_rx dir
   | [| _; "uart_tx"; dir |] -> uart_tx dir
   | [| _; "i2c_ctl"; dir |] -> i2c_ctl dir
+  | [| _; "i2c_tgt"; dir |] -> i2c_tgt dir
   | _ -> eprintf "usage: xcheck uart_rx <dir>\n"
 ;;
