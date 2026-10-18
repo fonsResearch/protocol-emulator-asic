@@ -1,0 +1,6 @@
+(library
+ (name pemu_protocols_v1_test)
+ (libraries core pemu_spec_v1 pemu_monitor_v1 pemu_protocols_v1)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_expect)))

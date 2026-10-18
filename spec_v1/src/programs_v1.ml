@@ -27,3 +27,22 @@ let uart_tx ~d =
 let uart_tx_bad_start ~d =
   List.mapi (uart_tx ~d) ~f:(fun k ins -> if k = 5 then Wait (d - 1) else ins)
 ;;
+
+(* UART 8N1 RX on input pin [pin], d steps per bit (doc/protocols/uart_v1.md section 4).
+   s0 = the step in which WTP sees the falling edge. Data bit i is sampled (LSB first in) in
+   step s0 + (i+1) d + d/2; the byte is pushed in step s0 + 9d + d/2; WTP is ready again in
+   step s0 + 9d + d/2 + 2, i.e. before the earliest next start s0 + 10d - m when
+   d/2 + 2 + m <= d. Requires d >= 6. *)
+let uart_rx ~d ~pin =
+  if d < 6 then raise_s [%message "uart_rx requires d >= 6" (d : int)];
+  let c = d / 2 in
+  [ Wtp (pin, Falling) (* 0: s0 *)
+  ; Ldi (L Lc, 8) (* 1 *)
+  ; Wait (d + c - 3) (* 2: first PIN in step s0 + d + c *)
+  ; Pin (pin, In_lsb) (* 3 *)
+  ; Wait (d - 3) (* 4 *)
+  ; Djnz 3 (* 5: one bit per d steps *)
+  ; Push Sr (* 6: step s0 + 9d + c *)
+  ; Jmp 0 (* 7 *)
+  ]
+;;
