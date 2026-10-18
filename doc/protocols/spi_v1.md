@@ -48,7 +48,7 @@ Definitions:
 - G6 Drive: from the first pop on, oe = 1 on CS, SCLK and MOSI in every step.
 
 **Assumption (target behaviour; violation = blame).**
-- A1: MISO in step S_k equals MISO in step S_k - 1, i.e. MISO does not change in the sampling step.
+- A1 (amended, D2): MISO is constant in steps S_k - 1 .. S_k + h - 1, i.e. it changes only in the half period after the shifting edge and before the step preceding the sampling step. (Original v1 text: MISO does not change in step S_k only. That text let a target with a clock-to-output delay above about one step deliver consistently stale bits without blame.)
 
 **Host-stream assumption (outside the monitor).** The host RX FIFO is not full at the push.
 
@@ -72,7 +72,7 @@ Definitions:
 - B3: each wait for the next edge, and for r after e_16, lasts at most 4095 steps.
 - B4: SCLK does not change between e_16 and r.
 - B5: CS is 1 in steps r .. r + g - 1, and in the first g steps after the lane starts.
-- B6: MOSI does not change in steps S_k and S_k + 1, i.e. MOSI is constant in S_k - 1 .. S_k + 1.
+- B6 (amended, D2): MOSI is constant from step S_k - 1 until the next shifting edge (CPHA = 0: e_{2k+2}; CPHA = 1: e_{2k+3}, or r after the last bit); it may change in the step of that edge. (Original v1 text: constant in S_k - 1 .. S_k + 1 only, which let a controller that changes MOSI late deliver stale bits without blame.)
 
 **Guarantee (violation = fail).**
 - H1 Byte ready: after the push of the previous frame (or the start), the lane pops byte b from the host TX stream in a step before c. No push occurs, and CS does not fall, before or in the step of that pop.

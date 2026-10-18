@@ -29,14 +29,14 @@ let%expect_test "library packages" =
   [%expect {|
     uart_tx_v1_d4_p0           units 2 instrs 12+2 preds 3/14 windows 3/7 codes 12/15
     uart_rx_v1_d8_m2_p1        units 2 instrs 21+11 preds 6/14 windows 7/7 codes 15/15
-    spi_ctl_v1_m0_h2           units 5 instrs 21+10+12+2+10 preds 11/14 windows 5/7 codes 12/15
-    spi_ctl_v1_m1_h2           units 5 instrs 21+11+12+2+10 preds 11/14 windows 5/7 codes 12/15
-    spi_ctl_v1_m2_h2           units 5 instrs 21+10+12+2+10 preds 11/14 windows 5/7 codes 12/15
-    spi_ctl_v1_m3_h2           units 5 instrs 21+11+12+2+10 preds 11/14 windows 5/7 codes 12/15
-    spi_tgt_v1_m0_h3_g6        units 5 instrs 36+25+28+2+3 preds 14/14 windows 6/7 codes 13/15
-    spi_tgt_v1_m1_h3_g6        units 5 instrs 36+25+28+2+3 preds 14/14 windows 6/7 codes 12/15
-    spi_tgt_v1_m2_h3_g6        units 5 instrs 36+25+28+2+3 preds 14/14 windows 6/7 codes 13/15
-    spi_tgt_v1_m3_h3_g6        units 5 instrs 36+25+28+2+3 preds 14/14 windows 6/7 codes 12/15
+    spi_ctl_v1_m0_h2           units 5 instrs 21+10+12+2+18 preds 11/14 windows 6/7 codes 13/15
+    spi_ctl_v1_m1_h2           units 5 instrs 21+11+12+2+18 preds 11/14 windows 6/7 codes 13/15
+    spi_ctl_v1_m2_h2           units 5 instrs 21+10+12+2+18 preds 11/14 windows 6/7 codes 13/15
+    spi_ctl_v1_m3_h2           units 5 instrs 21+11+12+2+18 preds 11/14 windows 6/7 codes 13/15
+    spi_tgt_v1_m0_h3_g6        units 5 instrs 36+17+28+2+3 preds 14/14 windows 6/7 codes 14/15
+    spi_tgt_v1_m1_h3_g6        units 5 instrs 36+18+28+2+3 preds 14/14 windows 6/7 codes 14/15
+    spi_tgt_v1_m2_h3_g6        units 5 instrs 36+17+28+2+3 preds 14/14 windows 6/7 codes 14/15
+    spi_tgt_v1_m3_h3_g6        units 5 instrs 36+18+28+2+3 preds 14/14 windows 6/7 codes 14/15
     |}]
 ;;
 

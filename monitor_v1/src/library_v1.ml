@@ -104,7 +104,8 @@ let spi_miso = 7
    2: CS not selected in 1..4 steps with SCLK idle; 3: idle-level segment wrong or a pop
    inside the frame; 4: active-level segment wrong or a pop);
    [mosi] G4 (fail 1, all 8 bits); [miso] G5 (fail 1: push between frames; 5: push during
-   the byte; 2: push early; 3: no push; 4: data); [drive] G6 (fail 1); [target] A1 (blame 1).
+   the byte; 2: push early; 3: no push; 4: data); [drive] G6 (fail 1); [target] A1 (blame 1:
+   MISO changes in S_k; 2: MISO changes in S_k + 1 .. S_k + h - 1, D2 in log/disagreements.md).
    Codes label check families (WF3 v1.1). *)
 let spi_ctl ~cpol ~cpha ~h =
   if h < 2 then raise_s [%message "spi_ctl: need h >= 2" (h : int)];
@@ -179,8 +180,13 @@ let spi_ctl ~cpol ~cpha ~h =
       ~base:0x90
       [ loop
           (List.concat
-             [ [ take_idle Tx_pop; await_idle sel; skip s0; expect (stable "miso") ~else_:(blame 1) ]
-             ; List.concat (List.init 7 ~f:(fun _ -> [ skip (2 * h); expect (stable "miso") ~else_:(blame 1) ]))
+             [ [ take_idle Tx_pop; await_idle sel; skip s0 ]
+             ; List.concat
+                 (List.init 8 ~f:(fun k ->
+                    (if k = 0 then [] else [ skip (h + 1) ])
+                    @ [ expect (stable "miso") ~else_:(blame 1)
+                      ; hold (stable "miso") ~for_:(h - 1) ~else_:(blame 2)
+                      ]))
              ])
       ]
   in
@@ -203,7 +209,8 @@ let spi_ctl ~cpol ~cpha ~h =
 (* Target (section 4): minimum half period h_min, CS-high minimum g. Watchers:
    [ctl] B1-B5 (blame 1: SCLK not idle at CS fall; 2: edge too soon or CS rose mid-byte;
    3: edge or CS rise not within 4095 steps; 4: edge after the 16th; 5: CS high too short);
-   [mosi_ok] B6 (blame 1); [ready] H1 (fail 1: CS fell or push before the pop);
+   [mosi_ok] B6 (blame 1: MOSI changes in S_k; 2/3: MOSI changes after S_k before the next
+   shifting edge / CS high, D2 in log/disagreements.md); [ready] H1 (fail 1: CS fell or push before the pop);
    [frame] H2-H3 (fail 2: MISO data, all bits; 3: pop or push inside the frame; 4: no push
    in the window; 6: push early (CPHA 0); 5: data); [drive] H4 (fail 1).
    Codes label check families (WF3 v1.1). *)
@@ -243,15 +250,19 @@ let spi_tgt ~cpol ~cpha ~h_min ~g =
            ; (if cpha then [] else [ await_idle edge ])
            ]))
   in
+  (* B6 (D2): MOSI is constant from S_k - 1 until the next shifting edge (CPHA 0: e_{2k+2};
+     CPHA 1: e_{2k+3}, or CS high after the last bit). The hold-until consumes that edge. *)
   let mosi_ok =
-    watcher
-      "mosi_ok"
-      ~base:0x60
-      [ loop
-          ([ await_idle (fall "cs") ]
-           @ per_bit_edges (fun _ ->
-             [ expect (stable "mosi") ~else_:(blame 1); skip 1; expect (stable "mosi") ~else_:(blame 1) ]))
-      ]
+    let bit k =
+      List.concat
+        [ (if cpha && k = 0 then [ await_idle edge ] else [])
+        ; [ await_idle edge (* S_k *); expect (stable "mosi") ~else_:(blame 1) ]
+        ; (if cpha && k = 7
+           then [ hold_until (stable "mosi") cs (win 1 4095 ~else_:(blame 3)) ]
+           else [ hold_until (stable "mosi") edge (win 1 4095 ~else_:(blame 2)) ])
+        ]
+    in
+    watcher "mosi_ok" ~base:0x60 [ loop ([ await_idle (fall "cs") ] @ List.concat (List.init 8 ~f:bit)) ]
   in
   let ready =
     watcher
