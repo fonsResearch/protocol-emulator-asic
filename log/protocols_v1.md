@@ -97,3 +97,24 @@ The default core is lane 1 loadable, with 3 SRAM macros (not included in these a
   - 8×4 (primary): about 503k µm² Yosys-typ. lib10 uses 79 %, the projection 84-88 %.
   - 6×4 (fallback): about 366k µm². The step-6 baseline already uses 97 %, and lib10 108 %. The 6×4 fallback does not fit with the protocol ROM library.
 - **Loadable store.** Loadable mode runs only 2 watchers (units 6-7), and the SPI packages use 5. So in a build without SPI in ROM, SPI would not be available at all.
+
+## I2C (doc/protocols/i2c_v1.md; controller Sm l5 h5 tsu5 thold5, Fm l6 h4 tsu3 thold6; target Sm 59/69/59, Fm 8/18/8)
+
+Harnesses `Ag_pkg.i2c_all`. Open-drain pins are modelled as wired-AND: the pad is the free environment input ANDed with the lane's own pull in the same cycle (`od_wired`). Ticks are free, as for UART/SPI. Counterexamples are replayed, then decoded with the reference interpreter (`REPLAY_TRACE_WATCHER=<watcher> replay_cex.exe ...`). When dprove reports FAIL but bmc3 finds no trace in time (NO-BMC-CEX), the trace comes from `dprove; write_cex -a`.
+
+Defects found by A2 and fixed (log/disagreements.md): D8 (controller START without bus-free wait), D9 (pin read-back for SCL toggles), D10 (controller WTP one step ahead of the monitor's await), D11 (target glitch hole introduced by D7). A host-stream assumption was also added: the target's config byte is ready at start, as for the SPI target.
+
+Status (2026-10-18; the long runs were stopped by the user):
+
+| harness | expected | result | depth | s | note |
+|---|---|---|---|---|---|
+| a2_i2c_ctl_fm_u | PASS | TIMEOUT (dprove 3600 s; 10800 s run stopped) | | 3600 | after D10; no counterexample found |
+| a2_i2c_ctl_sm_u | PASS | TIMEOUT (dprove 3600 s; 10800 s run stopped) | | 3600 | after D10 |
+| a2_i2c_ctl_fm_n1_cover_neg | FAIL | FAIL, replay ok | 172 | 1071 | non-vacuity witness (status push, no fail, no blame) |
+| a2_i2c_ctl_fm_h2_neg | FAIL | FAIL, replay ok | 46 | 41 | firmware H - 2 |
+| a2_i2c_ctl_fm_nowired_neg | FAIL | FAIL (NO-BMC-CEX) | 198 | 738 | free pads instead of wired-AND |
+| a2_i2c_tgt_fm_noassume_neg | FAIL | FAIL, replay ok | 52 | 11 | after D11 |
+| a2_i2c_tgt_fm_u / sm_u | PASS | not yet run to completion after D11 | | | before D11: F61 at depth 158 (D11) |
+| a2_i2c_tgt_fm_n1_cover_neg | FAIL | TIMEOUT 2400 s (before D11) | | | |
+| a2_i2c_tgt_fm_noack_neg / stretchhigh_neg | FAIL | FAIL at 151 / 213 before D11, NO-BMC-CEX, not decoded | | | |
+
