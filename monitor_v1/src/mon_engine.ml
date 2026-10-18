@@ -157,7 +157,9 @@ let behavioural_store ~clock (p : store_port) =
   d
 ;;
 
-let create ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> Signal.t)
+(* [loadable.(l)] = false builds lane l without the loadable path (no store, no context
+   registers, no fetcher; LOAD_UNITS writes have no effect): a build-time configuration. *)
+let create ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> Signal.t)
   ~(host : host) ~(lanes : lane_view array) ~ui_in ~uio_in =
   let spec = Reg_spec.create ~clock ~clear:~:rst_sync_n () in
   let wr_at a = host.wr &: (host.addr ==:. a) in
@@ -190,7 +192,7 @@ let create ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> S
     in
     let en = bit pkg 7
     and idx = select pkg 3 0 in
-    let ld_mode = lu <>:. 0 in
+    let ld_mode = (lu <>:. 0) &: (if loadable.(l) then vdd else gnd) in
     (* ---- host store port: LSTORE_ADDR (+4), LSTORE_DATA (+5, low then high byte) ---- *)
     let st_wr_data = wr_ctx 5 in
     let st_phase_d = wire 1 in
@@ -334,7 +336,7 @@ let create ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> S
     let ir_word u = select (concat_lsb (Array.to_list ir.(u))) (M.instr_width - 1) 0 in
     (* ---- the store: host writes (halted), loader reads (halted), fetcher reads (running) ---- *)
     dout
-    <== store l
+    <== if not loadable.(l) then zero 16 else store l
           { addr = mux2 st_we st_addr (mux2 ld_issue (ctx_base +: uresize ld_k 8) f_addr)
           ; din = host.wdata @: st_lo
           ; wen = st_we

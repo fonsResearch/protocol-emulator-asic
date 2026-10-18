@@ -17,8 +17,16 @@ let () =
     in
     Rtl.print Verilog circ;
     exit 0);
-  if String.equal mode "top_macro_mon"
+  if String.is_prefix mode ~prefix:"top_macro_mon"
   then (
+    (* top_macro_mon: default build, lane 1 loadable (user decision 2026-10-18);
+       top_macro_mon_both: both lanes loadable; top_macro_mon_rom: ROM only *)
+    let loadable =
+      match mode with
+      | "top_macro_mon_both" -> [| true; true |]
+      | "top_macro_mon_rom" -> [| false; false |]
+      | _ -> [| false; true |]
+    in
     let lib =
       Pemu_monitor_v1.(
         [ Compile.compile_exn (Library_v1.uart_tx ~d:3 ~pin:0)
@@ -26,7 +34,7 @@ let () =
     in
     let circ =
       CT.create_exn ~name:"pemu_core_v1m"
-        (Top_v1.create ~lib ~sram:(fun l ->
+        (Top_v1.create ~loadable ~lib ~sram:(fun l ->
            Sram256.blackbox
              ~instance:(if l < 2 then sprintf "u_imem_l%d" l else sprintf "u_lstore_l%d" (l - 2))))
     in

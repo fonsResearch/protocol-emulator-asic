@@ -5,7 +5,8 @@
    engine's registered blame of lane L; RUN of a lane with an enabled package is refused
    unless P >= min_p (7, or 13 with two loadable units; assumption T8 and the fetch bound) and,
    in loadable mode, the context is loaded; shown in FLAGS bit 4. Loadable stores: [sram 2]
-   and [sram 3];
+   and [sram 3]. Default build (user decision 2026-10-18): lane 1 loadable, lane 0 ROM only
+   ([?loadable] = [| false; true |]), so one store macro ([sram 3]);
    STATUS bits 6/7 and uo_out[1]/[2] carry fail/blame; CTRL bit4 clears the verdict.
    Without [?lib]: fail = blame = 0 and blame_in = 0, as in core v1.
 
@@ -280,7 +281,7 @@ type debug =
       (* per lane: uid ranges of the signals built by its prescaler and its Lane_rtl.create *)
   }
 
-let create_with_debug ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
+let create_with_debug ?(loadable = [| false; true |]) ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
   let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
   let sync x = reg spec (reg spec x) in
   let s_ui = sync (select i.ui_in 2 0) -- "s2_ui"
@@ -400,7 +401,7 @@ let create_with_debug ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
            ; a_bist_din = zero 16; a_bist_bm = zero 16 })
           .a_dout
       in
-      Pemu_monitor_v1.Mon_engine.create ~clock:i.clock ~rst_sync_n:i.rst_sync_n ~lib ~store
+      Pemu_monitor_v1.Mon_engine.create ~loadable ~clock:i.clock ~rst_sync_n:i.rst_sync_n ~lib ~store
         ~host:{ wr = spi.wr; addr = spi.addr; wdata = spi.wdata
               ; clr_verdict = ctrl_wr &: bit spi.wdata 4 }
         ~lanes ~ui_in:i.ui_in ~uio_in:i.uio_in)
@@ -453,4 +454,4 @@ let create_with_debug ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
     } )
 ;;
 
-let create ?lib ~sram i = fst (create_with_debug ?lib ~sram i)
+let create ?loadable ?lib ~sram i = fst (create_with_debug ?loadable ?lib ~sram i)

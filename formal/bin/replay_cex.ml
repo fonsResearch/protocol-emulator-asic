@@ -60,11 +60,20 @@ let () =
         (List.map data ~f:fst |> String.concat ~sep:",")
         ()
     | Some (n, bit) ->
-      let v = Hashtbl.find init_vals n |> Option.value ~default:0 in
-      let v = if Char.equal f0.[idx] '1' then v lor (1 lsl bit) else v in
+      (* values are kept as sets of set bit indices: registers and inputs may be wider than
+         an OCaml int (e.g. an 82-bit instruction word) *)
+      let v = Hashtbl.find init_vals n |> Option.value ~default:Int.Set.empty in
+      let v = if Char.equal f0.[idx] '1' then Set.add v bit else v in
       Hashtbl.set init_vals ~key:n ~data:v);
+  let to_bits ~width set = Bits.concat_lsb (List.init width ~f:(fun i -> Bits.of_bool (Set.mem set i))) in
+  let show ~width set =
+    if width <= 62 then sprintf "0x%04x" (Bits.to_int (to_bits ~width set))
+    else sprintf "%d'b%s" width (Bits.to_bstr (to_bits ~width set))
+  in
+  let reg_width n = Cyclesim.Reg.width_in_bits (Option.value_exn (Cyclesim.lookup_reg_by_name sim n)) in
   Hashtbl.iteri init_vals ~f:(fun ~key ~data ->
-    Cyclesim.Reg.of_int (Option.value_exn (Cyclesim.lookup_reg_by_name sim key)) data);
+    let r = Option.value_exn (Cyclesim.lookup_reg_by_name sim key) in
+    Cyclesim.Reg.of_bits r (to_bits ~width:(Cyclesim.Reg.width_in_bits r) data));
   let dbg_ports =
     List.filter_map (Circuit.outputs circuit) ~f:(fun s ->
       let n = List.hd_exn (Signal.names s) in
@@ -72,26 +81,26 @@ let () =
   in
   printf "# harness %s, %d frames, sram dout init: %s\n" name (List.length frames)
     (Hashtbl.to_alist init_vals
-     |> List.map ~f:(fun (n, v) -> sprintf "%s=0x%04x" n v)
+     |> List.map ~f:(fun (n, v) -> sprintf "%s=%s" n (show ~width:(reg_width n) v))
      |> String.concat ~sep:" ");
   printf "# frame rst_sync_n ui_in uio_in bad %s\n" (String.concat ~sep:" " dbg_ports);
   let first_bad = ref None in
   List.iteri frames ~f:(fun k line ->
     let vals = Hashtbl.create (module String) in
     Hashtbl.iteri inputs ~f:(fun ~key:idx ~data:(n, bit) ->
-      if Char.equal line.[idx] '1'
-      then Hashtbl.update vals n ~f:(fun v -> Option.value v ~default:0 lor (1 lsl bit))
-      else Hashtbl.update vals n ~f:(fun v -> Option.value v ~default:0));
+      let cur = Option.value (Hashtbl.find vals n) ~default:Int.Set.empty in
+      Hashtbl.set vals ~key:n ~data:(if Char.equal line.[idx] '1' then Set.add cur bit else cur));
     List.iter (Cyclesim.in_ports sim) ~f:(fun (n, r) ->
       if not (String.equal n "clock")
-      then r := Bits.of_int ~width:(Bits.width !r) (Option.value (Hashtbl.find vals n) ~default:0));
+      then
+        r := to_bits ~width:(Bits.width !r) (Option.value (Hashtbl.find vals n) ~default:Int.Set.empty));
     Cyclesim.cycle sim;
     let o n = Bits.to_int !(Cyclesim.out_port ~clock_edge:Before sim n) in
     let bad = o "bad" in
     if bad = 1 && Option.is_none !first_bad then first_bad := Some k;
     let g n =
       match Hashtbl.find vals n with
-      | Some v -> sprintf "0x%02x" v
+      | Some v -> sprintf "0x%02x" (Set.fold v ~init:0 ~f:(fun a b -> a lor (1 lsl b)))
       | None -> "-"
     in
     printf "%3d %s %s %s %d %s\n" k (g "rst_sync_n") (g "ui_in") (g "uio_in") bad
