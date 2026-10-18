@@ -1,3 +1,3 @@
 (executables
- (names emit_formal replay_cex mutants)
+ (names emit_formal replay_cex mutants witness)
  (libraries core hardcaml pemu_formal))
