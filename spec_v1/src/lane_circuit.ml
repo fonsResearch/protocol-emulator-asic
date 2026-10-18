@@ -88,6 +88,10 @@ let imem_rom (words : int array) pc =
   mux pc (List.init 256 ~f:(fun a -> of_int ~width:16 words.(a)))
 ;;
 
+(* Internal signals of the most recently built lane, for proof harnesses that need them
+   (formal/src/ag_pkg.ml symmetry lemma). Adds no logic unless a harness reads them. *)
+let taps : (string * Signal.t) list ref = ref []
+
 let create ~imem (i : _ I.t) =
   let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
   let regw name w =
@@ -389,6 +393,7 @@ let create ~imem (i : _ I.t) =
   (* ---- assemble next state ---- *)
   (* v1.0.2: reset in every non-running cycle, and at the end of a step that faults *)
   let step_reset = ~:running |: step_blame |: fault_now in
+  taps := ("step_reset", step_reset) :: ("exec", exec) :: !taps;
   let hold_or v_exec v_reset v =
     mux2 step_reset v_reset (mux2 exec v_exec v)
   in
