@@ -153,7 +153,10 @@ let i2c_od = 0x0C
    - ACK received: OUT release SDA, waits, OUT release SCL, WTP (s), PIN In_lsb (s+1),
      CMP (Z = ACK; sr is 0 after 8 MSB-first shifts), waits(h-3), OUT pull;
    - conditions: Sr/STOP visible tsu steps after the first high step; status PUSH two steps
-     after the condition; SCL pulled thold steps after START/Sr. *)
+     after the condition; SCL pulled thold steps after START/Sr;
+   - D10: every WTP for SCL high after a release starts one step after the release is
+     visible, i.e. where the monitor's `await scl` starts, so lane and monitor count the same
+     high phases even if the environment pulses SCL in the release step (A3 is [O]). *)
 let i2c_ctl ~l ~h ~tsu ~thold =
   let m2 = Int.max 0 (l - 6) in
   let ka = Int.max 0 (l - 3) in
@@ -177,18 +180,19 @@ let i2c_ctl ~l ~h ~tsu ~thold =
       ; ins (Mov (M R1, S Sr))
       ; ins (Ldi (L Sr, 0xFF))
       ; ins (Pin (2, Out_msb))
+      ; ins (Ldi (L Sr, 0x00)) (* D10 gap: WTP starts one step after the release is visible *)
       ; ins (Wtp (2, High))
       ]
     @ waits (h - 2)
-    @ [ ins (Ldi (L Sr, 0x00)); ins (Pin (2, Out_msb)); ins (Mov (M Sr, S R1)) ]
+    @ [ ins (Pin (2, Out_msb)); ins (Mov (M Sr, S R1)) ]
     @ waits m2
     @ [ I (fun f -> Djnz (f lbl)) ]
   in
   let ack_rx =
     (* leaves Z = ACK; ends with SCL pulled, SDA released *)
     [ ins (Out 0x08) ] @ waits ka
-    @ [ ins (Out 0x0C); ins (Wtp (2, High)); ins (Pin (3, In_lsb)); ins (Cmp (C Sr, 0)) ]
-    @ waits (h - 3)
+    @ [ ins (Out 0x0C); ins Nop; ins (Wtp (2, High)); ins (Pin (3, In_lsb)); ins (Cmp (C Sr, 0)) ]
+    @ waits (h - 4)
     @ [ ins (Out 0x08) ]
   in
   let rw_is_write =
@@ -215,20 +219,20 @@ let i2c_ctl ~l ~h ~tsu ~thold =
      @ [ Lbl "data_nack"; ins (Ldi (L R2, 2)); Lbl "dn"; ins (Addi (R0, 0xFF)); br 1 "stop"; ins (Pop Sr); jmp "dn" ]
      (* read data *)
      @ [ Lbl "read"; ins (Ldi (L Lc, 8)) ] @ waits l
-     @ [ Lbl "rb"; ins (Out 0x0C); ins (Wtp (2, High)); ins (Pin (3, In_msb)) ] @ waits (h - 2)
+     @ [ Lbl "rb"; ins (Out 0x0C); ins Nop; ins (Wtp (2, High)); ins (Pin (3, In_msb)) ] @ waits (h - 3)
      @ [ ins (Out 0x08) ] @ waits (l - 2)
      @ [ I (fun f -> Djnz (f "rb")); ins (Push Sr); ins (Addi (R0, 0xFF)); br 1 "rnack" ]
-     @ [ ins (Out 0x00); ins (Out 0x04); ins (Wtp (2, High)) ] @ waits (h - 1)
+     @ [ ins (Out 0x00); ins (Out 0x04); ins Nop; ins (Wtp (2, High)) ] @ waits (h - 2)
      @ [ ins (Out 0x00); ins (Out 0x08); ins (Ldi (L Lc, 8)) ] @ waits (l - 4) @ [ jmp "rb" ]
-     @ [ Lbl "rnack" ] @ waits l @ [ ins (Out 0x0C); ins (Wtp (2, High)) ] @ waits (h - 1) @ [ ins (Out 0x08) ]
+     @ [ Lbl "rnack" ] @ waits l @ [ ins (Out 0x0C); ins Nop; ins (Wtp (2, High)) ] @ waits (h - 2) @ [ ins (Out 0x08) ]
      (* end of a transaction without NACK: Sr if r3 != 0, else STOP *)
      @ [ Lbl "end"; ins (Cmp (C R3, 0)); br 1 "stop" ]
      @ [ ins (Out 0x08) ] @ waits l
-     @ [ ins (Out 0x0C); ins (Wtp (2, High)) ] @ waits (tsu - 2)
+     @ [ ins (Out 0x0C); ins Nop; ins (Wtp (2, High)) ] @ waits (tsu - 2)
      @ [ ins (Out 0x04) ] @ waits 2 @ [ ins (Push R2) ] @ hdr @ waits thold @ [ ins (Out 0x00); jmp "addr" ]
      (* STOP from a low phase (SCL pulled, SDA released) *)
      @ [ Lbl "stop"; ins (Out 0x00) ] @ waits l
-     @ [ ins (Out 0x04); ins (Wtp (2, High)) ] @ waits (tsu - 2)
+     @ [ ins (Out 0x04); ins Nop; ins (Wtp (2, High)) ] @ waits (tsu - 2)
      @ [ ins (Out 0x0C) ] @ waits 2 @ [ ins (Push R2) ] @ waits thold @ [ jmp "idle" ])
 ;;
 

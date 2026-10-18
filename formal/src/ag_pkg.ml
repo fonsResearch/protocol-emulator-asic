@@ -129,11 +129,21 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ~io ~mode ~pro
       [ bad; mo.fire; mo.role; o.uio_out &: ownv; o.uio_oe &: ownv; o.push_ev; o.push_data; o.pop_ev
       ; o.pop_data; o.faulted ]
   in
-  { bad; dbg = [ "tick", tick; "pc", o.pc; "fire", mo.fire; "role", mo.role; "uio_in", uio_in ]; obs
+  { bad
+  ; dbg =
+      [ "tick", tick; "pc", o.pc; "fire", mo.fire; "role", mo.role; "uio_in", uio_in
+        (* monitor inputs, for the reference-interpreter decode in replay_cex *)
+      ; "m_rst", rst_sync_n; "m_running", running; "m_out", o.uio_out &: ownv; "m_oe", o.uio_oe &: ownv
+      ; "m_pop", o.pop_ev; "m_popd", o.pop_data; "m_push", o.push_ev; "m_pushd", o.push_data ]
+  ; obs
   ; blame_seen; ok; running; rst_sync_n; tick; pc = o.pc; lane_taps = !L.taps }
 ;;
 
+(* harness name -> contract, for the reference-interpreter decode of counterexamples *)
+let contracts : Pemu_monitor_v1.Lang.t String.Table.t = String.Table.create ()
+
 let harness ?debug ?rx_never_full ?pop_pcs ?od_wired ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
+  Hashtbl.set contracts ~key:name ~data:contract;
   let c = core ?rx_never_full ?pop_pcs ?od_wired ~io:(free_io ()) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () in
   Harness.bad_circuit ?debug ~dbg:c.dbg ~name c.bad
 ;;

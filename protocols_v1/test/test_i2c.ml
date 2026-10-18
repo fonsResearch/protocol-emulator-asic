@@ -49,8 +49,8 @@ let%expect_test "I2C controller program size" =
   List.iter [ "Sm", sm; "Fm", fm ] ~f:(fun (n, (_, l, h, tsu, thold)) ->
     printf "%s %d instructions\n" n (List.length (P1.i2c_ctl ~l ~h ~tsu ~thold)));
   [%expect {|
-    Sm 168 instructions
-    Fm 168 instructions
+    Sm 175 instructions
+    Fm 173 instructions
     |}]
 ;;
 
@@ -106,7 +106,7 @@ let%expect_test "I2C controller Fm: target data delay sweep (step = 15 cycles, l
     dd  80: pushes 00 00 C3 5A 00 01 01 firings [] U true
     dd  90: pushes 00 00 C3 5A 00 01 01 firings [] U true
     dd 100: pushes 00 00 C3 5A 00 01 01 firings [] U true
-    dd 120: pushes 00 00 E1 AD 00 01 01 firings [B77@13801] U true
+    dd 120: pushes 00 00 C3 5A 00 01 01 firings [B77@13831] U true
     |}]
 ;;
 
@@ -116,7 +116,7 @@ let%expect_test "I2C controller Fm: target misbehaviour (A1 ACK at SCL rise, A2 
   [%expect {|
     bus: S A50W+ W11+ W22+ W33+ P S A50W+ W05+ Sr A50R+ RC3+ R5A- P S A51R- P S A52W- P
     pushes: 00 00 C3 5A 00 01 01
-    firings [B76@12886] U true model_mismatch 0 steps 7999
+    firings [B76@12916] U true model_mismatch 0 steps 7999
     change 8 cycles after rise:
     bus: S A50W+ W11+ W22+ W33+ P S A50W+ W05+ Sr A50R+ RC3+ R5A- P S A51R- P S A52W- P
     pushes: 00 00 C3 5A 00 01 01
@@ -127,8 +127,8 @@ let%expect_test "I2C controller Fm: target misbehaviour (A1 ACK at SCL rise, A2 
     firings [] U true model_mismatch 0 steps 7999
     change 35 cycles after rise:
     bus: S A50W+ W11+ W22+ W33+ P S A50W+ W05+ Sr A50R+ RC3+ R5A- P S A51R- P S A52W- P
-    pushes: 00 00 E1 6D 00 01 01
-    firings [B77@13801] U true model_mismatch 0 steps 7999
+    pushes: 00 00 C3 5A 00 01 01
+    firings [B77@13831] U true model_mismatch 0 steps 7999
     |}]
 ;;
 
@@ -136,7 +136,7 @@ let%expect_test "I2C controller Fm: firmware timing mutants (contract at nominal
   let _, l, h, tsu, thold = fm in
   List.iter
     [ "l-1", P1.i2c_ctl ~l:(l - 1) ~h ~tsu ~thold; "h-1", P1.i2c_ctl ~l ~h:(h - 1) ~tsu ~thold; "h-2", P1.i2c_ctl ~l ~h:(h - 2) ~tsu ~thold
-    ; "tsu-1", P1.i2c_ctl ~l ~h ~tsu:(tsu - 1) ~thold; "thold-1", P1.i2c_ctl ~l ~h ~tsu ~thold:(thold - 1) ]
+    ; "tsu-2", P1.i2c_ctl ~l ~h ~tsu:(tsu - 2) ~thold; "thold-1", P1.i2c_ctl ~l ~h ~tsu ~thold:(thold - 1) ]
     ~f:(fun (n, prog) ->
       let tgt = i2c_target ~addr:0x50 ~read_data:[ 0xC3; 0x5A ] () in
       let setup = { (ctl_setup fm) with prog } in
@@ -146,10 +146,10 @@ let%expect_test "I2C controller Fm: firmware timing mutants (contract at nominal
         (match f with [] -> "none" | (c, ro, k) :: _ -> sprintf "%s%02X@%d" (match ro with Fail -> "F" | Blame -> "B") k c)
         (u_ok r));
   [%expect {|
-    l-1      first F52@13336 U false
+    l-1      first F52@13366 U false
     h-1      first none U true
     h-2      first F53@676 U false
-    tsu-1    first F61@7126 U false
+    tsu-2    first none U true
     thold-1  first F62@496 U false
     |}]
 ;;

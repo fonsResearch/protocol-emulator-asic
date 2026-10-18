@@ -393,3 +393,6 @@ let fired_site t ~code =
       Some (ws.w.wname, n, s)
     | _ -> None)
 ;;
+
+(* debugging: each watcher's current statement (None when idle or stopped) *)
+let current t = Array.to_list t.ws |> List.map ~f:(fun ws -> ws.w.wname, ws.cur)

@@ -85,6 +85,15 @@ let () =
      |> String.concat ~sep:" ");
   printf "# frame rst_sync_n ui_in uio_in bad %s\n" (String.concat ~sep:" " dbg_ports);
   let first_bad = ref None in
+  (* A2 package harnesses: run the reference interpreter (Interp) on the monitor inputs that
+     the harness exports (the dbg_m_ ports), and print every firing with its code and site *)
+  let module I = Pemu_monitor_v1.Interp in
+  let interp =
+    match Hashtbl.find Ag_pkg.contracts name with
+    | Some c when List.mem dbg_ports "dbg_m_oe" ~equal:String.equal -> Some (c, I.create c)
+    | _ -> None
+  in
+  let firings = Queue.create () in
   List.iteri frames ~f:(fun k line ->
     let vals = Hashtbl.create (module String) in
     Hashtbl.iteri inputs ~f:(fun ~key:idx ~data:(n, bit) ->
@@ -103,8 +112,35 @@ let () =
       | Some v -> sprintf "0x%02x" (Set.fold v ~init:0 ~f:(fun a b -> a lor (1 lsl b)))
       | None -> "-"
     in
+    (match interp with
+     | None -> ()
+     | Some (_, t) ->
+       let b n = o ("dbg_" ^ n) = 1 in
+       let fa =
+         I.step t
+           { I.rst_sync_n = b "m_rst"; running = b "m_running"; tick = b "tick"; ui_in = 0
+           ; uio_in = o "dbg_uio_in"; uo_out = 0; uio_out = o "dbg_m_out"; uio_oe = o "dbg_m_oe"
+           ; pop_ev = b "m_pop"; pop_data = o "dbg_m_popd"; push_ev = b "m_push"; push_data = o "dbg_m_pushd" }
+       in
+       (match Sys.getenv "REPLAY_TRACE_WATCHER" with
+        | Some wn ->
+          List.iter (I.current t) ~f:(fun (w, cur) ->
+            if String.equal w wn
+            then
+              Queue.enqueue firings
+                (sprintf "# %s frame %d: %s" w k
+                   (match cur with Some st -> String.prefix (Sexp.to_string (Pemu_monitor_v1.Lang.sexp_of_stmt st)) 160 | None -> "-")))
+        | None -> ());
+       List.iter fa ~f:(fun (r, c) ->
+         let site =
+           match I.fired_site t ~code:c with
+           | Some (w, n, st) -> sprintf "%s #%d %s" w n (Sexp.to_string (Pemu_monitor_v1.Lang.sexp_of_stmt st))
+           | None -> "?"
+         in
+         Queue.enqueue firings (sprintf "# interp frame %d: %s %02X at %s" k (match r with Fail -> "fail" | Blame -> "blame") c site)));
     printf "%3d %s %s %s %d %s\n" k (g "rst_sync_n") (g "ui_in") (g "uio_in") bad
       (List.map dbg_ports ~f:(fun p -> sprintf "0x%x" (o p)) |> String.concat ~sep:" "));
+  Queue.iter firings ~f:print_endline;
   let expected = List.length frames - 1 in
   match !first_bad with
   | Some k when k = expected -> printf "# REPLAY OK: bad first rises at frame %d (ABC: %d)\n" k expected
