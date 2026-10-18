@@ -60,3 +60,17 @@ To be fixed at plan step 6:
 ## C9. Proof scope (from interface section 7)
 
 A package's theorem covers the exact monitor programs, remap tables and parameter values it was proved with.
+
+## C10. Amendment v1.1: WF3 check families (user decision 2026-10-18, plan step 7)
+
+Replaces v0 WF3 ("codes are unique per contract") for language v1 packages. The v0 spike (`contracts/`) keeps its own rule.
+
+- **WF3 (v1.1).** A cause code identifies a watcher and a *check family*. Several check sites may carry the same code only if they are in the same watcher and have:
+  - the same kind and outcome (hold; hold-until; await timeout; await early; take timeout; take early; expect; match). `raise` sites are never shared.
+  - the same requirement and the same condition, where `Eq_reg` register-bit indices may differ.
+  - Hold and window lengths may differ.
+- Codes stay unique across watchers.
+- **Site resolution.** The reference interpreter (`monitor_v1/src/interp.ml`, `fired_site`) reports the site that fired and its ordinal: the number of sites with the same code that passed in the current iteration of the innermost loop. For per-bit families the ordinal is the bit position in transmission order. The host tooling recovers the site by replaying the trace through the interpreter from the start of the lane's run.
+- **Reason.** Per-bit data checks need one site per bit. With 15 codes per package (monitor ISA v1), SPI target MISO checking alone needs 16 sites, so the v0 rule cannot be met.
+- **Effect on proofs.** None. U and N1 do not depend on WF3; WF1 and WF2 carry the meaning of fail and blame. This is a validator change only; the monitor hardware is unchanged.
+- **Cost.** The on-chip cause code no longer pins down the exact site. Diagnosing a single bit needs the trace replay.

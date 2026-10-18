@@ -48,6 +48,10 @@ type wstate =
   ; mutable reg : int (* 16 bits *)
   ; mutable guard : guard_state option
   ; mutable stopped : bool
+  ; mutable passed : int Int.Map.t
+      (* WF3 v1.1 site resolution: per code, the number of sites of that family that passed
+         in the current iteration of the innermost loop *)
+  ; mutable site : (stmt * int) option (* the site that fired and its ordinal *)
   }
 
 type t =
@@ -122,6 +126,20 @@ type advance =
 
 (* Walk to the next consuming statement, executing instants on observation [o] (the
    completion step). [o] = None at restart: no instants may be met (validation). *)
+let codes_of_stmt = function
+  | Hold_for { check; _ } | Expect { check; _ } | Match { check } -> [ snd check ]
+  | Await { w; _ } | Hold_until { w; _ } | Take { w = Some w; _ } ->
+    snd w.timeout :: Option.to_list (Option.map w.early ~f:snd)
+  | _ -> []
+;;
+
+let note_pass ws s =
+  List.iter (codes_of_stmt s) ~f:(fun c ->
+    ws.passed <- Map.update ws.passed c ~f:(fun n -> 1 + Option.value n ~default:0))
+;;
+
+let note_fire ws s (_, c) = ws.site <- Some (s, Option.value (Map.find ws.passed c) ~default:0)
+
 let rec advance t ws (o : obs option) items =
   let instant () =
     match o with
@@ -133,11 +151,15 @@ let rec advance t ws (o : obs option) items =
   | Guard_end :: rest ->
     ws.guard <- None;
     advance t ws o rest
-  | Back body :: _ -> advance t ws o (List.map body ~f:(fun s -> S s) @ [ Back body ])
+  | Back body :: _ ->
+    ws.passed <- Int.Map.empty;
+    advance t ws o (List.map body ~f:(fun s -> S s) @ [ Back body ])
   | S s :: rest ->
     (match s with
      | Await_idle _ | Await _ | Hold_for _ | Hold_until _ | Skip _ | Take _ -> Next (s, rest)
-     | Loop body -> advance t ws o (List.map body ~f:(fun s -> S s) @ [ Back body ])
+     | Loop body ->
+       ws.passed <- Int.Map.empty;
+       advance t ws o (List.map body ~f:(fun s -> S s) @ [ Back body ])
      | Repeat (n, body) ->
        advance t ws o (List.concat (List.init n ~f:(fun _ -> List.map body ~f:(fun s -> S s))) @ rest)
      | Guard { g; body; handler } ->
@@ -155,13 +177,16 @@ let rec advance t ws (o : obs option) items =
      | Match { check } ->
        let o' = instant () in
        if o'.inp.push_ev && o'.inp.push_data land 0xFF = ws.reg land 0xFF
-       then advance t ws o rest
-       else Fired check
+       then (note_pass ws s; advance t ws o rest)
+       else (note_fire ws s check; Fired check)
      | Expect { r; when_; check } ->
        let o' = instant () in
-       if (not (eval t ws o' when_)) || eval t ws o' r then advance t ws o rest else Fired check
+       if (not (eval t ws o' when_)) || eval t ws o' r
+       then (note_pass ws s; advance t ws o rest)
+       else (note_fire ws s check; Fired check)
      | Raise ck ->
        ignore (instant () : obs);
+       note_fire ws s ck;
        Fired ck
      | If (b, th, el) ->
        let o' = instant () in
@@ -176,6 +201,8 @@ let restart_watcher t ws =
   ws.reg <- 0;
   ws.guard <- None;
   ws.stopped <- false;
+  ws.passed <- Int.Map.empty;
+  ws.site <- None;
   match advance t ws None (List.map ws.w.body ~f:(fun s -> S s)) with
   | Next (s, rest) ->
     ws.cur <- Some s;
@@ -196,7 +223,17 @@ let create c =
   let c = validate_exn c in
   let ws =
     Array.of_list_map c.watchers ~f:(fun w ->
-      { w; cur = None; cont = []; k = 0; m = [| 0; 0 |]; reg = 0; guard = None; stopped = false })
+      { w
+        ; cur = None
+        ; cont = []
+        ; k = 0
+        ; m = [| 0; 0 |]
+        ; reg = 0
+        ; guard = None
+        ; stopped = false
+        ; passed = Int.Map.empty
+        ; site = None
+        })
   in
   let t =
     { c; ws; s1_ui = 0; s2_ui = 0; s1_uio = 0; s2_uio = 0; hist = String.Table.create (); seen = 0 }
@@ -289,9 +326,11 @@ let step_watcher t (o : obs) ws =
       match outcome with
       | `Stay -> None
       | `Fire ck ->
+        note_fire ws s ck;
         ws.stopped <- true;
         Some ck
       | `Complete ->
+        note_pass ws s;
         ws.k <- 0;
         (match advance t ws (Some o) ws.cont with
          | Next (s', rest) ->
@@ -342,4 +381,15 @@ let step t (i : inputs) =
     t.s2_uio <- t.s1_uio;
     t.s1_uio <- i.uio_in;
     fired)
+;;
+
+(* WF3 v1.1 site resolution: for a watcher that has fired, the statement that fired and its
+   ordinal among the sites of the same code in the innermost loop iteration (for per-bit
+   families: the bit position in transmission order). *)
+let fired_site t ~code =
+  Array.find_map t.ws ~f:(fun ws ->
+    match ws.site with
+    | Some (s, n) when ws.stopped && List.exists (codes_of_stmt s @ (match s with Raise ck -> [ snd ck ] | _ -> [])) ~f:(fun c -> ws.w.base + c = code) ->
+      Some (ws.w.wname, n, s)
+    | _ -> None)
 ;;

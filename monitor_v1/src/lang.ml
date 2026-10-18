@@ -210,12 +210,30 @@ let validate (c : t) =
   if List.length c.observables > 16 then err "more than 16 observables";
   if List.length c.watchers > 8 then err "more than 8 watchers";
   let src x = List.Assoc.find c.observables ~equal:String.equal x in
-  let codes = Hash_set.create (module Int) in
-  let check_code (w : watcher) (_, code) =
+  (* WF3 (v1.1, user decision 2026-10-18): a code identifies a watcher and a check family.
+     Several sites may share a code only within one watcher and only if they have the same
+     kind and outcome, the same requirement and the same condition, up to register-bit
+     indices of [Eq_reg]; hold and window lengths may differ. The site is recovered offline
+     by replaying the trace through the reference interpreter. *)
+  let rec norm = function
+    | Eq_reg (e, _) -> Eq_reg (norm e, 0)
+    | Not e -> Not (norm e)
+    | And (a, b) -> And (norm a, norm b)
+    | Or (a, b) -> Or (norm a, norm b)
+    | e -> e
+  in
+  let codes = Hashtbl.create (module Int) in
+  let check_code ?(family = "", True, True) (w : watcher) (_, code) =
     let full = w.base + code in
     if full < 1 || full > 255 then err "%s: code %d out of range 1..255" w.wname full;
-    if Hash_set.mem codes full then err "%s: duplicate code 0x%02x (WF3)" w.wname full;
-    Hash_set.add codes full
+    let kind, r, c = family in
+    let sig_ = w.wname, kind, norm r, norm c in
+    match Hashtbl.find codes full with
+    | None -> Hashtbl.set codes ~key:full ~data:sig_
+    | Some (wn, k, r', c') ->
+      if not (String.equal wn w.wname && String.equal k kind && String.(kind <> "")
+              && equal_expr (norm r) r' && equal_expr (norm c) c')
+      then err "%s: code 0x%02x shared by checks of different families (WF3)" w.wname full
   in
   let check_expr (w : watcher) e =
     List.iter (atoms e) ~f:(fun (x, d) ->
@@ -233,15 +251,15 @@ let validate (c : t) =
         err "%s: blame check requires chip observable %s (WF2)" w.wname x
       | _ -> ())
   in
-  let check_window w (win : window) req =
+  let check_window ?(kind = "await") ?(cond = True) w (win : window) req =
     if win.lo < 0 || win.hi < win.lo || win.hi > 4095 then err "%s: bad window" w.wname;
     (match win.since with
      | Some m when m <> 0 && m <> 1 -> err "%s: since mark %d" w.wname m
      | _ -> ());
-    check_code w win.timeout;
+    check_code ~family:(kind ^ "/timeout", req, cond) w win.timeout;
     check_role w (fst win.timeout) req;
     Option.iter win.early ~f:(fun ck ->
-      check_code w ck;
+      check_code ~family:(kind ^ "/early", req, cond) w ck;
       check_role w (fst ck) req)
   in
   let rec walk ~in_guard ~in_handler (w : watcher) stmts =
@@ -252,32 +270,32 @@ let validate (c : t) =
         check_expr w when_
       | Await { e; when_; w = win } ->
         check_expr w when_;
-        check_window w win e
+        check_window ~cond:when_ w win e
       | Hold_for { r; when_; n; check } ->
         if n < 1 || n > 4095 then err "%s: hold n" w.wname;
         check_expr w when_;
-        check_code w check;
+        check_code ~family:("hold", r, when_) w check;
         check_role w (fst check) r
       | Hold_until { r; when_; e; w = win } ->
         check_expr w when_;
-        check_window w win (And (r, e))
+        check_window ~kind:"hold_until" ~cond:when_ w win (And (r, e))
       | Skip n -> if n < 1 || n > 4095 then err "%s: skip n" w.wname
       | Take { byte; w = win; _ } ->
         if byte <> 0 && byte <> 1 then err "%s: take byte" w.wname;
         Option.iter win ~f:(fun win ->
-          check_window w win True;
+          check_window ~kind:"take" w win True;
           (* streams are chip-driven (the lane pops and pushes) *)
           if equal_role (fst win.timeout) Blame
           then err "%s: blame check on a chip stream (WF2)" w.wname)
       | Expect { r; when_; check } ->
         check_expr w when_;
-        check_code w check;
+        check_code ~family:("expect", r, when_) w check;
         check_role w (fst check) r
       | Sample { bit; e } ->
         if bit < 0 || bit > 15 then err "%s: sample bit" w.wname;
         check_expr w e
       | Match { check } ->
-        check_code w check;
+        check_code ~family:("match", True, True) w check;
         if equal_role (fst check) Blame then err "%s: blame match on a chip stream" w.wname
       | Mark a -> if a <> 0 && a <> 1 then err "%s: mark %d" w.wname a
       | Raise ck -> check_code w ck
