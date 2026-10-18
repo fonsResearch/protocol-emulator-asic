@@ -45,8 +45,58 @@ let uart_tx dir =
   printf "uart_tx_nominal: %d pops, firings [%s]\n" (List.length (Psim.pops r)) (Psim.show_firings r)
 ;;
 
+(* SPI: channels in the RLE file are SCLK, MOSI, MISO, CS (indices 0..3). Files per scenario:
+   <name>.mosi.bytes and <name>.miso.bytes, the bytes each side intended to send. *)
+let spi_pins = [ Peers.spi_sclk; Peers.spi_mosi; Peers.spi_miso; Peers.spi_cs ]
+let spi_modes = [ false, false; false, true; true, false; true, true ]
+let mode_id (cpol, cpha) = (if cpol then 2 else 0) + if cpha then 1 else 0
+
+let spi_ctl dir =
+  List.iter spi_modes ~f:(fun (cpol, cpha) ->
+    let rng = Random.State.make [| 13 + mode_id (cpol, cpha) |] in
+    let host = List.init 64 ~f:(fun _ -> Random.State.int rng 256) in
+    let tbytes = List.init 64 ~f:(fun _ -> Random.State.int rng 256) in
+    let tgt = Peers.spi_target ~cpol ~cpha ~tco:3 ~send:tbytes () in
+    let setup =
+      { Psim.prog = P1.spi_ctl ~cpol ~cpha; own = P1.spi_own_ctl; od = 0; cfg = P1.spi_cfg_ctl
+      ; cfg2 = P1.spi_cfg2_ctl; p = 7; contract = Lib.spi_ctl ~cpol ~cpha ~h:2; open_drain_wired_and = 0 }
+    in
+    let r = Psim.run ~tx_bytes:host ~setup ~cycles:(64 * 400) ~peer:tgt.drive () in
+    let name = sprintf "spi_ctl_m%d" (mode_id (cpol, cpha)) in
+    Psim.write_rle ~file:(dir ^/ name ^ ".rle") ~pins:spi_pins r.pads;
+    write_bytes (dir ^/ name ^ ".mosi.bytes") (Psim.pops r);
+    write_bytes (dir ^/ name ^ ".miso.bytes") (Psim.pushes r);
+    printf "%s: %d pops, %d pushes, pushes = target bytes %b, firings [%s]\n" name
+      (List.length (Psim.pops r)) (List.length (Psim.pushes r))
+      ([%equal: int list] (Psim.pushes r) tbytes) (Psim.show_firings r))
+;;
+
+let spi_tgt dir =
+  List.iter spi_modes ~f:(fun (cpol, cpha) ->
+    let rng = Random.State.make [| 29 + mode_id (cpol, cpha) |] in
+    let host = List.init 64 ~f:(fun _ -> Random.State.int rng 256) in
+    let cbytes = List.init 64 ~f:(fun _ -> Random.State.int rng 256) in
+    let c =
+      Peers.spi_controller ~cpol ~cpha ~hp:28 ~setup:30 ~hold:30 ~gap:120 ~mdly:2 ~t0:300 ~bytes:cbytes ()
+    in
+    let setup =
+      { Psim.prog = P1.spi_tgt ~cpol ~cpha; own = P1.spi_own_tgt; od = 0; cfg = 0; cfg2 = 0; p = 7
+      ; contract = Lib.spi_tgt ~cpol ~cpha ~h_min:3 ~g:6; open_drain_wired_and = 0 }
+    in
+    let r = Psim.run ~tx_bytes:host ~setup ~cycles:(c.frames_end + 200) ~peer:c.cdrive () in
+    let name = sprintf "spi_tgt_m%d" (mode_id (cpol, cpha)) in
+    Psim.write_rle ~file:(dir ^/ name ^ ".rle") ~pins:spi_pins r.pads;
+    write_bytes (dir ^/ name ^ ".mosi.bytes") (Psim.pushes r);
+    write_bytes (dir ^/ name ^ ".miso.bytes") (Psim.pops r);
+    printf "%s: %d pops, %d pushes, pushes = controller bytes %b, firings [%s]\n" name
+      (List.length (Psim.pops r)) (List.length (Psim.pushes r))
+      ([%equal: int list] (Psim.pushes r) cbytes) (Psim.show_firings r))
+;;
+
 let () =
   match Sys.get_argv () with
+  | [| _; "spi_ctl"; dir |] -> spi_ctl dir
+  | [| _; "spi_tgt"; dir |] -> spi_tgt dir
   | [| _; "uart_rx"; dir |] -> uart_rx dir
   | [| _; "uart_tx"; dir |] -> uart_tx dir
   | _ -> eprintf "usage: xcheck uart_rx <dir>\n"

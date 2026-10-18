@@ -15,7 +15,9 @@
         with a replayed witness): the assumption is satisfiable while the guarantee is
         exercised.
    Host-stream assumptions (outside the monitor, package-specific) restrict the free host
-   side: [rx_never_full] = the RX FIFO is never full. *)
+   side: [rx_never_full] = the RX FIFO is never full; [pop_pcs] = the lane never executes a
+   POP at one of these program addresses while the TX FIFO is empty (the host keeps a byte
+   ready for every frame, SPI target). *)
 open! Core
 open Hardcaml
 open Signal
@@ -28,7 +30,7 @@ type goal =
   | Push_ok (* a push event *)
   | Pop_ok (* a pop event *)
 
-let harness ?debug ?(rx_never_full = false) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
+let harness ?debug ?(rx_never_full = false) ?(pop_pcs = []) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
   let clock = input "clock" 1 in
   let gs = Reg_spec.create ~clock () in
   let started = reg gs vdd -- "env_started" in
@@ -69,6 +71,10 @@ let harness ?debug ?(rx_never_full = false) ~mode ~prog ~contract ~own ~od ~cfg 
   let blame_seen = sticky blame_now "h_blame_seen"
   and fail_seen = sticky fail_now "h_fail_seen" in
   let env_bad = if rx_never_full then o.rx_level ==:. 8 else gnd in
+  let env_bad =
+    List.fold pop_pcs ~init:env_bad ~f:(fun acc a ->
+      acc |: (running &: tick &: (o.pc ==:. a) &: (o.tx_level ==:. 0)))
+  in
   let env_bad_seen = sticky env_bad "h_env_bad" in
   let ok = ~:(env_bad_seen |: env_bad) in
   let bad =
@@ -95,6 +101,53 @@ let uart_rx_noassume =
   { c with watchers = List.filter c.watchers ~f:(fun w -> String.equal w.wname "receiver") }
 ;;
 
+(* SPI (doc/protocols/spi_v1.md) *)
+let spi_modes = [ false, false; false, true; true, false; true, true ]
+let spi_mid (cpol, cpha) = (if cpol then 2 else 0) + if cpha then 1 else 0
+
+let spi_tgt_nomov ~cpol ~cpha =
+  (* mutant: MISO is never updated after the first bit (per-bit MOV removed: replaced by NOP) *)
+  let p = P1.spi_tgt ~cpol ~cpha in
+  let k = if cpha then 7 else 9 in
+  List.mapi p ~f:(fun i x -> if i = k then Isa1.Nop else x)
+;;
+
+let spi_ctl_lsbin ~cpol ~cpha =
+  List.map (P1.spi_ctl ~cpol ~cpha) ~f:(function Isa1.Pin (7, In_msb) -> Isa1.Pin (7, In_lsb) | x -> x)
+;;
+
+let spi_tgt_noassume ~cpol ~cpha =
+  let c = Lib.spi_tgt ~cpol ~cpha ~h_min:3 ~g:6 in
+  { c with watchers = List.filter c.watchers ~f:(fun w -> not (String.equal w.wname "ctl")) }
+;;
+
+let spi_all ?debug () =
+  let ctl ?prog ?(cfg = P1.spi_cfg_ctl) ~mode (cpol, cpha) name =
+    let prog = Option.value prog ~default:(P1.spi_ctl ~cpol ~cpha) in
+    harness ?debug ~rx_never_full:true ~mode ~prog ~contract:(Lib.spi_ctl ~cpol ~cpha ~h:2)
+      ~own:P1.spi_own_ctl ~od:0 ~cfg ~cfg2:P1.spi_cfg2_ctl ~name ()
+  in
+  let tgt ?prog ?contract ~mode (cpol, cpha) name =
+    let prog = Option.value prog ~default:(P1.spi_tgt ~cpol ~cpha) in
+    let contract = Option.value contract ~default:(Lib.spi_tgt ~cpol ~cpha ~h_min:3 ~g:6) in
+    harness ?debug ~rx_never_full:true ~pop_pcs:[ 2 ] ~mode ~prog ~contract ~own:P1.spi_own_tgt ~od:0
+      ~cfg:0 ~cfg2:0 ~name ()
+  in
+  List.concat_map spi_modes ~f:(fun m ->
+    let i = spi_mid m in
+    [ ctl ~mode:`U m (sprintf "a2_spi_ctl_m%d_u" i)
+    ; ctl ~mode:(`N1 Push_ok) m (sprintf "a2_spi_ctl_m%d_n1_cover_neg" i)
+    ; tgt ~mode:`U m (sprintf "a2_spi_tgt_m%d_u" i)
+    ; tgt ~mode:(`N1 Push_ok) m (sprintf "a2_spi_tgt_m%d_n1_cover_neg" i)
+    ])
+  @ [ ctl ~prog:(spi_ctl_lsbin ~cpol:false ~cpha:false) ~mode:`U (false, false) "a2_spi_ctl_m0_lsbin_neg"
+    ; ctl ~cfg:0 ~mode:`U (false, true) "a2_spi_ctl_m1_lsbmosi_neg"
+    ; tgt ~prog:(spi_tgt_nomov ~cpol:false ~cpha:false) ~mode:`U (false, false) "a2_spi_tgt_m0_nomov_neg"
+    ; tgt ~prog:(spi_tgt_nomov ~cpol:true ~cpha:true) ~mode:`U (true, true) "a2_spi_tgt_m3_nomov_neg"
+    ; tgt ~contract:(spi_tgt_noassume ~cpol:false ~cpha:false) ~mode:`U (false, false) "a2_spi_tgt_m0_noassume_neg"
+    ]
+;;
+
 let all ?debug () =
   let rx ?(prog = P1.uart_rx ~d:8 ~pin:1) ?(contract = Lib.uart_rx ~d:8 ~m:2 ~pin:1) ~mode name =
     harness ?debug ~rx_never_full:true ~mode ~prog ~contract ~own:0 ~od:0 ~cfg:0 ~cfg2:0 ~name ()
@@ -110,4 +163,5 @@ let all ?debug () =
   ; tx ~mode:(`N1 Pop_ok) "a2_uart_tx_d4_n1_cover_neg"
   ; tx ~prog:(P1.uart_tx_bad_start ~d:4) ~mode:`U "a2_uart_tx_d4_badstart_neg"
   ]
+  @ spi_all ?debug ()
 ;;
