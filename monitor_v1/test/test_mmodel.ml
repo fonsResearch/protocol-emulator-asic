@@ -165,6 +165,7 @@ let constructs (c : Lang.t) =
 
 let%expect_test "random packages: ISA model = interpreter" =
   let cov = String.Table.create () in
+  let rt_fail = ref 0 in
   let accepted = ref 0 and rejected = ref 0 and mism = ref 0 and cycles = ref 0 in
   let firings = ref 0 and first = ref None in
   let reasons = String.Table.create () in
@@ -178,6 +179,12 @@ let%expect_test "random packages: ISA model = interpreter" =
       Hashtbl.update reasons key ~f:(fun v -> 1 + Option.value v ~default:0)
     | Ok p ->
       incr accepted;
+      Array.iter p.units ~f:(fun u ->
+        Array.iter u.code ~f:(fun ins ->
+          if not (Mprog.equal_instr ins (Mprog.decode_instr (Mprog.encode_instr ins))) then incr rt_fail));
+      Array.iteri p.preds ~f:(fun k pr ->
+        if k > 0 && k < 15 && not (Mprog.equal_pred pr Mprog.pred_false)
+        then if not (Mprog.equal_pred pr (Mprog.decode_pred (Mprog.encode_pred pr))) then incr rt_fail);
       List.iter (constructs c) ~f:(fun k -> Hashtbl.update cov k ~f:(fun v -> 1 + Option.value v ~default:0));
       let a = Interp.create c
       and b = Mmodel.create p in
@@ -198,6 +205,7 @@ let%expect_test "random packages: ISA model = interpreter" =
   Option.iter !first ~f:(fun s -> print_endline (String.prefix s 3000));
   printf "accepted %d rejected %d cycles %d firings %d mismatches %d\n" !accepted !rejected !cycles
     !firings !mism;
+  printf "instruction width %d bits; encode/decode round-trip failures %d\n" Mprog.instr_width !rt_fail;
   Hashtbl.to_alist reasons |> List.sort ~compare:(fun (_, a) (_, b) -> Int.compare b a)
   |> (fun l -> List.take l 6) |> List.iter ~f:(fun (k, n) -> printf "  reject %4d %s\n" n k);
   printf "packages containing each construct: %s\n"
@@ -205,6 +213,7 @@ let%expect_test "random packages: ISA model = interpreter" =
      |> List.map ~f:(fun (k, n) -> sprintf "%s %d" k n) |> String.concat ~sep:", ");
   [%expect {|
     accepted 778 rejected 2222 cycles 311978 firings 7359 mismatches 0
+    instruction width 82 bits; encode/decode round-trip failures 0
       reject  499 predicate bank full (14 entries)
       reject  399 w0: blame check requires chip observable
       reject  395 w0: fail check requires environment obse

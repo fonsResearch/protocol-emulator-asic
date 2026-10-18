@@ -88,3 +88,107 @@ type t =
 
 let pred_true = { l0 = Const true; l1 = Const true; l2 = Const true; or1 = false; or2 = false }
 let pred_false = { l0 = Const false; l1 = Const false; l2 = Const false; or1 = false; or2 = false }
+
+(* ---- binary encoding (doc/contracts/monitor_isa_v1.md section 4; fields LSB first) ---- *)
+let instr_fields =
+  [ "op", 3; "pe", 4; "pr", 4; "pcond", 4; "mod", 2; "marg", 4; "md_pr", 1; "md_exp", 1; "lo", 3
+  ; "hi", 3; "since", 2; "chk", 4; "early", 4; "mark", 2; "smp_en", 1; "smp_bit", 4; "smp_p", 4
+  ; "mat_en", 1; "mat_chk", 4; "exp", 4; "exp_chk", 4; "bp", 4; "next", 7; "alt", 7; "tsel", 1 ]
+;;
+
+let instr_width = List.sum (module Int) instr_fields ~f:snd
+
+let op_code = function
+  | Await -> 0
+  | Await_idle -> 1
+  | Hold_for -> 2
+  | Hold_until -> 3
+  | Skip -> 4
+  | Take_tx -> 5
+  | Take_rx -> 6
+;;
+
+let op_of_code = function
+  | 0 -> Await
+  | 1 -> Await_idle
+  | 2 -> Hold_for
+  | 3 -> Hold_until
+  | 4 -> Skip
+  | 5 -> Take_tx
+  | 6 -> Take_rx
+  | c -> raise_s [%message "reserved op" (c : int)]
+;;
+
+let mod_fields = function
+  | No_mod -> 0, 0
+  | And_reg b -> 1, b
+  | Xnor_reg b -> 2, b
+  | And_elapsed (m, j) -> 3, (m lsl 3) lor j
+;;
+
+let mod_of_fields m a =
+  match m with
+  | 0 -> No_mod
+  | 1 -> And_reg a
+  | 2 -> Xnor_reg a
+  | _ -> And_elapsed ((a lsr 3) land 1, a land 7)
+;;
+
+let field_values (i : instr) =
+  let md, marg = mod_fields i.md in
+  let smp_en, smp_bit, smp_p = match i.smp with None -> 0, 0, 0 | Some (b, p) -> 1, b, p in
+  let mat_en, mat_chk = match i.mat with None -> 0, 0 | Some c -> 1, c in
+  [ op_code i.op; i.pe; i.pr; i.pcond; md; marg; Bool.to_int i.md_pr; Bool.to_int i.md_exp; i.lo
+  ; i.hi; i.since; i.chk; i.early; i.mark; smp_en; smp_bit; smp_p; mat_en; mat_chk; i.exp
+  ; i.exp_chk; i.bp; i.next; i.alt; i.tsel ]
+;;
+
+(* as a list of bits, LSB first *)
+let encode_instr (i : instr) =
+  List.concat_map (List.zip_exn instr_fields (field_values i)) ~f:(fun ((n, w), v) ->
+    if v < 0 || v >= 1 lsl w then raise_s [%message "field out of range" n (v : int) (w : int)];
+    List.init w ~f:(fun k -> (v lsr k) land 1 = 1))
+;;
+
+let decode_instr (bits : bool list) : instr =
+  let tbl = Hashtbl.create (module String) in
+  let rest =
+    List.fold instr_fields ~init:bits ~f:(fun bs (n, w) ->
+      let v = List.foldi (List.take bs w) ~init:0 ~f:(fun k a b -> if b then a lor (1 lsl k) else a) in
+      Hashtbl.set tbl ~key:n ~data:v;
+      List.drop bs w)
+  in
+  ignore (rest : bool list);
+  let f = Hashtbl.find_exn tbl in
+  { op = op_of_code (f "op"); pe = f "pe"; pr = f "pr"; pcond = f "pcond"
+  ; md = mod_of_fields (f "mod") (f "marg"); md_pr = f "md_pr" = 1; md_exp = f "md_exp" = 1
+  ; lo = f "lo"; hi = f "hi"; since = f "since"; chk = f "chk"; early = f "early"; mark = f "mark"
+  ; smp = (if f "smp_en" = 1 then Some (f "smp_bit", f "smp_p") else None)
+  ; mat = (if f "mat_en" = 1 then Some (f "mat_chk") else None); exp = f "exp"
+  ; exp_chk = f "exp_chk"; bp = f "bp"; next = f "next"; alt = f "alt"; tsel = f "tsel" }
+;;
+
+(* predicate: 3 literals x (obs 4, kind 2, delay 2, neg 1) + or1 + or2 = 29 bits *)
+let pred_width = 29
+
+let encode_pred (p : pred) =
+  let lit = function
+    | L l ->
+      List.init 4 ~f:(fun k -> (l.obs lsr k) land 1 = 1)
+      @ List.init 2 ~f:(fun k -> (l.kind lsr k) land 1 = 1)
+      @ List.init 2 ~f:(fun k -> (l.delay lsr k) land 1 = 1)
+      @ [ l.neg ]
+    | Const _ -> raise_s [%message "constant literal cannot be encoded"]
+  in
+  lit p.l0 @ lit p.l1 @ lit p.l2 @ [ p.or1; p.or2 ]
+;;
+
+let decode_pred bits : pred =
+  let num bs = List.foldi bs ~init:0 ~f:(fun k a b -> if b then a lor (1 lsl k) else a) in
+  let lit bs =
+    L { obs = num (List.take bs 4); kind = num (List.sub bs ~pos:4 ~len:2)
+      ; delay = num (List.sub bs ~pos:6 ~len:2); neg = List.nth_exn bs 8 }
+  in
+  { l0 = lit (List.take bits 9); l1 = lit (List.sub bits ~pos:9 ~len:9)
+  ; l2 = lit (List.sub bits ~pos:18 ~len:9); or1 = List.nth_exn bits 27; or2 = List.nth_exn bits 28 }
+;;

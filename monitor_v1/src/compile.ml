@@ -121,7 +121,7 @@ let pred_of_nnf n : M.pred =
   match simplify n with
   | NConst true -> M.pred_true
   | NConst false -> M.pred_false
-  | NLit l -> { l0 = L l; l1 = Const true; l2 = Const true; or1 = false; or2 = false }
+  | NLit l -> { l0 = L l; l1 = L l; l2 = L l; or1 = false; or2 = false }
   | (NAnd _ | NOr _) as n ->
     let top_or =
       match n with
@@ -135,9 +135,9 @@ let pred_of_nnf n : M.pred =
     in
     (match ls with
      | [ a; b ] when Option.is_some (lit a) && Option.is_some (lit b) ->
-       let neutral = M.Const (not top_or) in
-       { l0 = L (Option.value_exn (lit a)); l1 = L (Option.value_exn (lit b)); l2 = neutral
-       ; or1 = top_or; or2 = top_or }
+       (* unused slot: duplicate a literal (a op b) op b = a op b, so no constants are needed *)
+       { l0 = L (Option.value_exn (lit a)); l1 = L (Option.value_exn (lit b))
+       ; l2 = L (Option.value_exn (lit b)); or1 = top_or; or2 = top_or }
      | [ a; b; c ] when List.for_all [ a; b; c ] ~f:(fun x -> Option.is_some (lit x)) ->
        { l0 = L (Option.value_exn (lit a)); l1 = L (Option.value_exn (lit b))
        ; l2 = L (Option.value_exn (lit c)); or1 = top_or; or2 = top_or }

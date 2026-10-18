@@ -50,7 +50,7 @@ For lane L:
 ## 3. Predicate bank
 
 - **Contents.** 16 predicates per package; predicate 0 = true, predicate 15 = false **[choice]**. Predicates 1-14 each have 3 literals and two mode bits: (l0 op1 l1) op2 l2, with op1, op2 ∈ {AND, OR}. This covers, for example, `(!oe || out) && !pop` **[choice]**.
-- **Literal.** Local observable 4 bits, kind 2, delay 2, negate 1 = 9 bits. Predicate = 3 × 9 + 2 = 29 bits.
+- **Literal.** Local observable 4 bits, kind 2, delay 2, negate 1 = 9 bits. Predicate = 3 × 9 + 2 = 29 bits. Unused literal slots repeat a used literal ((a op b) op b = a op b), so no constant literal exists in the encoding.
 - **Evaluation.** All 16 are evaluated once per step of the lane, so each unit only selects predicate bits.
 - **Unit-local modifier.** Each instruction has one modifier on its requirement predicate (section 4):
   - mode 0: none;
@@ -61,7 +61,7 @@ For lane L:
 
   Mode 3 takes argument m (1 bit) and j (3 bits).
 
-## 4. Instruction (full format, 76 bits; stored as 5 × 16-bit words in the loadable store)
+## 4. Instruction (full format, 82 bits; stored as 6 × 16-bit words in the loadable store)
 
 | field | bits | meaning |
 |---|---|---|
@@ -84,7 +84,7 @@ For lane L:
 | next, alt | 7 + 7 | successor addresses; 127 = STOP (stop silently) |
 | tsel | 1 | TAKE destination: register byte 0 or 1 |
 
-Total: 76 bits. The `mon` field was added after the differential test found that a single modifier applied to every predicate changes an unmodified `expect` folded into a modified hold. Instants that follow a consuming statement in the source are folded into its completion bundle. The bundle runs in a fixed order: mark, sample, match, expect, branch. The compiler rejects a source order that cannot be folded, and more than one instant of a kind per consuming statement **[choice]**. `raise r C` after a consuming statement folds as `expect false`.
+Total: 82 bits (an earlier draft of this table was mis-added as 74/76). The `mon` field was added after the differential test found that a single modifier applied to every predicate changes an unmodified `expect` folded into a modified hold. Instants that follow a consuming statement in the source are folded into its completion bundle. The bundle runs in a fixed order: mark, sample, match, expect, branch. The compiler rejects a source order that cannot be folded, and more than one instant of a kind per consuming statement **[choice]**. `raise r C` after a consuming statement folds as `expect false`.
 
 ## 5. Unit state and step semantics
 
@@ -128,9 +128,9 @@ In each step of the lane, for a unit that is not stopped:
 
 ## 7. Loadable store and fetch
 
-- **Store.** One RM_IHPSG13_1P_256x16_c2_bm_bist with 256 words. A program is a header plus instructions, at 5 words per instruction.
-- **Unit side.** Each loadable-capable unit has a 76-bit instruction register (IR) and a fetch state. After a completion that changes `pc`, the unit requests the 5 words of the new instruction. A single arbiter serves requests in fixed order, one SRAM read per cycle with 1-cycle latency.
-- **Minimum divisor [choice].** A package that uses loadable units may be started only if P ≥ 5·u + 1, where u is the number of its units running from the loadable store (u ≤ 2 per lane, so P ≥ 11 for one lane). If both lanes use loadable units, P ≥ 21 on each. This guarantees that the IR holds the new instruction before the next step. The loader refuses RUN otherwise (FLAGS bit 4, interface v1.1).
+- **Store.** One RM_IHPSG13_1P_256x16_c2_bm_bist with 256 words. A program is a header plus instructions, at 6 words per instruction.
+- **Unit side.** Each loadable-capable unit has an 82-bit instruction register (IR) and a fetch state. After a completion that changes `pc`, the unit requests the 6 words of the new instruction. A single arbiter serves requests in fixed order, one SRAM read per cycle with 1-cycle latency.
+- **Minimum divisor [choice].** A package that uses loadable units may be started only if P ≥ 6·u + 1, where u is the number of its units running from the loadable store (u ≤ 2 per lane, so P ≥ 13 for one lane). If both lanes use loadable units, P ≥ 25 on each. This guarantees that the IR holds the new instruction before the next step. The loader refuses RUN otherwise (FLAGS bit 4, interface v1.1).
 - **Proof obligation (V6).** In every step of a loadable unit, IR = store[pc] (fetch lemma, as L1 for the lane). The engine datapath equals the ISA model for any instruction (as L2).
 
 ## 8. Host interface (interface v1.1, registers 0x40-0x7F) [choice]
