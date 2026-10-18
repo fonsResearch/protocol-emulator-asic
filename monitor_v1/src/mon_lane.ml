@@ -28,6 +28,7 @@ module O = struct
     ; role : 'a (* 1 = blame *)
     ; code : 'a [@bits 8]
     ; overrun : 'a (* a tick while slots of the previous step are pending (assumption broken) *)
+    ; busy : 'a (* slots 1-7 of a step are pending in this cycle *)
     }
   [@@deriving hardcaml]
 end
@@ -111,6 +112,7 @@ let create
   ; role = fire &: mux code_idx (Array.to_list tables.code_role)
   ; code = mux2 fire (mux code_idx (Array.to_list tables.code_val)) (zero 8)
   ; overrun = step &: busy_q
+  ; busy = busy_q
   }
 ;;
 

@@ -14,6 +14,9 @@
      0x50 + 8L PKG R/W while L halted: bit7 enable, [3:0] library index
        +1 LOAD_UNITS, +2 LOAD_BASE6, +3 LOAD_BASE7  R/W while L halted (no effect yet)
      0x60 + 16L + i REMAP R/W while L halted: local observable i -> global source [5:0]
+   Context writes (PKG, LOAD_*, REMAP) are accepted only while lane L is halted and its slot
+   sequencer is idle: a lane can halt (fault, CTRL) while slots of its last step are
+   pending, and those slots must see the tables of that step.
    Verdict clearing: CTRL.CLR_VERDICT (caller passes [clr_verdict]); a firing recorded in
    the same cycle survives the clear [choice]. *)
 open! Core
@@ -123,8 +126,9 @@ let create ~clock ~rst_sync_n ~(lib : M.t list) ~(host : host) ~(lanes : lane_vi
   let now = wire 32 in
   let now_q = reg spec now -- "mon_now" in
   now <== now_q +:. 1;
+  let idle = Array.init 2 ~f:(fun _ -> wire 1) in
   let regs_lane l =
-    let halted = ~:(lanes.(l).running) in
+    let halted = ~:(lanes.(l).running) &: idle.(l) in
     let r8 off name = reg spec ~enable:(wr_at (0x50 + (8 * l) + off) &: halted) host.wdata -- name in
     let pkg = r8 0 (sprintf "mon_pkg%d" l)
     and load_units = r8 1 (sprintf "mon_load_units%d" l)
@@ -158,6 +162,7 @@ let create ~clock ~rst_sync_n ~(lib : M.t list) ~(host : host) ~(lanes : lane_vi
       let stamp = mux2 step now_q stamp_l in
       en, o, { fire = o.fire; unit_ = o.unit_; role = o.role; code = o.code; stamp })
   in
+  Array.iteri lane_out ~f:(fun l (_, o, _) -> idle.(l) <== ~:(o.busy));
   let fir l = let _, _, f = lane_out.(l) in f in
   (* ---- verdict ---- *)
   let clr = host.clr_verdict in
