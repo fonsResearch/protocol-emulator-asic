@@ -62,6 +62,8 @@ Options:
 
 **DECIDED 2026-10-17 (user): (b) 8x4 primary with a green 6x4 fallback build.**
 
+**AMENDED 2026-10-18 (user): 8x4 only; the 6x4 fallback is dropped.** Basis: the ROM-library area study in `log/protocols_v1.md`. Ten protocol packages give 395,717 um^2 Yosys typ, against an estimated budget of about 366k (6x4) and 503k (8x4) at 60 % density and 1.34x post-route growth. The 6x4 build is no longer maintained. Open item: confirm that the 8x4 CMOS5L template has been published.
+
 [F] tt-support-tools d66cf17 accepts 8x4 (1724.16 x 710.64 um). Core area is 902,417 um^2 at 6x4 and 1,208,173 um^2 at 8x4. The organisers' email of 2026-10-16 says 8x4 is planned, with a template expected in mid-October, and to design to 6x4 until then.
 
 Options:
