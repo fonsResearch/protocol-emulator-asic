@@ -69,7 +69,7 @@ Host-stream assumptions (outside the monitor): N ≥ 1; the data bytes of a writ
 | `i2c_ctl_sm` | 59 | 1.000 µs | 5 | 5 | 5 | 5 | 5 | 5 |
 | `i2c_ctl_fm` | 14 | 0.250 µs | 6 | 4 | 6 | 3 | 3 | 6 |
 
-Each value is the UM10204 minimum divided by the step, rounded up. Then L + H ≥ 1/fSCL,max: Sm 10 µs, Fm 2.5 µs. Real time also includes the per-bit firmware overhead (low phase) and the line rise time, which only lengthen the phases.
+The package requires H ≥ 3 (D4); both grades satisfy it. Each value is the UM10204 minimum divided by the step, rounded up. Then L + H ≥ 1/fSCL,max: Sm 10 µs, Fm 2.5 µs. Real time also includes the per-bit firmware overhead (low phase) and the line rise time, which only lengthen the phases.
 
 ### 2.4 Guarantee (violation = fail)
 
@@ -97,8 +97,8 @@ Each value is the UM10204 minimum divided by the step, rounded up. Then L + H �
 
 ### 2.5 Assumption (bus and target behaviour; violation = blame)
 
-- A1 Single controller [C]: in any step where dSDA = 0 during an address cell, a write-data cell, or a START/Sr/STOP sequence, SDA = 1. No arbitration: multi-controller buses are out of scope.
-- A2 Stable data [C]: SDA is constant during every high phase of read data cells and ACK cells.
+- A1 Single controller: SDA = 1 whenever dSDA = 0 in an address cell, a write-data cell, or a START/Sr/STOP sequence. [C] only in the first high step of each address and write-data cell (D5); elsewhere [O]. No arbitration: multi-controller buses are out of scope.
+- A2 Stable data: SDA is constant during every high phase of read data cells and ACK cells. [C] over a window that contains the second high step (the sampling step) and ends before the pull step of a high phase of exactly H steps (D4): H - 2 steps for data cells, 1 step for ACK cells; the rest of the high phase is [O].
 - A3 SCL ownership [C]: once SCL = 1 in a high phase, SCL stays 1 until dSCL becomes 1. Targets may stretch only in low phases.
 - A4 Idle at start [C]: SCL = SDA = 1 in the first 4 steps after the lane starts.
 
@@ -191,6 +191,20 @@ Compiled resource use (`monitor_v1/test/test_library.ml`):
 
 | package | units | instrs | preds | windows | codes |
 |---|---|---|---|---|---|
-| i2c_ctl Sm | 3 | 5+8+123 | 14/14 | 6/7 | 12/15 |
-| i2c_ctl Fm | 3 | 5+8+123 | 14/14 | 7/7 | 12/15 |
+| i2c_ctl Sm | 3 | 6+14+123 | 14/14 | 7/7 | 12/15 |
+| i2c_ctl Fm | 3 | 6+14+123 | 14/14 | 7/7 | 12/15 |
 | i2c_tgt Sm/Fm | 5 | 75+1+4+25+1 | 13/14 | 6/7 | 13/15 |
+
+## 5. Amendments from the controller firmware and co-simulation (2026-10-18)
+
+Found with `protocols_v1/test/test_i2c.ml` (Psim co-simulation, ISA v1 lane model, I2C target peer). Logged as D4 and D5 in `log/disagreements.md`. The guarantee text of section 2.4 is unchanged; the contract now implements it.
+
+1. **High-phase start (D4).** In language v1 a statement after a completed `await` starts in the next step, so the contract's `await SCL` after the release could not complete in the release step. When SCL was already high there (any P ≥ 3, because the synchroniser latency is 2 cycles), the clock watcher demanded H + 2 steps of dSCL = 0, and the condition watcher measured Tsu one step short. Both watchers now take the release step as the first high step when SCL = 1 there, as G1 and G4 state.
+2. **Read-cell window (D4).** The frame watcher's read cells keep the `await` (no budget for the branch in 8 unrolled cells). The stability window is H - 2 steps after it, so the sampled value is SDA in the second high step in both cases (SCL high in the release step or later), and the window ends before the pull of a high phase of exactly H steps. Requires H ≥ 3.
+3. **A1 check point (D5).** The monitor observes the pull one step after SCL falls on the pads, and a target may drive SDA right after the fall (tHD;DAT minimum 0). The A1 blame therefore moved from the pull step to the first high step. The bit-value check (dSDA, controller-owned and held by fail 2 and the clock watcher) moved to the pull step. One expect per bundle is kept.
+
+Controller firmware (`Programs_v1.i2c_ctl`, ISA v1, label assembler; 162 words Sm, 166 Fm; registers r0 = bytes left, r1 = pin image, r2 = address copy then status, r3 = Sr flag):
+- write bit: low 5 + max(0, L - 5) steps, high H + 1 steps (WTP, waits, ADDI, MOV out); read bit: WTP, PIN in the second high step, pull after H + 1 high steps;
+- measured on the pads (Psim, ideal edges, no rise time): Sm 90.9 kHz (tLOW ≥ 5.0 µs, tHIGH ≥ 6.0 µs), Fm 363.6 kHz (tLOW ≥ 1.5 µs, tHIGH ≥ 1.25 µs). Real rise time lengthens the low phase and shortens the observed high phase by the same amount; the high phases have one step of margin over H;
+- co-simulation results: clean runs at Sm and Fm, with clock stretching, with a NACKed write byte, and with target data delays of 1 to 100 cycles; the target misbehaviours A1 (ACK at the SCL rise) and A2 (data change 35 cycles into a read high phase) blame B76 and B77; firmware mutants L - 1, H - 2, Tsu - 1 and Tbuf - 1 fail without blame (F52, F53, F61, F62). H - 1 is legal because of the margin;
+- spec-free cross-check (`tools/sigrok/xcheck.sh … i2c_ctl`, libsigrokdecode 0.5.3 `i2c`): over 4 random scenarios, the decoded bus equals the peer's transcript, the pushes implied by the decoded bus equal the lane's pushes, and the bus equals a reference built from the host transactions.

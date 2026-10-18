@@ -341,7 +341,9 @@ let i2c_sda = 3
    status (bit0 address NACK, bit1 data NACK; bits cleared one per address cell and after
    a read NACK). *)
 let i2c_ctl ~l ~h ~tsu ~thold =
-  if l < 2 || h < 2 || tsu < 1 || tsu > h || thold < 2 then raise_s [%message "i2c_ctl: bad timing"];
+  (* h >= 3 (D4): the read-cell stability window must end before the pull step of a high
+     phase of exactly h steps *)
+  if l < 2 || h < 3 || tsu < 1 || tsu > h || thold < 2 then raise_s [%message "i2c_ctl: bad timing"];
   let dscl = v "dscl" and dsda = v "dsda" and scl = v "scl" and sda = v "sda" and push = v "push" in
   let ndscl = !!dscl in
   let cond_ev = changed "dsda" &&& ndscl in
@@ -355,51 +357,64 @@ let i2c_ctl ~l ~h ~tsu ~thold =
           ; hold dscl ~for_:(l - 1) ~else_:(fail 2)
           ; await_idle ndscl
           ; expect (stable "dsda") ~else_:(fail 1)
-          ; await_idle scl
-          ; hold ndscl ~for_:h ~else_:(fail 3)
+            (* G1 (D4): the high phase starts at the first step with SCL = 1, which is the
+               release step itself when SCL is already high there *)
+          ; if_ scl [ hold ndscl ~for_:(h - 1) ~else_:(fail 3) ]
+              [ await_idle scl; hold ndscl ~for_:(h - 1) ~else_:(fail 3) ]
           ]
       ]
   in
   (* after a START/Sr (sampled dsda = 1): dSCL stays 0 and dSDA stays 1; after a STOP
      (sampled 0): no START, i.e. (dsda and not dscl) stays 0 *)
   let cond_hold = hold (eq_reg (dsda &&& ndscl) 0) ~for_:(thold - 1) ~else_:(fail 2) in
+  let cond_rest =
+    [ await_idle (cond_ev ||| dscl)
+    ; sample 0 dsda
+    ; expect (Elapsed_ge { mark = 0; t = tsu }) ~else_:(fail 1)
+    ; if_ dscl
+        [ skip 1 ]
+        [ cond_hold
+        ; if_ dsda [ skip 1 ] [ await_idle cond_ev; sample 0 dsda; cond_hold ]
+        ]
+    ]
+  in
   let cond =
     watcher
       "cond"
       ~base:0x60
       [ loop
-          [ await_idle ndscl
-          ; await_idle scl
-          ; mark 0
-          ; await_idle (cond_ev ||| dscl)
-          ; sample 0 dsda
-          ; expect (Elapsed_ge { mark = 0; t = tsu }) ~else_:(fail 1)
-          ; if_ dscl
-              [ skip 1 ]
-              [ cond_hold
-              ; if_ dsda [ skip 1 ] [ await_idle cond_ev; sample 0 dsda; cond_hold ]
-              ]
-          ]
+          ([ await_idle ndscl
+             (* G4 (D4): SCL observed high counts from the first step with SCL = 1, which is
+                the release step itself when SCL is already high there *)
+           ; mark 0
+           ; if_ scl cond_rest ([ await_idle scl; mark 0 ] @ cond_rest)
+           ])
       ]
   in
-  let tx_head ?clr bit =
+  (* A1 is checked in the first high step (D5): in the step where the monitor sees dSCL = 1
+     the line has already been low for up to one step, and a target may drive its ACK right
+     after the SCL fall (tHD;DAT min 0). The bit value (dSDA, held stable by fail 2 and by
+     the clock watcher) is checked in the pull step. *)
+  let tx_head ?clr _bit =
     [ await_idle ndscl; await_idle scl ]
     @ (match clr with Some b -> [ sample b False ] | None -> [])
-    @ [ expect (eq_reg !!dsda bit) ~else_:(fail 1) ]
+    @ [ expect ~when_:!!dsda sda ~else_:(blame 6) ]
   in
-  let tx_rest =
-    [ hold_until (stable "dsda") dscl (win 1 4095 ~else_:(fail 2)); expect ~when_:!!dsda sda ~else_:(blame 6) ]
+  let tx_rest bit =
+    [ hold_until (stable "dsda") dscl (win 1 4095 ~else_:(fail 2)); expect (eq_reg !!dsda bit) ~else_:(fail 1) ]
   in
-  let tx_cell ?clr bit = tx_head ?clr bit @ tx_rest in
+  let tx_cell ?clr bit = tx_head ?clr bit @ tx_rest bit in
   (* read and ACK bits are taken in the second step of the high phase (D3: the lane's WTP
-     completes in the first high step, so its earliest read is one step later). SDA must be
-     stable from the first high step on (blame 7), so sampling at the end of that hold gives
-     the value of the second step whenever no blame has fired. *)
+     completes in the first high step s, so its earliest read is in s+1). The await below
+     completes in s+1 when SCL is already high in the release step s, else in s (D4); with
+     SDA stable for h-2 steps after it (blame 7), the sampled value is SDA(s+1) in both cases,
+     and the window ends before the pull step of a high phase of exactly h steps (a target
+     may change SDA right after the SCL fall). *)
   let rx_cell k =
     [ await_idle ndscl
     ; await_idle scl
     ; expect !!dsda ~else_:(fail 3)
-    ; hold (stable "sda") ~for_:(h - 1) ~else_:(blame 7)
+    ; hold (stable "sda") ~for_:(h - 2) ~else_:(blame 7)
     ; sample (7 - k) sda
     ; await_idle dscl
     ]
@@ -430,7 +445,7 @@ let i2c_ctl ~l ~h ~tsu ~thold =
        @ [ await push (win 1 64 ~else_:(fail 4)); match_rx ~else_:(fail 5) ]
        @ [ await_idle ndscl; await_idle scl; if_ dsda [ s_hold ] ([ s_hold ] @ clear_byte0 @ stuck) ])
   in
-  let after_addr ~loop_ = tx_rest @ ack_rx 0 ~nack:stuck ~ack:[ await_idle dscl; loop_ ] in
+  let after_addr ~loop_ = tx_rest 8 @ ack_rx 0 ~nack:stuck ~ack:[ await_idle dscl; loop_ ] in
   let transaction =
     [ await_idle dscl ]
     @ List.concat (List.init 7 ~f:(fun k -> tx_cell ~clr:k (15 - k)))
