@@ -485,7 +485,8 @@ let i2c_ctl ~l ~h ~tsu ~thold =
    [stretch] H5 part (fail 1: the target starts pulling SCL while SCL is high);
    [timing] B1 (blame 1: low phase < l_min; 2: high phase < h_min);
    [bytes] B2/B3 and hd (blame 1: SDA changes in a high phase other than the first cell of
-   a byte; 2: SCL falls within hd steps of a START/Sr);
+   a byte; 2: SCL falls within hd steps of a START/Sr; 3 (D6): SDA changes in the step SCL
+   is first seen high, or in the next step of a byte's first cell);
    [idle] B5 (blame 1: SCL low in the first 4 steps).
    Not checked on chip [O]: ACK iff the address matches the config byte (the language has no
    register-to-register comparison and branch conditions cannot read the register), that
@@ -542,7 +543,10 @@ let i2c_tgt ~h_min ~l_min ~hd =
     watcher
       "high"
       ~base:0x60
-      [ loop [ hold ~when_:scl (stable "dsda" &&& !!(rise "dscl")) ~for_:4095 ~else_:(fail 1) ] ]
+      (* D7: "SCL high" includes the step SCL falls (high in the previous step): at small P the
+         pad and synchroniser latency fits in one step, so a pull started while SCL was high
+         is seen together with the fall it causes *)
+      [ loop [ hold ~when_:(scl ||| fall "scl") (stable "dsda" &&& !!(rise "dscl")) ~for_:4095 ~else_:(fail 1) ] ]
   in
   let timing =
     watcher
@@ -552,7 +556,11 @@ let i2c_tgt ~h_min ~l_min ~hd =
           [ await_idle nscl
           ; hold nscl ~for_:(l_min - 1) ~else_:(blame 1)
           ; await_idle scl
-          ; hold scl ~for_:(h_min - 1) ~else_:(blame 2)
+            (* D7: the blame for a short high phase fires one step after the fall (same
+               threshold: a fall in step a + h_min - 1 is blamed in a + h_min), so a fall caused by
+               the target's own pull is failed first by the high watcher (same step as the fall)
+               and is not excused by this blame *)
+          ; hold (scl ||| fall "scl") ~for_:h_min ~else_:(blame 2)
           ]
       ]
   in
@@ -566,11 +574,19 @@ let i2c_tgt ~h_min ~l_min ~hd =
           [ (* first cell of a byte: a condition may occur in its high phase *)
             await_idle nscl
           ; await_idle scl
+            (* D6: no SDA change in the step SCL is first seen high (setup violation), and a
+               condition needs SCL high for 2 steps first (the target samples b in the second) *)
+          ; expect (stable "sda") ~else_:(blame 3)
+          ; skip 1
+          ; expect (stable "sda") ~else_:(blame 3)
           ; await_idle (changed "sda" ||| nscl)
           ; if_ nscl
               (List.concat
                  (List.init 8 ~f:(fun _ ->
-                    [ await_idle scl; hold_until (stable "sda") nscl (win 1 4095 ~else_:(blame 1)) ])))
+                    [ await_idle scl
+                    ; expect (stable "sda") ~else_:(blame 3)
+                    ; hold_until (stable "sda") nscl (win 1 4095 ~else_:(blame 1))
+                    ])))
               [ skip 1
               ; if_ sda [ await_idle start; hold scl ~for_:(hd - 1) ~else_:(blame 2) ] [ hold scl ~for_:(hd - 2) ~else_:(blame 2) ]
               ]

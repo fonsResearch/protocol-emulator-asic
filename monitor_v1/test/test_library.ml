@@ -28,8 +28,8 @@ let%expect_test "library packages" =
     report (Library_v1.spi_tgt ~cpol ~cpha ~h_min:3 ~g:6));
   report (Library_v1.i2c_ctl ~l:5 ~h:5 ~tsu:5 ~thold:5);
   report (Library_v1.i2c_ctl ~l:6 ~h:4 ~tsu:3 ~thold:6);
-  report (Library_v1.i2c_tgt ~h_min:29 ~l_min:34 ~hd:29);
-  report (Library_v1.i2c_tgt ~h_min:4 ~l_min:9 ~hd:4);
+  report (Library_v1.i2c_tgt ~h_min:59 ~l_min:69 ~hd:59);
+  report (Library_v1.i2c_tgt ~h_min:8 ~l_min:18 ~hd:8);
   [%expect {|
     uart_tx_v1_d4_p0           units 2 instrs 12+2 preds 3/14 windows 3/7 codes 12/15
     uart_rx_v1_d8_m2_p1        units 2 instrs 21+11 preds 6/14 windows 7/7 codes 15/15
@@ -43,8 +43,8 @@ let%expect_test "library packages" =
     spi_tgt_v1_m3_h3_g6        units 5 instrs 36+18+28+2+3 preds 14/14 windows 6/7 codes 14/15
     i2c_ctl_v1_l5_h5           units 3 instrs 6+14+123 preds 14/14 windows 7/7 codes 12/15
     i2c_ctl_v1_l6_h4           units 3 instrs 6+14+123 preds 14/14 windows 7/7 codes 12/15
-    i2c_tgt_v1_h29_l34         units 5 instrs 75+1+4+25+1 preds 13/14 windows 6/7 codes 13/15
-    i2c_tgt_v1_h4_l9           units 5 instrs 75+1+4+25+1 preds 13/14 windows 6/7 codes 13/15
+    i2c_tgt_v1_h59_l69         units 5 instrs 75+1+4+26+1 preds 14/14 windows 7/7 codes 14/15
+    i2c_tgt_v1_h8_l18          units 5 instrs 75+1+4+26+1 preds 14/14 windows 7/7 codes 14/15
     |}]
 ;;
 

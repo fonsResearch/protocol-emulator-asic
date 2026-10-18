@@ -114,14 +114,14 @@ The address is also patched into the program's compare immediates by the host to
 
 Host-stream assumption: the RX FIFO is never full.
 
-### 3.2 Timing parameters (steps at P = 7, 0.1333 µs per step)
+### 3.2 Timing parameters (steps at P = 3, 0.0667 µs per step)
 
 | package | h_min (SCL high) | l_min (SCL low) | hd (SCL high after S/Sr) |
 |---|---|---|---|
-| `i2c_tgt_sm` | 29 | 34 | 29 |
-| `i2c_tgt_fm` | 4 | 9 | 4 |
+| `i2c_tgt_sm` | 59 | 69 | 59 |
+| `i2c_tgt_fm` | 8 | 18 | 8 |
 
-Each value is the UM10204 minimum in steps, minus one step for synchroniser and tick quantisation.
+Each value is floor(UM10204 minimum / step) - 1: an observed phase of D cycles covers at least floor(D / step) steps, and one step is kept as margin for rise time. P = 3 replaces P = 7 (amendment 5.4, user decision 2026-10-18).
 
 ### 3.3 Assumption (controller behaviour; violation = blame)
 
@@ -129,7 +129,7 @@ Each value is the UM10204 minimum in steps, minus one step for synchroniser and 
   - every SCL high phase lasts at least h_min steps;
   - every SCL low phase not extended by the target lasts at least l_min steps, counted from the step in which SCL becomes 0;
   - after a START or Sr, SCL stays 1 for at least hd steps.
-- B2 Data changes [C]: SDA changes only while SCL = 0, except START/Sr/STOP conditions.
+- B2 Data changes [C]: SDA changes only while SCL = 0, except START/Sr/STOP conditions. A change in the step in which SCL is first observed high is a setup violation, and a condition needs SCL observed high for 2 steps before the SDA edge (D6).
 - B3 Byte boundaries [C]: START, Sr and STOP occur only in the high phase of the first cell after an ACK cell, or from bus idle. A condition elsewhere is a blame.
 - B4 No contention [C]: in steps where the target releases SDA during its read-data cells, SDA = 1.
 - B5 Idle at start [C]: SCL = SDA = 1 in the first 4 steps after the lane starts.
@@ -179,7 +179,7 @@ Target:
 6. **[O]:**
    - ACK iff the address matches the config byte (no register-to-register comparison, and branch conditions cannot read the register);
    - passivity before the config pop;
-   - stretching only while a read byte is pending, and the 2-step stretch response.
+   - stretching only while a read byte is pending, and the stretch response (firmware: SCL pulled 3 steps after the observed fall, released 5 steps after the pop).
 7. **[C], one invariant:** while SCL is observed high, the target neither changes dSDA nor starts pulling SCL. This covers ACK and data stability in high phases, and the part of H5 that protects the bus.
 8. **Ordering and check placement.**
    - A received byte is pushed before the first high step of its ACK cell.
@@ -193,7 +193,7 @@ Compiled resource use (`monitor_v1/test/test_library.ml`):
 |---|---|---|---|---|---|
 | i2c_ctl Sm | 3 | 6+14+123 | 14/14 | 7/7 | 12/15 |
 | i2c_ctl Fm | 3 | 6+14+123 | 14/14 | 7/7 | 12/15 |
-| i2c_tgt Sm/Fm | 5 | 75+1+4+25+1 | 13/14 | 6/7 | 13/15 |
+| i2c_tgt Sm/Fm | 5 | 75+1+4+26+1 | 14/14 | 7/7 | 14/15 |
 
 ## 5. Amendments from the controller firmware and co-simulation (2026-10-18)
 
@@ -208,3 +208,14 @@ Controller firmware (`Programs_v1.i2c_ctl`, ISA v1, label assembler; 162 words S
 - measured on the pads (Psim, ideal edges, no rise time): Sm 90.9 kHz (tLOW ≥ 5.0 µs, tHIGH ≥ 6.0 µs), Fm 363.6 kHz (tLOW ≥ 1.5 µs, tHIGH ≥ 1.25 µs). Real rise time lengthens the low phase and shortens the observed high phase by the same amount; the high phases have one step of margin over H;
 - co-simulation results: clean runs at Sm and Fm, with clock stretching, with a NACKed write byte, and with target data delays of 1 to 100 cycles; the target misbehaviours A1 (ACK at the SCL rise) and A2 (data change 35 cycles into a read high phase) blame B76 and B77; firmware mutants L - 1, H - 2, Tsu - 1 and Tbuf - 1 fail without blame (F52, F53, F61, F62). H - 1 is legal because of the margin;
 - spec-free cross-check (`tools/sigrok/xcheck.sh … i2c_ctl`, libsigrokdecode 0.5.3 `i2c`): over 4 random scenarios, the decoded bus equals the peer's transcript, the pushes implied by the decoded bus equal the lane's pushes, and the bus equals a reference built from the host transactions.
+4. **Target divisor P = 3 (user decision).** ISA v1 has no interrupts, and WTP watches one pin. The target firmware therefore detects START/Sr/STOP by polling (PIN SDA, `WTP SCL,Low` with to = 1, BR, CMP, BR: 6 steps). It must still see SCL high after it sees the SDA edge, which takes about 7 steps. At P = 7 the Fm hold time after START (0.6 µs) is 4.5 steps. Measured (`test_i2c.ml`, controller peer at the UM10204 minima, tHD;STA swept): P = 7 works only for tHD;STA ≥ 52 cycles and fails silently between 24 and 51 cycles (the contract's hd = 3 steps is 24 cycles). P = 3 works for ≥ 28 cycles and blames below 32; P = 1 works for ≥ 20 cycles and blames below 34. Silent means no firing: "ACK iff the address matches" is [O], so the monitor does not see a target that misses its own START.
+5. **Target contract fixes from co-simulation (D6, D7).**
+   - D6: an SDA change in the SCL-rise step was neither a blame (the B2 check started one step later) nor data for the contract (its guard read it as a condition), while the firmware read it as data. The result was an unblamed fail. It is now blame 3 of the bytes watcher, and in the first cell of a byte it is also blamed one step later. Legal conditions need SCL high for tSU;STA / tSU;STO, at least 8 steps at P = 3.
+   - D7: at P = 3, a pad change plus the 2-cycle synchroniser fits in one step. A target pulling SCL during a high phase is therefore seen in the same step as the SCL fall it causes. The check "dSCL rises while SCL = 1" could not fire, and the timing watcher blamed the controller for a short high phase, which excused the target. Two changes: the high watcher also checks in the step SCL falls, and the short-high blame fires one step after the fall (same threshold), so the target's fail comes first.
+   - General limit: for open-drain lines, the environment observable (the pad) is partly driven by the chip, so WF2 alone does not prevent the chip from causing a blame. Each blame on SCL/SDA has to be ordered after the chip-side fail for the same event. The mutant tests check this for the cases above; the formal check is part of the I2C A2 harnesses.
+
+Target firmware (`Programs_v1.i2c_tgt`, 141 words; same program for Sm and Fm):
+- co-simulation at P = 3 with a controller peer at the UM10204 minima: clean at Sm and Fm; clock stretching while the TX FIFO is empty (up to 22,216 cycles) clean; controller misbehaviours blamed (B71 short low, B72 short high, B83 setup violation);
+- firmware mutants fail without an earlier blame: write ACK missing F54, write bits LSB-first F57, read bits LSB-first F55, SCL pulled in a high phase F61, read data changed in a high phase F61. A mutant that ACKs a different address is silent ([O], as stated in 4.6);
+- spec-free cross-check (`xcheck.sh … i2c_tgt`, 3 random scenarios incl. stretching): the decoded bus equals the controller transcript, the decoded writes to 0x50 equal the lane's pushes, and the decoded reads from 0x50 equal the lane's pops.
+
