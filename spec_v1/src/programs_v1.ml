@@ -225,3 +225,65 @@ let i2c_ctl ~l ~h ~tsu ~thold =
      @ [ ins (Out 0x04); ins (Wtp (2, High)) ] @ waits (tsu - 2)
      @ [ ins (Out 0x0C) ] @ waits 2 @ [ ins (Push R2) ] @ waits thold @ [ jmp "idle" ])
 ;;
+
+(* Target with 7-bit address [addr] (the host tool patches the CMP immediates; the popped
+   config byte must equal [addr], else HALT). Event-driven on the SCL line, so the program
+   does not depend on P. Conditions (START, Sr, STOP) are detected only where B3 allows them:
+   from bus idle and in the first cell after an ACK cell. There the program samples SDA in
+   the second high step (b), presets sr to b in all 8 bits, then polls:
+   PIN SDA (In_lsb, shifting the sample into sr), WTP SCL low with to = 1, BR; SDA differing
+   from b while SCL is still high afterwards is a condition (SCL cannot fall and rise again
+   within l_min). Period 6 steps; a condition is recognised only if SCL stays high for about
+   7 steps after the SDA edge (the hd margin, measured in test_i2c.ml).
+   Registers: r0 = config, r1 = pin image (stretch release), sr = data / poll history,
+   lc = cell counter. to = 1 only inside poll loops. *)
+let i2c_tgt ~addr =
+  let br c lbl = I (fun f -> Br (c, f lbl)) and jmp lbl = I (fun f -> Jmp (f lbl)) in
+  let djnz lbl = I (fun f -> Djnz (f lbl)) in
+  let to1 = ins (Ldi (To_lo, 1)) and to0 = ins (Ldi (To_lo, 0)) in
+  (* first cell after an ACK cell (or bus idle): [pre] runs in the low phase; on SCL fall
+     goes to [fell1]/[fell0] (bit 7 was 1/0), Sr/START -> "start", STOP -> "stop" *)
+  let first_cell p ~pre ~fell1 ~fell0 =
+    [ Lbl (p ^ "_first"); ins (Wtp (2, Low)) ]
+    @ pre
+    @ [ ins (Ldi (L Sr, 0xFF)); ins (Wtp (2, High)); ins (Pin (3, In_lsb)); ins (Cmp (C Sr, 0xFF)); to1
+      ; br 1 (p ^ "_q1"); ins (Ldi (L Sr, 0))
+      ; Lbl (p ^ "_q0"); ins (Pin (3, In_lsb)); ins (Wtp (2, Low)); br 4 fell0; ins (Cmp (C Sr, 0)); br 1 (p ^ "_q0"); jmp "stop"
+      ; Lbl (p ^ "_q1"); ins (Pin (3, In_lsb)); ins (Wtp (2, Low)); br 4 fell1; ins (Cmp (C Sr, 0xFF)); br 1 (p ^ "_q1"); jmp "start" ]
+  in
+  asm
+    ([ ins (Out 0x0C); to0; ins (Pop R0); ins (Cmp (C R0, addr)); br 2 "halt" ]
+     (* bus idle: wait for START (SDA falls while SCL high) *)
+     @ [ Lbl "idle"; ins (Ldi (L Sr, 0xFF)); to1
+       ; Lbl "qi"; ins (Pin (3, In_lsb)); ins (Wtp (2, Low)); br 4 "resync_first"; ins (Cmp (C Sr, 0xFF)); br 1 "qi" ]
+     (* START / Sr: address byte *)
+     @ [ Lbl "start"; to0; ins (Ldi (L Lc, 8))
+       ; Lbl "ab"; ins (Wtp (2, Low)); ins (Wtp (2, High)); ins (Pin (3, In_msb)); djnz "ab"
+       ; ins (Cmp (C Sr, addr lsl 1)); br 1 "wr_ack"; ins (Cmp (C Sr, (addr lsl 1) lor 1)); br 1 "rd_ack"
+       ; ins (Wtp (2, Low)); ins (Wtp (2, High)); jmp "nad_first" ]
+     @ [ Lbl "stop"; to0; jmp "idle" ]
+     (* not addressed: passive, byte-aligned until a condition *)
+     @ first_cell "nad" ~pre:[] ~fell1:"nad_fell" ~fell0:"nad_fell"
+     @ [ Lbl "nad_fell"; to0; ins (Ldi (L Lc, 8)); Lbl "nb"; ins (Wtp (2, High)); ins (Wtp (2, Low)); djnz "nb"; jmp "nad_first" ]
+     (* lost alignment (SCL low seen while waiting for START): check every cell for a condition *)
+     @ first_cell "resync" ~pre:[] ~fell1:"resync_fell" ~fell0:"resync_fell"
+     @ [ Lbl "resync_fell"; to0; jmp "resync_first" ]
+     (* write: ACK the address, then bytes *)
+     @ [ Lbl "wr_ack"; ins (Wtp (2, Low)); ins (Out 0x04); ins (Wtp (2, High)) ]
+     @ first_cell "wr" ~pre:[ ins (Out 0x0C) ] ~fell1:"w_fell1" ~fell0:"w_fell0"
+     @ [ Lbl "w_fell0"; to0; ins (Ldi (L Sr, 0)); jmp "w_rest"
+       ; Lbl "w_fell1"; to0; ins (Ldi (L Sr, 1))
+       ; Lbl "w_rest"; ins (Ldi (L Lc, 7))
+       ; Lbl "wb"; ins (Wtp (2, High)); ins (Pin (3, In_msb)); ins (Wtp (2, Low)); djnz "wb"
+       ; ins (Out 0x04); ins (Push Sr); ins (Wtp (2, High)); jmp "wr_first" ]
+     (* read: ACK the address, then bytes; stretch only when the TX FIFO is empty *)
+     @ [ Lbl "rd_ack"; ins (Wtp (2, Low)); ins (Out 0x04); ins (Wtp (2, High))
+       ; Lbl "rd_next"; ins (Wtp (2, Low)); br 5 "rd_stretch"; ins (Pop Sr); ins (Pin (3, Out_msb))
+       ; Lbl "rd_bits"; ins (Ldi (L Lc, 7))
+       ; Lbl "rb"; ins (Wtp (2, High)); ins (Wtp (2, Low)); ins (Pin (3, Out_msb)); djnz "rb"
+       ; ins (Wtp (2, High)); ins (Wtp (2, Low)); ins (Out 0x0C)
+       ; ins (Wtp (2, High)); ins (Pin (3, In_lsb)); ins (Cmp (C Sr, 0)); br 1 "rd_next"; jmp "nad_first"
+       ; Lbl "rd_stretch"; ins (Out 0x00); ins (Pop Sr); ins (Pin (3, Out_msb))
+       ; ins (Mov (M R1, Pins)); ins (Addi (R1, 0x04)); ins (Mov (Out_reg, S R1)); jmp "rd_bits" ]
+     @ [ Lbl "halt"; ins Halt ])
+;;

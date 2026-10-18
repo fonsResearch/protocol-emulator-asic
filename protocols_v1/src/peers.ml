@@ -356,3 +356,111 @@ let i2c_target ~addr ~read_data ?(dd = 8) ?(nack_write = -1) ?(stretch = 0) ?(ac
         |> String.concat ~sep:" ")
   }
 ;;
+
+(* I2C controller peer for testing a target lane. Timing in cycles (60 MHz); UM10204
+   minima: Sm tLOW 282, tHIGH 240, tHD;STA 240, tSU;STA 282, tSU;STO 240, tBUF 282;
+   Fm 78, 36, 36, 36, 36, 78. [dh] = SDA change delay after its SCL pull (tHD;DAT >= 0),
+   [su] = data setup before the SCL release. The high phase is timed from the cycle the SCL
+   line is seen high (the target may stretch). The controller samples SDA in the last cycle
+   of each high phase. Transactions: [`W (addr, bytes)] or [`R (addr, n)], each followed by
+   Sr when [sr] is true, else STOP. Read bytes are ACKed except the last. *)
+type i2c_ctl_timing =
+  { tlow : int
+  ; thigh : int
+  ; thd_sta : int
+  ; tsu_sta : int
+  ; tsu_sto : int
+  ; tbuf : int
+  ; dh : int
+  ; su : int
+  }
+
+let i2c_sm = { tlow = 282; thigh = 240; thd_sta = 240; tsu_sta = 282; tsu_sto = 240; tbuf = 282; dh = 2; su = 15 }
+let i2c_fm = { tlow = 78; thigh = 36; thd_sta = 36; tsu_sta = 36; tsu_sto = 36; tbuf = 78; dh = 2; su = 6 }
+
+type i2c_op =
+  | Scl of bool (* true = release *)
+  | Sda of bool
+  | Wait of int
+  | Wait_scl_high
+  | Sample of (bool -> unit)
+
+type i2c_controller_peer =
+  { cdrive : Psim.chip_view -> Psim.peer_drive
+  ; clog : unit -> string (* A<addr><R|W><+|->, W<b><+|->, R<b>, S, Sr, P *)
+  ; cdone : unit -> bool
+  }
+
+let i2c_controller ?(t0 = 400) ~(t : i2c_ctl_timing) txs =
+  let log = Queue.create () in
+  let ops = Queue.create () in
+  let add l = List.iter l ~f:(Queue.enqueue ops) in
+  let note s = Sample (fun _ -> Queue.enqueue log s) in
+  (* one cell driven by the controller with SDA = v; SCL is pulled on entry *)
+  let cell_out v ~on_sample =
+    add [ Wait t.dh; Sda v; Wait (t.tlow - t.dh); Scl true; Wait_scl_high; Wait (t.thigh - 1); Sample on_sample; Scl false ]
+  in
+  let byte_out b ~tok =
+    for k = 7 downto 0 do
+      cell_out ((b lsr k) land 1 = 1) ~on_sample:(fun _ -> ())
+    done;
+    cell_out true ~on_sample:(fun sda -> Queue.enqueue log (tok ^ if sda then "-" else "+"))
+  in
+  let byte_in ~ack =
+    let v = ref 0 in
+    add [ Wait t.dh; Sda true ];
+    for _ = 7 downto 0 do
+      add [ Wait (t.tlow - t.dh); Scl true; Wait_scl_high; Wait (t.thigh - 1)
+          ; Sample (fun sda -> v := (!v lsl 1) lor Bool.to_int sda); Scl false; Wait t.dh ]
+    done;
+    add [ Sample (fun _ -> Queue.enqueue log (sprintf "R%02X" !v)) ];
+    cell_out (not ack) ~on_sample:(fun _ -> ())
+  in
+  add [ Wait t0; note "S"; Sda false; Wait t.thd_sta; Scl false ];
+  List.iteri txs ~f:(fun i (tx, sr) ->
+    (match tx with
+     | `W (a, bytes) ->
+       byte_out ((a lsl 1) lor 0) ~tok:(sprintf "A%02XW" a);
+       List.iter bytes ~f:(fun b -> byte_out b ~tok:(sprintf "W%02X" b))
+     | `R (a, n) ->
+       byte_out ((a lsl 1) lor 1) ~tok:(sprintf "A%02XR" a);
+       for k = 1 to n do
+         byte_in ~ack:(k < n)
+       done);
+    let last = i = List.length txs - 1 in
+    if sr && not last
+    then
+      add [ Wait t.dh; Sda true; Wait (t.tlow - t.dh); Scl true; Wait_scl_high; Wait t.tsu_sta; note "Sr"; Sda false
+          ; Wait t.thd_sta; Scl false ]
+    else (
+      add [ Wait t.dh; Sda false; Wait (t.tlow - t.dh); Scl true; Wait_scl_high; Wait t.tsu_sto; note "P"; Sda true; Wait t.tbuf ];
+      if not last then add [ note "S"; Sda false; Wait t.thd_sta; Scl false ]));
+  let scl_rel = ref true and sda_rel = ref true and wait = ref 0 in
+  let cdrive (v : Psim.chip_view) =
+    let scl_line = (v.pad lsr i2c_scl) land 1 = 1 and sda_line = (v.pad lsr i2c_sda) land 1 = 1 in
+    let rec go () =
+      match Queue.peek ops with
+      | None -> ()
+      | Some (Wait n) ->
+        if !wait = 0 then wait := n;
+        if !wait <= 1 then (wait := 0; ignore (Queue.dequeue_exn ops : i2c_op); go ()) else decr wait
+      | Some Wait_scl_high -> if scl_line then (ignore (Queue.dequeue_exn ops : i2c_op); go ())
+      | Some (Scl b) -> scl_rel := b; ignore (Queue.dequeue_exn ops : i2c_op); go ()
+      | Some (Sda b) -> sda_rel := b; ignore (Queue.dequeue_exn ops : i2c_op); go ()
+      | Some (Sample f) -> f sda_line; ignore (Queue.dequeue_exn ops : i2c_op); go ()
+    in
+    go ();
+    let oe = (if !scl_rel then 0 else 1 lsl i2c_scl) lor if !sda_rel then 0 else 1 lsl i2c_sda in
+    { Psim.drive_oe = oe; drive_val = 0 }
+  in
+  { cdrive
+  ; clog = (fun () ->
+      Queue.to_list log
+      |> List.fold ~init:[] ~f:(fun acc s ->
+        match s, acc with
+        | ("+" | "-"), x :: rest -> (x ^ s) :: rest
+        | _ -> s :: acc)
+      |> List.rev |> String.concat ~sep:" ")
+  ; cdone = (fun () -> Queue.is_empty ops)
+  }
+;;
