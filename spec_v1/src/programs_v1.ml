@@ -115,3 +115,113 @@ let spi_tgt ~cpol ~cpha =
   in
   head @ body @ [ Push Sr (* 11 *); Jmp 1 (* 12 *) ]
 ;;
+
+(* ---- label assembly (ISA v1 has no call/return; routines are inlined) ---- *)
+type item =
+  | Lbl of string
+  | I of ((string -> int) -> t)
+
+let ins x = I (fun _ -> x)
+let waits n = if n <= 0 then [] else [ ins (Wait (n - 1)) ] (* exactly n steps *)
+
+let asm items =
+  let tbl = String.Table.create () in
+  let _ =
+    List.fold items ~init:0 ~f:(fun a -> function
+      | Lbl s ->
+        if Hashtbl.mem tbl s then raise_s [%message "duplicate label" s];
+        Hashtbl.set tbl ~key:s ~data:a;
+        a
+      | I _ -> a + 1)
+  in
+  let look s = match Hashtbl.find tbl s with Some a -> a | None -> raise_s [%message "unknown label" s] in
+  List.filter_map items ~f:(function Lbl _ -> None | I f -> Some (f look))
+;;
+
+(* I2C (doc/protocols/i2c_v1.md): SCL uio2 (0x04), SDA uio3 (0x08), open-drain; out bit 1 =
+   released. own = od = 0x0C. *)
+let i2c_own = 0x0C
+let i2c_od = 0x0C
+
+(* Controller, timing (l, h, tsu, thold) in steps as in Library_v1.i2c_ctl. Registers: r0 = N
+   (bytes left), r1 = pin image for SCL toggles that keep SDA, r2 = copy of the address byte,
+   then the status, r3 = repeated-start flag, sr = shift register, lc = bit counter.
+   Step accounting (an instruction in step s changes pins from step s+1):
+   - write bit: low phase = PIN, MOV r1 pins, ADDI, MOV out (+ DJNZ and waits(l-5)) = 5 + (l-5)
+     steps; high phase: WTP completes in the first high step s, waits(h-2), ADDI, MOV out:
+     the pull is visible in s+h+1;
+   - read bit: high: WTP (s), PIN In_msb (s+1, the contract's sampling step, D3), waits(h-2),
+     OUT pull; low: waits(l-2), DJNZ, OUT release;
+   - ACK received: OUT release SDA, waits, OUT release SCL, WTP (s), PIN In_lsb (s+1),
+     CMP (Z = ACK; sr is 0 after 8 MSB-first shifts), waits(h-3), OUT pull;
+   - conditions: Sr/STOP visible tsu steps after the first high step; status PUSH two steps
+     after the condition; SCL pulled thold steps after START/Sr. *)
+let i2c_ctl ~l ~h ~tsu ~thold =
+  let m = Int.max 0 (l - 5) in
+  let ka = Int.max 0 (l - m - 3) in
+  let hdr =
+    (* pops a (copy in r2) and c; r3 = c[7] via 7 LSB-first shifts on unowned pin 7; r0 = c[6:0] *)
+    [ ins (Pop Sr); ins (Mov (M R2, S Sr)); ins (Pop R0); ins (Mov (M Sr, S R0)) ]
+    @ List.init 7 ~f:(fun _ -> ins (Pin (7, Out_lsb)))
+    @ [ ins (Mov (M R3, S Sr)); ins (Mov (M Sr, S R0)); ins (Pin (7, Out_msb)); ins (Pin (7, Out_lsb))
+      ; ins (Mov (M R0, S Sr)); ins (Mov (M Sr, S R2)) ]
+  in
+  let send_bits lbl =
+    (* sr MSB first; entered in a low phase with SCL pulled for >= 1 step *)
+    [ ins (Ldi (L Lc, 8)) ] @ waits m
+    @ [ Lbl lbl
+      ; ins (Pin (3, Out_msb))
+      ; ins (Mov (M R1, Pins))
+      ; ins (Addi (R1, 0x04))
+      ; ins (Mov (Out_reg, S R1))
+      ; ins (Wtp (2, High))
+      ]
+    @ waits (h - 2)
+    @ [ ins (Addi (R1, 0xFC)); ins (Mov (Out_reg, S R1)) ]
+    @ waits m
+    @ [ I (fun f -> Djnz (f lbl)) ]
+  in
+  let ack_rx =
+    (* leaves Z = ACK; ends with SCL pulled, SDA released *)
+    [ ins (Out 0x08) ] @ waits ka
+    @ [ ins (Out 0x0C); ins (Wtp (2, High)); ins (Pin (3, In_lsb)); ins (Cmp (C Sr, 0)) ]
+    @ waits (h - 3)
+    @ [ ins (Out 0x08) ]
+  in
+  let rw_is_write =
+    (* Z <- (a[0] = 0): a << 7 via 7 MSB-first shifts on unowned pin 7 *)
+    [ ins (Mov (M Sr, S R2)) ] @ List.init 7 ~f:(fun _ -> ins (Pin (7, Out_msb))) @ [ ins (Cmp (C Sr, 0)) ]
+  in
+  let br c lbl = I (fun f -> Br (c, f lbl)) and jmp lbl = I (fun f -> Jmp (f lbl)) in
+  asm
+    ([ ins (Out 0x0C) ] @ waits thold
+     @ [ Lbl "idle" ] @ hdr
+     @ [ Lbl "start"; ins (Out 0x04) ] @ waits (thold - 1) @ [ ins (Out 0x00) ]
+     @ [ Lbl "addr" ] @ send_bits "ab" @ ack_rx
+     @ [ br 2 "addr_nack" ] @ rw_is_write
+     @ [ ins (Ldi (L R2, 0)); br 1 "write"; jmp "read" ]
+     (* address NACK: status 1; a write discards its N data bytes before the STOP *)
+     @ [ Lbl "addr_nack" ] @ rw_is_write
+     @ [ ins (Ldi (L R2, 1)); br 2 "stop"; Lbl "an_disc"; ins (Pop Sr); ins (Addi (R0, 0xFF)); br 2 "an_disc"; jmp "stop" ]
+     (* write data *)
+     @ [ Lbl "write"; ins (Pop Sr) ] @ send_bits "wb" @ ack_rx
+     @ [ br 2 "data_nack"; ins (Addi (R0, 0xFF)); br 2 "write"; jmp "end" ]
+     @ [ Lbl "data_nack"; ins (Ldi (L R2, 2)); Lbl "dn"; ins (Addi (R0, 0xFF)); br 1 "stop"; ins (Pop Sr); jmp "dn" ]
+     (* read data *)
+     @ [ Lbl "read"; ins (Ldi (L Lc, 8)) ] @ waits l
+     @ [ Lbl "rb"; ins (Out 0x0C); ins (Wtp (2, High)); ins (Pin (3, In_msb)) ] @ waits (h - 2)
+     @ [ ins (Out 0x08) ] @ waits (l - 2)
+     @ [ I (fun f -> Djnz (f "rb")); ins (Push Sr); ins (Addi (R0, 0xFF)); br 1 "rnack" ]
+     @ [ ins (Out 0x00); ins (Out 0x04); ins (Wtp (2, High)) ] @ waits (h - 1)
+     @ [ ins (Out 0x00); ins (Out 0x08); ins (Ldi (L Lc, 8)) ] @ waits (l - 4) @ [ jmp "rb" ]
+     @ [ Lbl "rnack" ] @ waits l @ [ ins (Out 0x0C); ins (Wtp (2, High)) ] @ waits (h - 1) @ [ ins (Out 0x08) ]
+     (* end of a transaction without NACK: Sr if r3 != 0, else STOP *)
+     @ [ Lbl "end"; ins (Cmp (C R3, 0)); br 1 "stop" ]
+     @ [ ins (Out 0x08) ] @ waits l
+     @ [ ins (Out 0x0C); ins (Wtp (2, High)) ] @ waits (tsu - 2)
+     @ [ ins (Out 0x04) ] @ waits 2 @ [ ins (Push R2) ] @ hdr @ waits thold @ [ ins (Out 0x00); jmp "addr" ]
+     (* STOP from a low phase (SCL pulled, SDA released) *)
+     @ [ Lbl "stop"; ins (Out 0x00) ] @ waits l
+     @ [ ins (Out 0x04); ins (Wtp (2, High)) ] @ waits (tsu - 2)
+     @ [ ins (Out 0x0C) ] @ waits 2 @ [ ins (Push R2) ] @ waits thold @ [ jmp "idle" ])
+;;

@@ -192,3 +192,167 @@ let spi_controller ~cpol ~cpha ~hp ~setup ~hold ~gap ~mdly ~t0 ~(bytes : int lis
   in
   { cdrive; sampled = (fun () -> List.rev !sampled); frames_end }
 ;;
+
+(* ---- I2C (doc/protocols/i2c_v1.md): SCL uio2, SDA uio3, open-drain wired-AND ---- *)
+let i2c_scl = 2
+let i2c_sda = 3
+
+(* I2C target peer for testing a controller lane. It watches the resolved pads of the previous
+   cycle and detects START/Sr/STOP and SCL edges. It answers address [addr] (7 bit): ACK in the
+   ACK cell, then receives (write) or sends [read_data] in order (read). SDA changes [dd]
+   cycles after an SCL fall (its data hold time). Options:
+   - [nack_write]: index (0-based, over all written bytes) of a data byte it NACKs;
+   - [stretch]: after the SCL fall that ends each ACK cell it holds SCL low that many cycles;
+   - [ack_on_rise] (misbehaviour, A1): it pulls SDA for the address ACK [dd] cycles after the
+     SCL rise of the 8th address cell instead of after its fall;
+   - [change_in_high] d (misbehaviour, A2): from the third read data cell of each byte on, the
+     cell's bit is put on SDA d cycles after the SCL rise instead of [dd] after the fall.
+   [log ()] is the transcript: S, Sr, P, A<addr><R|W><+|->, W<byte><+|->, R<byte><+|-> (the
+   controller's ACK/NACK after a read byte). *)
+type i2c_target_peer =
+  { drive : Psim.chip_view -> Psim.peer_drive
+  ; log : unit -> string
+  }
+
+type i2c_tmode =
+  | T_idle
+  | T_addr
+  | T_ack_addr of bool (* read *)
+  | T_write
+  | T_ack_w of bool (* acked *)
+  | T_read of int * int (* byte, bits driven *)
+  | T_ack_r
+  | T_ignore
+
+let i2c_target ~addr ~read_data ?(dd = 8) ?(nack_write = -1) ?(stretch = 0) ?(ack_on_rise = false)
+    ?change_in_high () =
+  let last = ref 0xFF in
+  let mode = ref T_idle and bits = ref 0 and shift = ref 0 in
+  let sda_rel = ref true and pend = ref None in
+  let scl_hold_until = ref (-1) in
+  let rd = Queue.of_list read_data and nw = ref 0 and ctl_ack = ref false and rcell = ref 0 in
+  let log = Queue.create () in
+  let in_tx = ref false and own_change = ref (-100) in
+  let set_sda cy lv = pend := Some (cy + dd, lv) in
+  let drive (v : Psim.chip_view) =
+    let b x i = (x lsr i) land 1 = 1 in
+    let scl0 = b !last i2c_scl and sda0 = b !last i2c_sda in
+    let scl = b v.pad i2c_scl and sda = b v.pad i2c_sda in
+    let cy = v.cycle in
+    (* an SDA edge within 4 cycles of the peer's own SDA change is its own, not a condition *)
+    let own = cy - !own_change <= 4 in
+    if scl0 && scl && sda0 && (not sda) && not own
+    then (
+      Queue.enqueue log (if !in_tx then "Sr" else "S");
+      in_tx := true;
+      mode := T_addr;
+      bits := 0;
+      shift := 0;
+      pend := None;
+      sda_rel := true)
+    else if scl0 && scl && (not sda0) && sda && not own
+    then (
+      Queue.enqueue log "P";
+      in_tx := false;
+      mode := T_idle;
+      pend := None;
+      sda_rel := true)
+    else if (not scl0) && scl
+    then (
+      match !mode with
+      | T_addr | T_write ->
+        shift := ((!shift lsl 1) lor if sda then 1 else 0) land 0xFF;
+        incr bits;
+        if ack_on_rise && Poly.(!mode = T_addr) && !bits = 8 && !shift lsr 1 = addr then set_sda cy false
+      | T_read (d, k) when Option.is_some change_in_high && !rcell >= 2 && k < 8 ->
+        pend := Some (cy + Option.value_exn change_in_high, b d (7 - k));
+        mode := T_read (d, k + 1)
+      | T_ack_r -> ctl_ack := not sda
+      | _ -> ())
+    else if scl0 && not scl
+    then (
+      let boundary () = if stretch > 0 then scl_hold_until := cy + stretch in
+      match !mode with
+      | T_addr when !bits = 8 ->
+        let rw = !shift land 1 = 1 in
+        let hit = !shift lsr 1 = addr in
+        Queue.enqueue log (sprintf "A%02X%c%c" (!shift lsr 1) (if rw then 'R' else 'W') (if hit then '+' else '-'));
+        if hit
+        then (
+          set_sda cy false;
+          mode := T_ack_addr rw)
+        else mode := T_ignore
+      | T_ack_addr rw ->
+        boundary ();
+        if rw
+        then (
+          let d = Option.value (Queue.dequeue rd) ~default:0xFF in
+          set_sda cy (b d 7);
+          rcell := 0;
+          mode := T_read (d, 1))
+        else (
+          set_sda cy true;
+          mode := T_write;
+          bits := 0;
+          shift := 0)
+      | T_write when !bits = 8 ->
+        let ack = !nw <> nack_write in
+        incr nw;
+        Queue.enqueue log (sprintf "W%02X%c" !shift (if ack then '+' else '-'));
+        if ack then set_sda cy false;
+        mode := T_ack_w ack
+      | T_ack_w ack ->
+        boundary ();
+        set_sda cy true;
+        if ack
+        then (
+          mode := T_write;
+          bits := 0;
+          shift := 0)
+        else mode := T_ignore
+      | T_read (d, k) ->
+        (* a fall ends one read cell; [rcell] counts them *)
+        incr rcell;
+        if !rcell = 8
+        then (
+          set_sda cy true;
+          Queue.enqueue log (sprintf "R%02X" d);
+          mode := T_ack_r)
+        else if not (Option.is_some change_in_high && !rcell >= 2)
+        then (
+          set_sda cy (b d (7 - k));
+          mode := T_read (d, k + 1))
+      | T_ack_r ->
+        boundary ();
+        Queue.enqueue log (if !ctl_ack then "+" else "-");
+        if !ctl_ack
+        then (
+          let d = Option.value (Queue.dequeue rd) ~default:0xFF in
+          set_sda cy (b d 7);
+          rcell := 0;
+          mode := T_read (d, 1))
+        else mode := T_ignore
+      | _ -> ());
+    (match !pend with
+     | Some (t, lv) when cy >= t ->
+       if Bool.(lv <> !sda_rel) then own_change := cy;
+       sda_rel := lv;
+       pend := None
+     | _ -> ());
+    last := v.pad;
+    let scl_low = cy <= !scl_hold_until in
+    let oe = (if !sda_rel then 0 else 1 lsl i2c_sda) lor if scl_low then 1 lsl i2c_scl else 0 in
+    { Psim.drive_oe = oe; drive_val = 0 }
+  in
+  { drive
+  ; log =
+      (fun () ->
+        Queue.to_list log
+        |> List.fold ~init:[] ~f:(fun acc s ->
+          match s, acc with
+          | ("+" | "-"), x :: rest -> (x ^ s) :: rest
+          | _ -> s :: acc)
+        |> List.rev
+        |> String.concat ~sep:" ")
+  }
+;;

@@ -93,11 +93,88 @@ let spi_tgt dir =
       ([%equal: int list] (Psim.pushes r) cbytes) (Psim.show_firings r))
 ;;
 
+(* I2C controller: random transactions (hit 0x50 / miss 0x51, read or write, N 1..6, random
+   repeated-start flag) against the target peer, Sm and Fm, with and without stretching and
+   a NACKed write byte. Writes the pad trace, the lane's pushes (.bytes) and the peer's bus
+   transcript (.bus, one token per line). *)
+let i2c_ctl dir =
+  List.iter
+    [ "sm", (59, 5, 5, 5, 5), 0, -1; "fm", (14, 6, 4, 3, 6), 0, -1; "fm_stretch", (14, 6, 4, 3, 6), 300, 3
+    ; "sm_stretch", (59, 5, 5, 5, 5), 1000, 5 ]
+    ~f:(fun (gname, (p, l, h, tsu, thold), stretch, nack_write) ->
+      let rng = Random.State.make [| 41 + p + stretch |] in
+      let ntx = 14 in
+      let txs =
+        List.init ntx ~f:(fun i ->
+          let a = if Random.State.int rng 5 = 0 then 0x51 else 0x50 in
+          let rw = Random.State.bool rng in
+          let n = 1 + Random.State.int rng 6 in
+          let r = i < ntx - 1 && Random.State.int rng 3 = 0 in
+          [ (a lsl 1) lor Bool.to_int rw; n lor if r then 0x80 else 0 ]
+          @ if rw then [] else List.init n ~f:(fun _ -> Random.State.int rng 256))
+      in
+      let read_data = List.init 128 ~f:(fun _ -> Random.State.int rng 256) in
+      let tgt = Peers.i2c_target ~addr:0x50 ~read_data ~stretch ~nack_write () in
+      let setup =
+        { Psim.prog = P1.i2c_ctl ~l ~h ~tsu ~thold; own = P1.i2c_own; od = P1.i2c_od; cfg = 0; cfg2 = 0; p
+        ; contract = Lib.i2c_ctl ~l ~h ~tsu ~thold; open_drain_wired_and = P1.i2c_own }
+      in
+      let r = Psim.run ~tx_bytes:(List.concat txs) ~setup ~cycles:(if p > 20 then 2_500_000 else 700_000) ~peer:tgt.drive () in
+      let name = "i2c_ctl_" ^ gname in
+      Psim.write_rle ~file:(dir ^/ name ^ ".rle") ~pins:[ Peers.i2c_scl; Peers.i2c_sda ] r.pads;
+      write_bytes (dir ^/ name ^ ".bytes") (Psim.pushes r);
+      Out_channel.write_all (dir ^/ name ^ ".bus")
+        ~data:(String.concat (List.map (String.split (tgt.log ()) ~on:' ') ~f:(fun t -> t ^ "\n")));
+      (* reference transcript from the host transactions (doc 2.1/2.2 and the peer's rules) *)
+      let rd = Queue.of_list read_data and nw = ref 0 and prev_sr = ref false in
+      let expected =
+        List.concat_map txs ~f:(fun tx ->
+          match tx with
+          | a :: c :: data ->
+            let addr = a lsr 1 and rw = a land 1 = 1 and n = c land 0x7F and rflag = c land 0x80 <> 0 in
+            let start = if !prev_sr then "Sr" else "S" in
+            let hit = addr = 0x50 in
+            let body, nacked =
+              if not hit
+              then [ sprintf "A%02X%c-" addr (if rw then 'R' else 'W') ], true
+              else if rw
+              then
+                ( sprintf "A%02XR+" addr
+                  :: (* in order: Base's List.init does not evaluate f in index order *)
+                   (let acc = ref [] in
+                    for k = 0 to n - 1 do
+                      acc := sprintf "R%02X%c" (Queue.dequeue_exn rd) (if k = n - 1 then '-' else '+') :: !acc
+                    done;
+                    List.rev !acc)
+                , false )
+              else (
+                let rec go = function
+                  | [] -> [], false
+                  | d :: rest ->
+                    let ack = !nw <> nack_write in
+                    incr nw;
+                    if ack then (let t, nk = go rest in (sprintf "W%02X+" d :: t), nk) else [ sprintf "W%02X-" d ], true
+                in
+                let t, nk = go data in
+                sprintf "A%02XW+" addr :: t, nk)
+            in
+            prev_sr := rflag && not nacked;
+            [ start ] @ body @ if rflag && not nacked then [] else [ "P" ]
+          | _ -> [])
+      in
+      let got = String.split (tgt.log ()) ~on:' ' in
+      Out_channel.write_all (dir ^/ name ^ ".ref") ~data:(String.concat (List.map expected ~f:(fun t -> t ^ "\n")));
+      printf "%s: %d pops, %d pushes, firings [%s], model_mismatch %d, bus = host reference %b\n" name
+        (List.length (Psim.pops r)) (List.length (Psim.pushes r)) (Psim.show_firings r) r.model_mismatch
+        ([%equal: string list] got expected))
+;;
+
 let () =
   match Sys.get_argv () with
   | [| _; "spi_ctl"; dir |] -> spi_ctl dir
   | [| _; "spi_tgt"; dir |] -> spi_tgt dir
   | [| _; "uart_rx"; dir |] -> uart_rx dir
   | [| _; "uart_tx"; dir |] -> uart_tx dir
+  | [| _; "i2c_ctl"; dir |] -> i2c_ctl dir
   | _ -> eprintf "usage: xcheck uart_rx <dir>\n"
 ;;
