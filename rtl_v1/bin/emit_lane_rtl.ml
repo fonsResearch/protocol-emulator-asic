@@ -27,10 +27,28 @@ let () =
       | "top_macro_mon_rom" -> [| false; false |]
       | _ -> [| false; true |]
     in
+    (* top_macro_mon_lib10 / _lib15: ROM-library area study (plan step 7): the 10 committed
+       protocol packages; lib15 adds five copies of the largest (SPI target, mode 0) as
+       stand-ins for the planned I2C and USB packages *)
+    let protocol10 =
+      Pemu_monitor_v1.(
+        let m = [ false, false; false, true; true, false; true, true ] in
+        [ Library_v1.uart_tx ~d:4 ~pin:0; Library_v1.uart_rx ~d:8 ~m:2 ~pin:1 ]
+        @ List.map m ~f:(fun (cpol, cpha) -> Library_v1.spi_ctl ~cpol ~cpha ~h:2)
+        @ List.map m ~f:(fun (cpol, cpha) -> Library_v1.spi_tgt ~cpol ~cpha ~h_min:3 ~g:6))
+    in
+    let study = String.chop_prefix mode ~prefix:"top_macro_mon_lib" in
     let lib =
       Pemu_monitor_v1.(
-        [ Compile.compile_exn (Library_v1.uart_tx ~d:3 ~pin:0)
-        ; Compile.compile_exn (Library_v1.uart_tx ~d:4 ~pin:1) ])
+        match study with
+        | Some "10" -> List.map protocol10 ~f:Compile.compile_exn
+        | Some "15" ->
+          List.map
+            (protocol10 @ List.init 5 ~f:(fun _ -> Library_v1.spi_tgt ~cpol:false ~cpha:false ~h_min:3 ~g:6))
+            ~f:Compile.compile_exn
+        | _ ->
+          [ Compile.compile_exn (Library_v1.uart_tx ~d:3 ~pin:0)
+          ; Compile.compile_exn (Library_v1.uart_tx ~d:4 ~pin:1) ])
     in
     let circ =
       CT.create_exn ~name:"pemu_core_v1m"

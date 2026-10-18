@@ -79,3 +79,21 @@ Random simulation of the invariant (`formal/bin/syminv.exe`) found no violation.
 ### Notes
 
 - A lane that runs within 2 cycles of reset release makes the SPI target monitor blame B5. The synchroniser still shows CS = 0, so the initial CS-high check fails. In the chip, RUN is set through the host port, which takes far longer than 2 cycles, so this is not reachable in normal use [estimate, to be confirmed with the interface proof].
+
+## ROM library area (2026-10-18, before I2C; user decision)
+
+The default core is lane 1 loadable, with 3 SRAM macros (not included in these areas). Yosys 0.69 synthesis plus ABC at IHP SG13CMOS5L, no wire load; emitted by `rtl_v1/bin/emit_lane_rtl.exe top_macro_mon[_lib10|_lib15]`.
+
+| ROM library | instr words | typ area (µm²) | slow area (µm²) | slow logic depth |
+|---|---|---|---|---|
+| 2 × UART TX (step-6 baseline) | 28 | 353,835 | 374,951 | 10.99 ns |
+| 10 committed packages (UART TX/RX, SPI ctl/tgt × 4 modes) | 646 | 395,717 | 417,200 | 10.64 ns |
+| 10 + 5 copies of SPI target m0 | 1,076 | 395,919 | - | - |
+
+- **ROM cost.** The 618 added words cost 41,882 µm² typ, about 68 µm² per 82-bit word (0.83 µm²/bit). This is measured, but packages that share structure (the SPI modes) lower the average.
+- **lib15 row.** It does not measure anything: identical package copies are merged by synthesis (+202 µm²).
+- **Projection for I2C (4 packages) and USB-LS TX (1) [estimate].** About 380-460 words at 68-100 µm²/word gives +26k to +46k µm², so 422k-442k µm² typ in total.
+- **Fit [estimate].** The budget assumes 60 % target density over core area minus the 3 macros (84,381 µm²), and 1.34× growth from Yosys to post-route (one published IHP tile; not measured for this design).
+  - 8×4 (primary): about 503k µm² Yosys-typ. lib10 uses 79 %, the projection 84-88 %.
+  - 6×4 (fallback): about 366k µm². The step-6 baseline already uses 97 %, and lib10 108 %. The 6×4 fallback does not fit with the protocol ROM library.
+- **Loadable store.** Loadable mode runs only 2 watchers (units 6-7), and the SPI packages use 5. So in a build without SPI in ROM, SPI would not be available at all.
