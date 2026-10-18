@@ -41,8 +41,8 @@ let%expect_test "library packages" =
     spi_tgt_v1_m1_h3_g6        units 5 instrs 36+18+28+2+3 preds 14/14 windows 6/7 codes 14/15
     spi_tgt_v1_m2_h3_g6        units 5 instrs 36+17+28+2+3 preds 14/14 windows 6/7 codes 14/15
     spi_tgt_v1_m3_h3_g6        units 5 instrs 36+18+28+2+3 preds 14/14 windows 6/7 codes 14/15
-    i2c_ctl_v1_l5_h5           units 3 instrs 5+8+120 preds 14/14 windows 6/7 codes 12/15
-    i2c_ctl_v1_l6_h4           units 3 instrs 5+8+120 preds 14/14 windows 7/7 codes 12/15
+    i2c_ctl_v1_l5_h5           units 3 instrs 5+8+123 preds 14/14 windows 6/7 codes 12/15
+    i2c_ctl_v1_l6_h4           units 3 instrs 5+8+123 preds 14/14 windows 7/7 codes 12/15
     i2c_tgt_v1_h29_l34         units 5 instrs 75+1+4+25+1 preds 13/14 windows 6/7 codes 13/15
     i2c_tgt_v1_h4_l9           units 5 instrs 75+1+4+25+1 preds 13/14 windows 6/7 codes 13/15
     |}]

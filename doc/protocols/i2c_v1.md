@@ -91,7 +91,7 @@ Each value is the UM10204 minimum divided by the step, rounded up. Then L + H â‰
   - Sr: SDA released and the SCL high phase observed for at least Tsu_sta steps before dSDA becomes 1;
   - STOP: dSDA = 1 through the low phase, then SCL released; at least Tsu_sto steps after SCL is observed high, dSDA becomes 0; after a STOP, no START for at least Tbuf steps.
   - Whether a transaction ends with STOP or with Sr is [C] for the NACK case (always STOP) and [O] for the r flag.
-- G5 Read data [C]: each pushed read byte has bit 7-k = SDA in the first step of the high phase of data cell k of that byte.
+- G5 Read data [C]: each pushed read byte has bit 7-k = SDA in the second step of the high phase of data cell k of that byte (D3). The status uses the ACK cells' SDA, also in the second high step.
 - G6 Status [C]: the status push equals 1 if the address ACK cell saw SDA = 1, 2 if a write-data ACK cell saw SDA = 1, else 0. It occurs after the last cell of the transaction and before the next START or Sr.
 - G7 Pops and pushes [C]: no pop between the START of a transaction and the first data cell of a data byte other than the pops listed in 2.1; no push other than the pushes of 2.2. The counts are [O].
 
@@ -191,6 +191,6 @@ Compiled resource use (`monitor_v1/test/test_library.ml`):
 
 | package | units | instrs | preds | windows | codes |
 |---|---|---|---|---|---|
-| i2c_ctl Sm | 3 | 5+8+120 | 14/14 | 6/7 | 12/15 |
-| i2c_ctl Fm | 3 | 5+8+120 | 14/14 | 7/7 | 12/15 |
+| i2c_ctl Sm | 3 | 5+8+123 | 14/14 | 6/7 | 12/15 |
+| i2c_ctl Fm | 3 | 5+8+123 | 14/14 | 7/7 | 12/15 |
 | i2c_tgt Sm/Fm | 5 | 75+1+4+25+1 | 13/14 | 6/7 | 13/15 |

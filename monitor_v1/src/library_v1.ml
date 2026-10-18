@@ -391,18 +391,29 @@ let i2c_ctl ~l ~h ~tsu ~thold =
     [ hold_until (stable "dsda") dscl (win 1 4095 ~else_:(fail 2)); expect ~when_:!!dsda sda ~else_:(blame 6) ]
   in
   let tx_cell ?clr bit = tx_head ?clr bit @ tx_rest in
+  (* read and ACK bits are taken in the second step of the high phase (D3: the lane's WTP
+     completes in the first high step, so its earliest read is one step later). SDA must be
+     stable from the first high step on (blame 7), so sampling at the end of that hold gives
+     the value of the second step whenever no blame has fired. *)
   let rx_cell k =
     [ await_idle ndscl
     ; await_idle scl
-    ; sample (7 - k) sda
     ; expect !!dsda ~else_:(fail 3)
     ; hold (stable "sda") ~for_:(h - 1) ~else_:(blame 7)
+    ; sample (7 - k) sda
     ; await_idle dscl
     ]
   in
-  (* ACK cell received by the controller: sample SDA into [b], branch on SDA (1 = NACK) *)
+  (* ACK cell received by the controller: SDA stable into the second high step, sampled into
+     [b] there, branch on it (1 = NACK) *)
   let ack_rx b ~nack ~ack =
-    [ await_idle ndscl; await_idle scl; sample b sda; expect !!dsda ~else_:(fail 3); if_ sda nack ack ]
+    [ await_idle ndscl
+    ; await_idle scl
+    ; expect !!dsda ~else_:(fail 3)
+    ; hold (stable "sda") ~for_:1 ~else_:(blame 7)
+    ; sample b sda
+    ; if_ sda nack ack
+    ]
   in
   let stuck = [ await_idle False ] in
   let write_loop =
