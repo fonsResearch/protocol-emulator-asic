@@ -17,7 +17,12 @@
    Host-stream assumptions (outside the monitor, package-specific) restrict the free host
    side: [rx_never_full] = the RX FIFO is never full; [pop_pcs] = the lane never executes a
    POP at one of these program addresses while the TX FIFO is empty (the host keeps a byte
-   ready for every frame, SPI target). *)
+   ready for every frame, SPI target).
+   [od_wired] (I2C): for these pins the pad is the wired-AND of the free environment input and
+   the lane's own pull (uio_oe and not uio_out, owned pins) in the same cycle, as on an
+   open-drain bus in silicon (the pad follows the output flop within the cycle; the
+   synchronisers sample it at the next edge). Without it the environment could show a line
+   high while the lane pulls it. *)
 open! Core
 open Hardcaml
 open Signal
@@ -62,7 +67,7 @@ type core_out =
   }
 
 (* The harness logic on given inputs. *)
-let core ?(rx_never_full = false) ?(pop_pcs = []) ~io ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () =
+let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ~io ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () =
   let clock = io.clock in
   let gs = Reg_spec.create ~clock () in
   let started = reg gs vdd -- "env_started" in
@@ -71,7 +76,7 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ~io ~mode ~prog ~contract ~own
   let sync2 x = reg spec (reg spec x) in
   let tick = io.tick
   and run = io.run
-  and uio_in = io.uio_in in
+  and uio_in = wire 8 -- "h_pad" in
   let words = Isa1.assemble prog in
   let blame_in = wire 1 in
   L.taps := [];
@@ -85,6 +90,7 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ~io ~mode ~prog ~contract ~own
   in
   let running = rst_sync_n &: run &: ~:(o.faulted) in
   let ownv = of_int ~width:8 own in
+  uio_in <== (io.uio_in &: ~:(o.uio_oe &: ~:(o.uio_out) &: ownv &: of_int ~width:8 od_wired));
   let pkg = Compile.compile_exn contract in
   let mo =
     S.of_package pkg
@@ -127,8 +133,8 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ~io ~mode ~prog ~contract ~own
   ; blame_seen; ok; running; rst_sync_n; tick; pc = o.pc; lane_taps = !L.taps }
 ;;
 
-let harness ?debug ?rx_never_full ?pop_pcs ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
-  let c = core ?rx_never_full ?pop_pcs ~io:(free_io ()) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () in
+let harness ?debug ?rx_never_full ?pop_pcs ?od_wired ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
+  let c = core ?rx_never_full ?pop_pcs ?od_wired ~io:(free_io ()) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () in
   Harness.bad_circuit ?debug ~dbg:c.dbg ~name c.bad
 ;;
 
@@ -369,6 +375,64 @@ let spi_all ?debug () =
      ])
 ;;
 
+(* ---- I2C (doc/protocols/i2c_v1.md) ---- *)
+let mutate_first prog ~at ~f =
+  let a = Array.of_list prog in
+  let nth i = if i >= 0 && i < Array.length a then Some a.(i) else None in
+  match Array.findi a ~f:(fun i _ -> at nth i) with
+  | Some (i, x) ->
+    a.(i) <- f x;
+    Array.to_list a
+  | None -> raise_s [%message "mutant site not found"]
+;;
+
+let is x = function Some y -> [%equal: Isa1.t] x y | None -> false
+
+(* target mutants (as in protocols_v1/test/test_i2c.ml) *)
+let i2c_tgt_noack =
+  mutate_first (P1.i2c_tgt ~addr:0x50) ~at:(fun n i -> is (Out 0x04) (n i) && is (Push Sr) (n (i + 1))) ~f:(fun _ -> Nop)
+;;
+
+let i2c_tgt_stretchhigh =
+  mutate_first (P1.i2c_tgt ~addr:0x50)
+    ~at:(fun n i -> is (Wtp (2, Low)) (n i) && match n (i + 1) with Some (Br (5, _)) -> true | _ -> false)
+    ~f:(fun _ -> Wtp (2, High))
+;;
+
+let i2c_tgt_noassume c =
+  { c with
+    Pemu_monitor_v1.Lang.watchers =
+      List.filter c.Pemu_monitor_v1.Lang.watchers ~f:(fun w -> List.mem [ "frame"; "high" ] w.wname ~equal:String.equal)
+  }
+;;
+
+let i2c_all ?debug () =
+  let fm = 6, 4, 3, 6 and sm = 5, 5, 5, 5 in
+  let ctl ?prog ?(wired = true) ~mode (l, h, tsu, thold) name =
+    let prog = Option.value prog ~default:(P1.i2c_ctl ~l ~h ~tsu ~thold) in
+    harness ?debug ~rx_never_full:true ~od_wired:(if wired then P1.i2c_own else 0) ~mode ~prog
+      ~contract:(Lib.i2c_ctl ~l ~h ~tsu ~thold) ~own:P1.i2c_own ~od:P1.i2c_od ~cfg:0 ~cfg2:0 ~name ()
+  in
+  let tfm = 8, 18, 8 and tsm = 59, 69, 59 in
+  let tgt ?(prog = P1.i2c_tgt ~addr:0x50) ?(contract = Fn.id) ~mode (h_min, l_min, hd) name =
+    harness ?debug ~rx_never_full:true ~od_wired:P1.i2c_own ~mode ~prog
+      ~contract:(contract (Lib.i2c_tgt ~h_min ~l_min ~hd)) ~own:P1.i2c_own ~od:P1.i2c_od ~cfg:0 ~cfg2:0 ~name ()
+  in
+  let l, h, tsu, thold = fm in
+  [ ctl ~mode:`U fm "a2_i2c_ctl_fm_u"
+  ; ctl ~mode:`U sm "a2_i2c_ctl_sm_u"
+  ; ctl ~mode:(`N1 Push_ok) fm "a2_i2c_ctl_fm_n1_cover_neg"
+  ; ctl ~prog:(P1.i2c_ctl ~l ~h:(h - 2) ~tsu ~thold) ~mode:`U fm "a2_i2c_ctl_fm_h2_neg"
+  ; ctl ~wired:false ~mode:`U fm "a2_i2c_ctl_fm_nowired_neg"
+  ; tgt ~mode:`U tfm "a2_i2c_tgt_fm_u"
+  ; tgt ~mode:`U tsm "a2_i2c_tgt_sm_u"
+  ; tgt ~mode:(`N1 Push_ok) tfm "a2_i2c_tgt_fm_n1_cover_neg"
+  ; tgt ~prog:i2c_tgt_noack ~mode:`U tfm "a2_i2c_tgt_fm_noack_neg"
+  ; tgt ~prog:i2c_tgt_stretchhigh ~mode:`U tfm "a2_i2c_tgt_fm_stretchhigh_neg"
+  ; tgt ~contract:i2c_tgt_noassume ~mode:`U tfm "a2_i2c_tgt_fm_noassume_neg"
+  ]
+;;
+
 let all ?debug () =
   let rx ?(prog = P1.uart_rx ~d:8 ~pin:1) ?(contract = Lib.uart_rx ~d:8 ~m:2 ~pin:1) ~mode name =
     harness ?debug ~rx_never_full:true ~mode ~prog ~contract ~own:0 ~od:0 ~cfg:0 ~cfg2:0 ~name ()
@@ -385,4 +449,5 @@ let all ?debug () =
   ; tx ~prog:(P1.uart_tx_bad_start ~d:4) ~mode:`U "a2_uart_tx_d4_badstart_neg"
   ]
   @ spi_all ?debug ()
+  @ i2c_all ?debug ()
 ;;

@@ -49,8 +49,8 @@ let%expect_test "I2C controller program size" =
   List.iter [ "Sm", sm; "Fm", fm ] ~f:(fun (n, (_, l, h, tsu, thold)) ->
     printf "%s %d instructions\n" n (List.length (P1.i2c_ctl ~l ~h ~tsu ~thold)));
   [%expect {|
-    Sm 162 instructions
-    Fm 166 instructions
+    Sm 168 instructions
+    Fm 168 instructions
     |}]
 ;;
 
@@ -106,7 +106,7 @@ let%expect_test "I2C controller Fm: target data delay sweep (step = 15 cycles, l
     dd  80: pushes 00 00 C3 5A 00 01 01 firings [] U true
     dd  90: pushes 00 00 C3 5A 00 01 01 firings [] U true
     dd 100: pushes 00 00 C3 5A 00 01 01 firings [] U true
-    dd 120: pushes 01 01 01 01 01 firings [B77@1921] U true
+    dd 120: pushes 00 00 E1 AD 00 01 01 firings [B77@13801] U true
     |}]
 ;;
 
@@ -116,7 +116,7 @@ let%expect_test "I2C controller Fm: target misbehaviour (A1 ACK at SCL rise, A2 
   [%expect {|
     bus: S A50W+ W11+ W22+ W33+ P S A50W+ W05+ Sr A50R+ RC3+ R5A- P S A51R- P S A52W- P
     pushes: 00 00 C3 5A 00 01 01
-    firings [B76@12601] U true model_mismatch 0 steps 7999
+    firings [B76@12886] U true model_mismatch 0 steps 7999
     change 8 cycles after rise:
     bus: S A50W+ W11+ W22+ W33+ P S A50W+ W05+ Sr A50R+ RC3+ R5A- P S A51R- P S A52W- P
     pushes: 00 00 C3 5A 00 01 01
@@ -128,7 +128,7 @@ let%expect_test "I2C controller Fm: target misbehaviour (A1 ACK at SCL rise, A2 
     change 35 cycles after rise:
     bus: S A50W+ W11+ W22+ W33+ P S A50W+ W05+ Sr A50R+ RC3+ R5A- P S A51R- P S A52W- P
     pushes: 00 00 E1 6D 00 01 01
-    firings [B77@13501] U true model_mismatch 0 steps 7999
+    firings [B77@13801] U true model_mismatch 0 steps 7999
     |}]
 ;;
 
@@ -146,11 +146,11 @@ let%expect_test "I2C controller Fm: firmware timing mutants (contract at nominal
         (match f with [] -> "none" | (c, ro, k) :: _ -> sprintf "%s%02X@%d" (match ro with Fail -> "F" | Blame -> "B") k c)
         (u_ok r));
   [%expect {|
-    l-1      first F52@556 U false
+    l-1      first F52@13336 U false
     h-1      first none U true
-    h-2      first F53@616 U false
-    tsu-1    first F61@6976 U false
-    thold-1  first F62@451 U false
+    h-2      first F53@676 U false
+    tsu-1    first F61@7126 U false
+    thold-1  first F62@496 U false
     |}]
 ;;
 
@@ -186,7 +186,7 @@ let run_tgt ?(txs = tgt_txs) ?(host = [ 0x50; 0xA1; 0x36; 0x0E ]) ?tx_times ?(t_
 
 let%expect_test "I2C target program size" =
   printf "%d instructions\n" (List.length (P1.i2c_tgt ~addr:0x50));
-  [%expect {| 141 instructions |}]
+  [%expect {| 142 instructions |}]
 ;;
 
 let%expect_test "I2C target Fm, controller peer at UM10204 minima, P = 7, 3, 1" =
@@ -334,7 +334,7 @@ let%expect_test "I2C target P=3, Fm: firmware mutants (read bytes late, so the t
       pushes: 11 22 33 44 firings [F61@7781,B72@7785,F55@23029] U false mm 0
     read data changes in high phase: P=3 (h_min 8 l_min 18 hd 8) done true
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ R43 R6C P S A51R- RFF P S A52W- WAA- P S A50R+ R1C P
-      pushes: 11 22 33 44 firings [F61@15041,B82@15061,F51@15137] U false mm 0
+      pushes: 11 22 33 44 firings [F61@15045,B82@15061,F51@15137] U false mm 0
     ACKs address 0x51 [O]: P=3 (h_min 8 l_min 18 hd 8) done true
       bus: S A50W- W11- W22- W33- P S A50W- W44- Sr A50R- RFF RFF P S A51R+ RA1 P S A52W- WAA- P S A50R- RFF P
       pushes:  firings [] U true mm 0

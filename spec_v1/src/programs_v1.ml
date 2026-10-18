@@ -144,12 +144,10 @@ let i2c_own = 0x0C
 let i2c_od = 0x0C
 
 (* Controller, timing (l, h, tsu, thold) in steps as in Library_v1.i2c_ctl. Registers: r0 = N
-   (bytes left), r1 = pin image for SCL toggles that keep SDA, r2 = copy of the address byte,
+   (bytes left), r1 = saved data byte while sr holds an SCL constant, r2 = copy of the address byte,
    then the status, r3 = repeated-start flag, sr = shift register, lc = bit counter.
    Step accounting (an instruction in step s changes pins from step s+1):
-   - write bit: low phase = PIN, MOV r1 pins, ADDI, MOV out (+ DJNZ and waits(l-5)) = 5 + (l-5)
-     steps; high phase: WTP completes in the first high step s, waits(h-2), ADDI, MOV out:
-     the pull is visible in s+h+1;
+   - write bit: see send_bits (SCL toggled by PIN 2 on a constant; no pin read-back);
    - read bit: high: WTP (s), PIN In_msb (s+1, the contract's sampling step, D3), waits(h-2),
      OUT pull; low: waits(l-2), DJNZ, OUT release;
    - ACK received: OUT release SDA, waits, OUT release SCL, WTP (s), PIN In_lsb (s+1),
@@ -157,8 +155,8 @@ let i2c_od = 0x0C
    - conditions: Sr/STOP visible tsu steps after the first high step; status PUSH two steps
      after the condition; SCL pulled thold steps after START/Sr. *)
 let i2c_ctl ~l ~h ~tsu ~thold =
-  let m = Int.max 0 (l - 5) in
-  let ka = Int.max 0 (l - m - 3) in
+  let m2 = Int.max 0 (l - 6) in
+  let ka = Int.max 0 (l - 3) in
   let hdr =
     (* pops a (copy in r2) and c; r3 = c[7] via 7 LSB-first shifts on unowned pin 7; r0 = c[6:0] *)
     [ ins (Pop Sr); ins (Mov (M R2, S Sr)); ins (Pop R0); ins (Mov (M Sr, S R0)) ]
@@ -167,18 +165,23 @@ let i2c_ctl ~l ~h ~tsu ~thold =
       ; ins (Mov (M R0, S Sr)); ins (Mov (M Sr, S R2)) ]
   in
   let send_bits lbl =
-    (* sr MSB first; entered in a low phase with SCL pulled for >= 1 step *)
-    [ ins (Ldi (L Lc, 8)) ] @ waits m
+    (* sr MSB first; entered in a low phase with SCL pulled for >= 1 step. SCL is toggled with
+       PIN 2 on a constant in sr (data saved in r1), so SDA is never rewritten from the line
+       (D9: a read-back through the synchroniser is stale at fast ticks and copies a target's
+       late ACK release into dSDA). Low phase: MOV sr r1, waits, DJNZ, PIN 3, MOV r1 sr, LDI,
+       PIN 2 = 6 + m' steps; high phase: WTP (s), waits(h-2), LDI, PIN 2 (pull visible s+h+1). *)
+    (* first cell: pull, LDI, waits, PIN 3, MOV, LDI, PIN 2 = 4 + waits steps low *)
+    [ ins (Ldi (L Lc, 8)) ] @ waits (Int.max 0 (l - 4))
     @ [ Lbl lbl
       ; ins (Pin (3, Out_msb))
-      ; ins (Mov (M R1, Pins))
-      ; ins (Addi (R1, 0x04))
-      ; ins (Mov (Out_reg, S R1))
+      ; ins (Mov (M R1, S Sr))
+      ; ins (Ldi (L Sr, 0xFF))
+      ; ins (Pin (2, Out_msb))
       ; ins (Wtp (2, High))
       ]
     @ waits (h - 2)
-    @ [ ins (Addi (R1, 0xFC)); ins (Mov (Out_reg, S R1)) ]
-    @ waits m
+    @ [ ins (Ldi (L Sr, 0x00)); ins (Pin (2, Out_msb)); ins (Mov (M Sr, S R1)) ]
+    @ waits m2
     @ [ I (fun f -> Djnz (f lbl)) ]
   in
   let ack_rx =
@@ -196,7 +199,10 @@ let i2c_ctl ~l ~h ~tsu ~thold =
   asm
     ([ ins (Out 0x0C) ] @ waits thold
      @ [ Lbl "idle" ] @ hdr
-     @ [ Lbl "start"; ins (Out 0x04) ] @ waits (thold - 1) @ [ ins (Out 0x00) ]
+     (* START only after SCL has been observed high for tsu steps (D8: the environment may
+        hold SCL low at reset or after a STOP; G4 measures the setup from the first high step) *)
+     @ [ Lbl "start"; ins (Wtp (2, High)) ] @ waits (tsu - 1)
+     @ [ ins (Out 0x04) ] @ waits (thold - 1) @ [ ins (Out 0x00) ]
      @ [ Lbl "addr" ] @ send_bits "ab" @ ack_rx
      @ [ br 2 "addr_nack" ] @ rw_is_write
      @ [ ins (Ldi (L R2, 0)); br 1 "write"; jmp "read" ]
@@ -235,7 +241,7 @@ let i2c_ctl ~l ~h ~tsu ~thold =
    from b while SCL is still high afterwards is a condition (SCL cannot fall and rise again
    within l_min). Period 6 steps; a condition is recognised only if SCL stays high for about
    7 steps after the SDA edge (the hd margin, measured in test_i2c.ml).
-   Registers: r0 = config, r1 = pin image (stretch release), sr = data / poll history,
+   Registers: r0 = config, r1 = saved data (stretch release), sr = data / poll history,
    lc = cell counter. to = 1 only inside poll loops. *)
 let i2c_tgt ~addr =
   let br c lbl = I (fun f -> Br (c, f lbl)) and jmp lbl = I (fun f -> Jmp (f lbl)) in
@@ -284,6 +290,7 @@ let i2c_tgt ~addr =
        ; ins (Wtp (2, High)); ins (Wtp (2, Low)); ins (Out 0x0C)
        ; ins (Wtp (2, High)); ins (Pin (3, In_lsb)); ins (Cmp (C Sr, 0)); br 1 "rd_next"; jmp "nad_first"
        ; Lbl "rd_stretch"; ins (Out 0x00); ins (Pop Sr); ins (Pin (3, Out_msb))
-       ; ins (Mov (M R1, Pins)); ins (Addi (R1, 0x04)); ins (Mov (Out_reg, S R1)); jmp "rd_bits" ]
+         (* release SCL with PIN 2 on a constant, data saved in r1 (D9: no pin read-back) *)
+       ; ins (Mov (M R1, S Sr)); ins (Ldi (L Sr, 0xFF)); ins (Pin (2, Out_msb)); ins (Mov (M Sr, S R1)); jmp "rd_bits" ]
      @ [ Lbl "halt"; ins Halt ])
 ;;
