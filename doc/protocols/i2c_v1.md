@@ -67,7 +67,7 @@ Host-stream assumptions (outside the monitor): N ≥ 1; the data bytes of a writ
 | package | P | step | L (low) | H (high) | Tsta (hold S) | Tsu_sta | Tsu_sto | Tbuf |
 |---|---|---|---|---|---|---|---|---|
 | `i2c_ctl_sm` | 59 | 1.000 µs | 5 | 5 | 5 | 5 | 5 | 5 |
-| `i2c_ctl_fm` | 14 | 0.250 µs | 6 | 4 | 3 | 3 | 3 | 6 |
+| `i2c_ctl_fm` | 14 | 0.250 µs | 6 | 4 | 6 | 3 | 3 | 6 |
 
 Each value is the UM10204 minimum divided by the step, rounded up. Then L + H ≥ 1/fSCL,max: Sm 10 µs, Fm 2.5 µs. Real time also includes the per-bit firmware overhead (low phase) and the line rise time, which only lengthen the phases.
 
@@ -150,3 +150,47 @@ Each value is the UM10204 minimum in steps, minus one step for synchroniser and 
   - dSCL = 1 only in low phases, starting within 2 steps of the observed SCL fall;
   - only while a read byte is not yet available (between the fall and the pop of that byte);
   - dSCL = 0 again within 2 steps after the pop.
+
+## 4. Amendments made while writing the contracts (2026-10-18, before any firmware)
+
+These amendments keep the controller contract able to track transactions (the monitor cannot count N) and fit monitor ISA v1. The budget is 14 predicates, 7 windows and 15 codes per package. Branch conditions and samples must be plain predicates of observables, and each consuming statement can carry at most one mark, sample, match, expect and branch.
+
+Controller:
+1. **Stream order** [C].
+   - The header bytes a and c are the first two pops after the end condition (STOP or Sr) of the previous transaction, or after reset. From idle they are popped before the START; after an Sr, during the hold time that follows it.
+   - Data bytes of a write NACKed at the address or a data byte are popped and discarded before the STOP.
+   - The status byte is pushed in steps E+2 .. E+8, where E is the step of the end condition, and before the next header pops.
+   - Write data byte k is popped after the SCL pull that ends the preceding ACK cell, and before its first cell's release.
+   - A read byte is pushed within 64 steps after the SCL pull that ends its 8th cell, and before the first high step of its ACK cell.
+2. **Hold times.** Tsta and Tbuf share one value per package, the larger (Sm 5, Fm 6). Fm Tsta is therefore stricter than UM10204 (1.5 µs instead of 0.6 µs). One check then covers both: after a START/Sr, SCL stays released and SDA pulled; after a STOP, no START.
+3. **Setup-time check.** The check (Tsu_sta = Tsu_sto = tsu) also applies to every SCL pull. This is redundant because tsu ≤ H.
+4. **Bounds.**
+   - Every high phase ends within 4095 steps of its first step [C].
+   - The first START comes no earlier than Tbuf steps after the lane starts [C], via the setup-time check.
+5. **Now [O]** (predicate budget):
+   - "START only from bus idle" (a requirement on the line, which a fail check may not constrain);
+   - A3 (SCL ownership in high phases);
+   - A4 (idle at start);
+   - stability of a target-driven ACK during the high phase.
+
+   A2 stays [C] for read data cells.
+
+Target:
+6. **[O]:**
+   - ACK iff the address matches the config byte (no register-to-register comparison, and branch conditions cannot read the register);
+   - passivity before the config pop;
+   - stretching only while a read byte is pending, and the 2-step stretch response.
+7. **[C], one invariant:** while SCL is observed high, the target neither changes dSDA nor starts pulling SCL. This covers ACK and data stability in high phases, and the part of H5 that protects the bus.
+8. **Ordering and check placement.**
+   - A received byte is pushed before the first high step of its ACK cell.
+   - B4 is checked in the second step of each read high phase.
+   - B5 checks only SCL ([O] for SDA).
+   - B3: SDA may change during a high phase only in the first cell of a byte. A high phase in the middle of a byte lasts at most 4095 steps (assumption). hd also applies after Sr.
+
+Compiled resource use (`monitor_v1/test/test_library.ml`):
+
+| package | units | instrs | preds | windows | codes |
+|---|---|---|---|---|---|
+| i2c_ctl Sm | 3 | 5+8+120 | 14/14 | 6/7 | 12/15 |
+| i2c_ctl Fm | 3 | 5+8+120 | 14/14 | 7/7 | 12/15 |
+| i2c_tgt Sm/Fm | 5 | 75+1+4+25+1 | 13/14 | 6/7 | 13/15 |

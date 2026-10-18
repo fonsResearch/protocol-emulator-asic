@@ -318,3 +318,244 @@ let spi_tgt ~cpol ~cpha ~h_min ~g =
   ; watchers = [ ctl; mosi_ok; frame; drive; ready ]
   }
 ;;
+
+(* I2C (doc/protocols/i2c_v1.md). SCL uio2, SDA uio3, open-drain. Observables: dscl/dsda = the
+   chip pulls the line low (uio_oe), scl/sda = synchronised line values. A cell is a low phase
+   followed by a high phase; cells are tracked with level waits (release: dscl = 0; first
+   high step: scl = 1; end: dscl = 1). Written from the protocol document before firmware. *)
+let i2c_scl = 2
+let i2c_sda = 3
+
+(* Controller (section 2). Timing in steps: l (low), h (high), tsu (Tsu_sta = Tsu_sto,
+   tsu <= h), thold (Tsta = Tbuf). Branches test live observables (the compiler accepts no
+   register terms in branch conditions). Watchers:
+   [clock] G1, G2 (fail 1: dSDA changes in a pull or release step; 2: low phase < l;
+   3: high phase < h);
+   [cond] G4 (fail 1: condition (or pull) less than tsu steps after the high phase began;
+   2: SCL pulled, or a START, within thold steps of a START/Sr/STOP);
+   [frame] G3, G5, G6, G7 and A1, A2 (fail 1: address / write bit value; 2: dSDA changes in
+   a high phase; 3: SDA not released in a read or ACK-receive cell; 4: push missing (read
+   byte or status); 5: pushed byte differs (read data or status); blame 6: SDA low while
+   released in a controller-transmit cell; blame 7: SDA changes in a read high phase).
+   Register: byte1 = address byte a, then the current write data byte; byte0 = read data, or
+   status (bit0 address NACK, bit1 data NACK; bits cleared one per address cell and after
+   a read NACK). *)
+let i2c_ctl ~l ~h ~tsu ~thold =
+  if l < 2 || h < 2 || tsu < 1 || tsu > h || thold < 2 then raise_s [%message "i2c_ctl: bad timing"];
+  let dscl = v "dscl" and dsda = v "dsda" and scl = v "scl" and sda = v "sda" and push = v "push" in
+  let ndscl = !!dscl in
+  let cond_ev = changed "dsda" &&& ndscl in
+  let clock =
+    watcher
+      "clock"
+      ~base:0x50
+      [ loop
+          [ await_idle dscl
+          ; expect (stable "dsda") ~else_:(fail 1)
+          ; hold dscl ~for_:(l - 1) ~else_:(fail 2)
+          ; await_idle ndscl
+          ; expect (stable "dsda") ~else_:(fail 1)
+          ; await_idle scl
+          ; hold ndscl ~for_:h ~else_:(fail 3)
+          ]
+      ]
+  in
+  (* after a START/Sr (sampled dsda = 1): dSCL stays 0 and dSDA stays 1; after a STOP
+     (sampled 0): no START, i.e. (dsda and not dscl) stays 0 *)
+  let cond_hold = hold (eq_reg (dsda &&& ndscl) 0) ~for_:(thold - 1) ~else_:(fail 2) in
+  let cond =
+    watcher
+      "cond"
+      ~base:0x60
+      [ loop
+          [ await_idle ndscl
+          ; await_idle scl
+          ; mark 0
+          ; await_idle (cond_ev ||| dscl)
+          ; sample 0 dsda
+          ; expect (Elapsed_ge { mark = 0; t = tsu }) ~else_:(fail 1)
+          ; if_ dscl
+              [ skip 1 ]
+              [ cond_hold
+              ; if_ dsda [ skip 1 ] [ await_idle cond_ev; sample 0 dsda; cond_hold ]
+              ]
+          ]
+      ]
+  in
+  let tx_head ?clr bit =
+    [ await_idle ndscl; await_idle scl ]
+    @ (match clr with Some b -> [ sample b False ] | None -> [])
+    @ [ expect (eq_reg !!dsda bit) ~else_:(fail 1) ]
+  in
+  let tx_rest =
+    [ hold_until (stable "dsda") dscl (win 1 4095 ~else_:(fail 2)); expect ~when_:!!dsda sda ~else_:(blame 6) ]
+  in
+  let tx_cell ?clr bit = tx_head ?clr bit @ tx_rest in
+  let rx_cell k =
+    [ await_idle ndscl
+    ; await_idle scl
+    ; sample (7 - k) sda
+    ; expect !!dsda ~else_:(fail 3)
+    ; hold (stable "sda") ~for_:(h - 1) ~else_:(blame 7)
+    ; await_idle dscl
+    ]
+  in
+  (* ACK cell received by the controller: sample SDA into [b], branch on SDA (1 = NACK) *)
+  let ack_rx b ~nack ~ack =
+    [ await_idle ndscl; await_idle scl; sample b sda; expect !!dsda ~else_:(fail 3); if_ sda nack ack ]
+  in
+  let stuck = [ await_idle False ] in
+  let write_loop =
+    loop
+      ([ take_idle ~byte:1 Tx_pop ]
+       @ List.concat (List.init 8 ~f:(fun k -> tx_cell (15 - k)))
+       @ ack_rx 1 ~nack:stuck ~ack:[ await_idle dscl ])
+  in
+  let clear_byte0 = List.concat (List.init 8 ~f:(fun i -> [ skip 1; sample i False ])) in
+  let s_hold = hold_until (stable "dsda") dscl (win 1 4095 ~else_:(fail 2)) in
+  let read_loop =
+    loop
+      (List.concat (List.init 8 ~f:rx_cell)
+       @ [ await push (win 1 64 ~else_:(fail 4)); match_rx ~else_:(fail 5) ]
+       @ [ await_idle ndscl; await_idle scl; if_ dsda [ s_hold ] ([ s_hold ] @ clear_byte0 @ stuck) ])
+  in
+  let after_addr ~loop_ = tx_rest @ ack_rx 0 ~nack:stuck ~ack:[ await_idle dscl; loop_ ] in
+  let transaction =
+    [ await_idle dscl ]
+    @ List.concat (List.init 7 ~f:(fun k -> tx_cell ~clr:k (15 - k)))
+    @ tx_head ~clr:7 8
+    @ [ if_ sda (after_addr ~loop_:read_loop) (after_addr ~loop_:write_loop) ]
+  in
+  let header = [ take_idle ~byte:1 Tx_pop; await_idle (v "pop") ] in
+  let status = [ await push (win 1 7 ~else_:(fail 4)); match_rx ~else_:(fail 5) ] in
+  let frame =
+    watcher
+      "frame"
+      ~base:0x70
+      (header
+       @ [ await_idle cond_ev
+         ; loop
+             [ guard
+                 cond_ev
+                 transaction
+                 ~on:[ skip 1; if_ dsda (status @ header) (status @ header @ [ await_idle cond_ev ]) ]
+             ]
+         ])
+  in
+  { name = sprintf "i2c_ctl_v1_l%d_h%d" l h
+  ; observables =
+      [ "dscl", Uio_oe i2c_scl; "dsda", Uio_oe i2c_sda; "scl", Uio_in i2c_scl; "sda", Uio_in i2c_sda
+      ; "pop", Tx_pop_ev; "push", Rx_push_ev ]
+  ; watchers = [ clock; cond; frame ]
+  }
+;;
+
+(* Target (section 3). h_min, l_min, hd in steps (controller timing assumption). Cells are
+   keyed on the SCL line. Watchers:
+   [frame] H2-H4, B4 (fail 1: target drives a line in a cell it must not (address cells,
+   write data cells, read ACK cell); 2: target drives while not addressed; 3: dSDA changes
+   in a high phase; 4: written byte not ACKed; 5: read bit value; 6: push missing;
+   7: pushed byte differs; blame 8: SDA low while the target releases it in a read cell);
+   [stretch] H5 part (fail 1: the target starts pulling SCL while SCL is high);
+   [timing] B1 (blame 1: low phase < l_min; 2: high phase < h_min);
+   [bytes] B2/B3 and hd (blame 1: SDA changes in a high phase other than the first cell of
+   a byte; 2: SCL falls within hd steps of a START/Sr);
+   [idle] B5 (blame 1: SCL low in the first 4 steps).
+   Not checked on chip [O]: ACK iff the address matches the config byte (the language has no
+   register-to-register comparison and branch conditions cannot read the register), that
+   stretching happens only while a read byte is pending, the 2-step stretch response.
+   Register: byte1 = config byte (unused by the checks), byte0 = write data / read data. *)
+let i2c_tgt ~h_min ~l_min ~hd =
+  if h_min < 2 || l_min < 2 || hd < 2 then raise_s [%message "i2c_tgt: bad timing"];
+  let dsda = v "dsda" and dscl = v "dscl" and scl = v "scl" and sda = v "sda" and push = v "push" in
+  let nscl = !!scl in
+  let passive = !!dsda &&& !!dscl in
+  let start = fall "sda" &&& scl in
+  let cond_env = changed "sda" &&& scl in
+  let stuck = [ loop [ hold passive ~for_:4095 ~else_:(fail 2) ] ] in
+  let pcell = [ await_idle nscl; await_idle scl; expect passive ~else_:(fail 1) ] in
+  let rx_cell k = [ await_idle nscl; await_idle scl; sample (7 - k) sda; expect passive ~else_:(fail 1) ] in
+  let write_bytes =
+    loop
+      (List.concat (List.init 8 ~f:rx_cell)
+       @ [ await push (win 1 4095 ~else_:(fail 6)); match_rx ~else_:(fail 7) ]
+       @ [ await_idle nscl; await_idle scl; expect dsda ~else_:(fail 4) ])
+  in
+  let tx_cell k =
+    [ await_idle nscl
+    ; await_idle scl
+    ; expect (eq_reg !!dsda (7 - k)) ~else_:(fail 5)
+    ; skip 1
+    ; expect ~when_:!!dsda sda ~else_:(blame 8)
+    ]
+  in
+  let read_bytes =
+    loop
+      ([ take_idle Tx_pop ]
+       @ List.concat (List.init 8 ~f:tx_cell)
+       @ [ await_idle nscl; await_idle scl; expect passive ~else_:(fail 1); if_ sda stuck [ await_idle nscl ] ])
+  in
+  let ack_then body = [ await_idle nscl; await_idle scl; if_ dsda [ body ] stuck ] in
+  let transaction =
+    List.concat (List.init 7 ~f:(fun _ -> pcell))
+    @ pcell
+    @ [ if_ sda (ack_then read_bytes) (ack_then write_bytes) ]
+  in
+  let frame =
+    watcher
+      "frame"
+      ~base:0x50
+      [ take_idle ~byte:1 Tx_pop
+      ; await_idle start
+      ; loop [ guard cond_env transaction ~on:[ skip 1; if_ sda [ await_idle start ] [ skip 1 ] ] ]
+      ]
+  in
+  (* while SCL is high the target neither changes dSDA nor starts pulling SCL (it never
+     generates START/STOP); replaces per-cell stability checks *)
+  let stretch =
+    watcher
+      "high"
+      ~base:0x60
+      [ loop [ hold ~when_:scl (stable "dsda" &&& !!(rise "dscl")) ~for_:4095 ~else_:(fail 1) ] ]
+  in
+  let timing =
+    watcher
+      "timing"
+      ~base:0x70
+      [ loop
+          [ await_idle nscl
+          ; hold nscl ~for_:(l_min - 1) ~else_:(blame 1)
+          ; await_idle scl
+          ; hold scl ~for_:(h_min - 1) ~else_:(blame 2)
+          ]
+      ]
+  in
+  let bytes =
+    watcher
+      "bytes"
+      ~base:0x80
+      [ await_idle start
+      ; hold scl ~for_:(hd - 1) ~else_:(blame 2)
+      ; loop
+          [ (* first cell of a byte: a condition may occur in its high phase *)
+            await_idle nscl
+          ; await_idle scl
+          ; await_idle (changed "sda" ||| nscl)
+          ; if_ nscl
+              (List.concat
+                 (List.init 8 ~f:(fun _ ->
+                    [ await_idle scl; hold_until (stable "sda") nscl (win 1 4095 ~else_:(blame 1)) ])))
+              [ skip 1
+              ; if_ sda [ await_idle start; hold scl ~for_:(hd - 1) ~else_:(blame 2) ] [ hold scl ~for_:(hd - 2) ~else_:(blame 2) ]
+              ]
+          ]
+      ]
+  in
+  let idle = watcher "idle" ~base:0x90 [ hold scl ~for_:4 ~else_:(blame 1) ] in
+  { name = sprintf "i2c_tgt_v1_h%d_l%d" h_min l_min
+  ; observables =
+      [ "dscl", Uio_oe i2c_scl; "dsda", Uio_oe i2c_sda; "scl", Uio_in i2c_scl; "sda", Uio_in i2c_sda
+      ; "pop", Tx_pop_ev; "push", Rx_push_ev ]
+  ; watchers = [ frame; stretch; timing; bytes; idle ]
+  }
+;;
