@@ -36,3 +36,58 @@ let uart_tx ~d ~pin =
   ; watchers = [ frame; one_pop ]
   }
 ;;
+
+(* UART 8N1 RX on input pin [pin] (doc/protocols/uart_v1.md section 4), d steps per bit,
+   tolerance m steps (d >= 2m + 2). s0 = the falling-edge step that starts a frame.
+   Watcher [sender] (assumption, blame): the line is constant in each bit's core
+   s0 + k d + m .. s0 + (k+1) d - 1 - m; start core low, stop core high.
+   Watcher [receiver] (guarantee, fail): one push per frame, in s0 + 9d .. s0 + 10d - 1 - m,
+   whose bit i equals the line at s0 + (i+1) d + d/2; no push before that or between frames.
+   Written from the protocol document before the firmware (user decision: procedural
+   isolation). *)
+let uart_rx ~d ~m ~pin =
+  if d < (2 * m) + 2 || m < 1 then raise_s [%message "uart_rx: need m >= 1, d >= 2m + 2" (d : int) (m : int)];
+  let rx = v "rx" in
+  let push = v "push" in
+  let skip_n n = if n > 0 then [ skip n ] else [] in
+  let sender =
+    watcher
+      "sender"
+      ~base:0x30
+      [ loop
+          (List.concat
+             [ [ await_idle (fall "rx") ]
+             ; skip_n (m - 1)
+             ; [ hold !!rx ~for_:(d - (2 * m)) ~else_:(blame 1) ]
+             ; [ repeat
+                   8
+                   [ skip ((2 * m) + 1); hold (stable "rx") ~for_:(d - (2 * m) - 1) ~else_:(blame 2) ]
+               ]
+             ; [ skip (2 * m); hold rx ~for_:(d - (2 * m)) ~else_:(blame 3) ]
+             ])
+      ]
+  in
+  let c = d / 2 in
+  let receiver =
+    watcher
+      "receiver"
+      ~base:0x40
+      [ loop
+          (List.concat
+             [ [ guard push [ await_idle (fall "rx") ] ~on:[ hold False ~for_:1 ~else_:(fail 1) ] ]
+             ; [ hold !!push ~for_:(d + c) ~else_:(fail 2); sample 0 rx ]
+             ; List.concat
+                 (List.init 7 ~f:(fun i ->
+                    [ hold !!push ~for_:d ~else_:(fail (3 + i)); sample (i + 1) rx ]))
+             ; [ await push
+                   (win ~early:(fail 10) (d - c) ((2 * d) - 1 - m - c) ~else_:(fail 11))
+               ; match_rx ~else_:(fail 12)
+               ]
+             ])
+      ]
+  in
+  { name = sprintf "uart_rx_v1_d%d_m%d_p%d" d m pin
+  ; observables = [ "rx", Uio_in pin; "push", Rx_push_ev ]
+  ; watchers = [ sender; receiver ]
+  }
+;;
