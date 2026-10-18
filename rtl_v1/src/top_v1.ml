@@ -1,7 +1,11 @@
 (* Core v1: host SPI target port (interface v1 section 4), register block with per-lane
    loaders (sections 5, 6), two driver lanes with prescalers, pin combination (section 2).
-   The monitor engine and verdict block (section 7) are not present yet: fail = blame = 0 and
-   blame_in = 0 for both lanes.
+   Monitor engine and verdict block (section 7): present when a package library [?lib] is
+   given (Pemu_monitor_v1.Mon_engine, registers 0x40-0x7F). Then: blame_in of lane L is the
+   engine's registered blame of lane L; RUN of a lane with an enabled package is refused
+   unless P >= 7 (assumption T8 of the time-multiplexed engine), shown in FLAGS bit 4;
+   STATUS bits 6/7 and uo_out[1]/[2] carry fail/blame; CTRL bit4 clears the verdict.
+   Without [?lib]: fail = blame = 0 and blame_in = 0, as in core v1.
 
    Clarifications implemented here (doc/CHANGES.md, interface v1.0.1):
    - a read value is sampled (peeked, no side effect) in the cycle after the last rising SCK
@@ -158,6 +162,7 @@ let lane_regs
     ~other_own
     ~running
     ~(st : lane_status)
+    ?(refused = gnd)
     ()
   =
   let open Always in
@@ -229,7 +234,7 @@ let lane_regs
         ; when_ (bit spi.wdata 3) [ dropped <-- gnd ]
         ]
     ];
-  let flags = zero 4 @: dropped.value @: loaded.value @: unf.value @: ovf.value in
+  let flags = zero 3 @: refused @: dropped.value @: loaded.value @: unf.value @: ovf.value in
   let read o =
     mux
       o
@@ -260,8 +265,9 @@ let lane_regs
 let is_port a =
   let off = select a 3 0
   and win = select a 6 4 in
-  ((win ==:. 1) |: (win ==:. 2))
-  &: ((off ==:. off_prog_data) |: (off ==:. off_txf) |: (off ==:. off_rxf))
+  (((win ==:. 1) |: (win ==:. 2))
+   &: ((off ==:. off_prog_data) |: (off ==:. off_txf) |: (off ==:. off_rxf)))
+  |: Pemu_monitor_v1.Mon_engine.is_port a
 ;;
 
 type debug =
@@ -272,7 +278,7 @@ type debug =
       (* per lane: uid ranges of the signals built by its prescaler and its Lane_rtl.create *)
   }
 
-let create_with_debug ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
+let create_with_debug ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
   let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
   let sync x = reg spec (reg spec x) in
   let s_ui = sync (select i.ui_in 2 0) -- "s2_ui"
@@ -294,8 +300,10 @@ let create_with_debug ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
   in
   let own_w = Array.init 2 ~f:(fun _ -> wire 8) in
   let loaded_w = Array.init 2 ~f:(fun _ -> wire 1) in
+  (* T8 admission (engine only): a lane with an enabled package runs only if P >= 7 *)
+  let admit_w = Array.init 2 ~f:(fun _ -> wire 1) in
   let running l =
-    i.rst_sync_n &: bit run_bits l &: loaded_w.(l) &: ~:(st.(l).faulted)
+    i.rst_sync_n &: bit run_bits l &: admit_w.(l) &: loaded_w.(l) &: ~:(st.(l).faulted)
   in
   let ctl =
     Array.init 2 ~f:(fun l ->
@@ -308,11 +316,13 @@ let create_with_debug ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
         ~other_own:own_w.(1 - l)
         ~running:(running l)
         ~st:st.(l)
+        ~refused:(bit run_bits l &: ~:(admit_w.(l)))
         ())
   in
   Array.iteri ctl ~f:(fun l c ->
     own_w.(l) <== c.own;
     loaded_w.(l) <== c.loaded);
+  let blame_w = Array.init 2 ~f:(fun _ -> wire 1) in
   let mark () = Signal.Type.Uid.to_int (Signal.uid (wire 1)) in
   let lane_uids = Array.create ~len:2 [] in
   let lane_in =
@@ -326,7 +336,7 @@ let create_with_debug ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
       { Lane_rtl.I.clock = i.clock
       ; rst_sync_n = i.rst_sync_n
       ; tick
-      ; run = c.run
+      ; run = c.run &: admit_w.(l)
       ; loaded = c.loaded
       ; len = c.len
       ; own = c.own
@@ -337,7 +347,7 @@ let create_with_debug ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
       ; tx_push = c.tx_push
       ; tx_wdata = c.tx_wdata
       ; rx_pop = c.rx_pop
-      ; blame_in = gnd
+      ; blame_in = blame_w.(l)
       ; clear_fault = c.clear_fault
       ; imem_we = c.imem_we
       ; imem_waddr = c.imem_waddr
@@ -360,9 +370,42 @@ let create_with_debug ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
     s.rx_level <== o.rx_level;
     s.rx_head <== o.rx_head;
     s.wack <== o.imem_wack);
+  (* monitor engine *)
+  let uio_out = lane_out.(0).uio_out |: lane_out.(1).uio_out
+  and uio_oe = lane_out.(0).uio_oe |: lane_out.(1).uio_oe in
+  let eng =
+    Option.map lib ~f:(fun lib ->
+      let lanes =
+        Array.init 2 ~f:(fun l ->
+          let o = lane_out.(l) in
+          let own = ctl.(l).own in
+          (* lane L's xo bits in their uo_out positions (lane 0: [4:3], lane 1: [6:5]) *)
+          let uo_view =
+            if l = 0 then zero 3 @: o.xo @: zero 3 else zero 1 @: o.xo @: zero 5
+          in
+          { Pemu_monitor_v1.Mon_engine.running = running l; tick = lane_in.(l).tick
+          ; uo_out = uo_view; uio_out = o.uio_out &: own; uio_oe = o.uio_oe &: own
+          ; pop_ev = o.pop_ev; pop_data = o.pop_data; push_ev = o.push_ev
+          ; push_data = o.push_data })
+      in
+      Pemu_monitor_v1.Mon_engine.create ~clock:i.clock ~rst_sync_n:i.rst_sync_n ~lib
+        ~host:{ wr = spi.wr; addr = spi.addr; wdata = spi.wdata
+              ; clr_verdict = ctrl_wr &: bit spi.wdata 4 }
+        ~lanes ~ui_in:i.ui_in ~uio_in:i.uio_in)
+  in
+  let fail, blame =
+    match eng with Some e -> e.fail, e.blame | None -> gnd, gnd
+  in
+  Array.iteri blame_w ~f:(fun l w ->
+    w <== (match eng with Some e -> e.blame_to_lane.(l) | None -> gnd));
+  Array.iteri admit_w ~f:(fun l w ->
+    w
+    <== (match eng with
+         | Some e -> ~:(e.pkg_en.(l)) |: (ctl.(l).p >=:. 7)
+         | None -> vdd));
   (* read mux *)
   let status =
-    gnd @: gnd @: lane_out.(1).faulted @: lane_out.(0).faulted @: ctl.(1).loaded
+    blame @: fail @: lane_out.(1).faulted @: lane_out.(0).faulted @: ctl.(1).loaded
     @: ctl.(0).loaded @: running 1 @: running 0
   in
   let fault_reg = uresize lane_out.(1).cause 4 @: uresize lane_out.(0).cause 4 in
@@ -377,16 +420,19 @@ let create_with_debug ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
         (mux2
            (win ==:. 1)
            (ctl.(0).read (select ra 3 0))
-           (mux2 (win ==:. 2) (ctl.(1).read (select ra 3 0)) (zero 8)));
+           (mux2
+              (win ==:. 2)
+              (ctl.(1).read (select ra 3 0))
+              (match eng with Some e -> e.read ra | None -> zero 8)));
   let any_fault = lane_out.(0).faulted |: lane_out.(1).faulted in
   let o =
     { O.uo_out =
-        any_fault @: lane_out.(1).xo @: lane_out.(0).xo @: gnd (* blame *) @: gnd (* fail *)
-        @: spi.miso
-    ; uio_out = lane_out.(0).uio_out |: lane_out.(1).uio_out
-    ; uio_oe = lane_out.(0).uio_oe |: lane_out.(1).uio_oe
+        any_fault @: lane_out.(1).xo @: lane_out.(0).xo @: blame @: fail @: spi.miso
+    ; uio_out
+    ; uio_oe
     }
   in
+
   ( o
   , { lane_inputs = lane_in
     ; lane_outputs = lane_out
@@ -395,4 +441,4 @@ let create_with_debug ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
     } )
 ;;
 
-let create ~sram i = fst (create_with_debug ~sram i)
+let create ?lib ~sram i = fst (create_with_debug ?lib ~sram i)

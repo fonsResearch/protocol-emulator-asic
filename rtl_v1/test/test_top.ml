@@ -13,6 +13,7 @@ type h =
   ; mutable sck : bool
   ; mutable mosi : bool
   ; mutable uio_in : int
+  ; mutable ui_hi : int (* ui_in[7:3] *)
   ; mutable trace : (int * int * int) list (* uo_out, uio_out, uio_oe per cycle, reversed *)
   }
 
@@ -21,7 +22,9 @@ let cycle h =
   and o = Cyclesim.outputs ~clock_edge:Before h.sim in
   i.rst_sync_n := Bits.vdd;
   i.ui_in
-  := Bits.of_int ~width:8 ((Bool.to_int h.cs_n) lor (Bool.to_int h.sck lsl 1) lor (Bool.to_int h.mosi lsl 2));
+  := Bits.of_int ~width:8
+       ((Bool.to_int h.cs_n) lor (Bool.to_int h.sck lsl 1) lor (Bool.to_int h.mosi lsl 2)
+        lor (h.ui_hi lsl 3));
   i.uio_in := Bits.of_int ~width:8 h.uio_in;
   Cyclesim.cycle h.sim;
   h.trace <- (Bits.to_int !(o.uo_out), Bits.to_int !(o.uio_out), Bits.to_int !(o.uio_oe)) :: h.trace
@@ -61,12 +64,12 @@ let transaction h bytes =
 let write h addr data = ignore (transaction h ((addr land 0x7F) :: data) : int list)
 let read h addr n = List.tl_exn (transaction h ((0x80 lor addr) :: List.init n ~f:(fun _ -> 0)))
 
-let create () =
+let create ?lib ?(ui_hi = 0) () =
   let sim =
     Sim.create ~config:Cyclesim.Config.trace_all
-      (Top_v1.create ~sram:(fun _ i -> fst (Sram256.behavioural i)))
+      (Top_v1.create ?lib ~sram:(fun _ i -> fst (Sram256.behavioural i)))
   in
-  let h = { sim; cs_n = true; sck = false; mosi = false; uio_in = 0xFF; trace = [] } in
+  let h = { sim; cs_n = true; sck = false; mosi = false; uio_in = 0xFF; ui_hi; trace = [] } in
   let i = Cyclesim.inputs sim in
   i.rst_sync_n := Bits.gnd;
   Cyclesim.cycle sim;
@@ -172,7 +175,7 @@ let%expect_test "structural non-interference between lanes" =
     printf "lane %d inputs: other-lane signals reached with OWN boundary %d, without %d\n" l
       (hits ~l ~boundary:true) (hits ~l ~boundary:false));
   [%expect {|
-    lane 0 inputs: other-lane signals reached with OWN boundary 0, without 3712
-    lane 1 inputs: other-lane signals reached with OWN boundary 0, without 3712
+    lane 0 inputs: other-lane signals reached with OWN boundary 0, without 3718
+    lane 1 inputs: other-lane signals reached with OWN boundary 0, without 3718
     |}]
 ;;

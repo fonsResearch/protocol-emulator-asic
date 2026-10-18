@@ -1,5 +1,7 @@
 (* Emit Verilog: [macro] lane with RM_IHPSG13_1P_256x16_c2_bm_bist instantiated (synthesis);
-   [behavioural] lane with the Hardcaml SRAM model (simulation); [top_macro] core v1. *)
+   [behavioural] lane with the Hardcaml SRAM model (simulation); [top_macro] core v1;
+   [top_macro_mon] core v1 with the monitor engine and a 2-package ROM library (UART TX v1
+   guarantee, d = 3 on uio[0] and d = 4 on uio[1]), for area measurement. *)
 open! Core
 open Hardcaml
 open Pemu_rtl_v1
@@ -12,6 +14,19 @@ let () =
   then (
     let circ =
       CT.create_exn ~name:"pemu_core_v1" (Top_v1.create ~sram:(fun l -> Sram256.blackbox ~instance:(sprintf "u_imem_l%d" l)))
+    in
+    Rtl.print Verilog circ;
+    exit 0);
+  if String.equal mode "top_macro_mon"
+  then (
+    let lib =
+      Pemu_monitor_v1.(
+        [ Compile.compile_exn (Library_v1.uart_tx ~d:3 ~pin:0)
+        ; Compile.compile_exn (Library_v1.uart_tx ~d:4 ~pin:1) ])
+    in
+    let circ =
+      CT.create_exn ~name:"pemu_core_v1m"
+        (Top_v1.create ~lib ~sram:(fun l -> Sram256.blackbox ~instance:(sprintf "u_imem_l%d" l)))
     in
     Rtl.print Verilog circ;
     exit 0);

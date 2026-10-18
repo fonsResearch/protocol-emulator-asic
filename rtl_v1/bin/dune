@@ -1,5 +1,5 @@
 (executable
  (name emit_lane_rtl)
- (libraries core hardcaml pemu_rtl_v1)
+ (libraries core hardcaml pemu_rtl_v1 pemu_monitor_v1)
  (preprocess
   (pps ppx_jane ppx_hardcaml)))

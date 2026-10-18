@@ -140,6 +140,8 @@ let observe ~(tables : tables) (i : _ I.t) =
   let g =
     bits_lsb i.uo_out @ bits_lsb i.uio_out @ bits_lsb i.uio_oe @ bits_lsb s2_ui @ bits_lsb s2_uio
     @ bits_lsb drive @ [ i.pop_ev; i.push_ev ]
+    (* indices 50-63 (host-writable remap values) read constant 0 *)
+    @ List.init 14 ~f:(fun _ -> gnd)
   in
   (* nothing runs under reset (as the model) *)
   let running = i.rst_sync_n &: i.running in
