@@ -281,7 +281,7 @@ let%expect_test "I2C target P=3, Fm: controller misbehaviour" =
       pushes: 11 22 33 44 firings [B71@497] U true mm 0
     thigh 20: P=3 (h_min 8 l_min 18 hd 8) done true
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
-      pushes: 11 22 33 44 firings [B72@537] U true mm 0
+      pushes: 11 22 33 44 firings [B72@533] U true mm 0
     late data: P=3 (h_min 8 l_min 18 hd 8) done true
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
       pushes: 11 22 33 44 firings [B83@525,F51@1517] U true mm 0

@@ -556,11 +556,14 @@ let i2c_tgt ~h_min ~l_min ~hd =
           [ await_idle nscl
           ; hold nscl ~for_:(l_min - 1) ~else_:(blame 1)
           ; await_idle scl
-            (* D7: the blame for a short high phase fires one step after the fall (same
-               threshold: a fall in step a + h_min - 1 is blamed in a + h_min), so a fall caused by
-               the target's own pull is failed first by the high watcher (same step as the fall)
-               and is not excused by this blame *)
-          ; hold (scl ||| fall "scl") ~for_:h_min ~else_:(blame 2)
+            (* D7/D11: SCL low is blamed except in the step where a target pull of SCL (or a
+               target SDA change) becomes visible; that step is failed by the high watcher, and
+               a persisting pull is blamed only from the next step, so the target's fail is
+               never excused. An environment glitch is blamed in its first low step: the
+               target changes dSDA only two or more steps after it sees a fall. Same bank
+               entry as the high watcher's requirement (WF2: the chip observables are in the
+               condition only). D7's one-step-delayed form let a one-step low glitch pass. *)
+          ; hold ~when_:(stable "dsda" &&& !!(rise "dscl")) scl ~for_:(h_min - 1) ~else_:(blame 2)
           ]
       ]
   in
