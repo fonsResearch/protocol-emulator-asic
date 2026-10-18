@@ -425,7 +425,9 @@ let i2c_all ?debug () =
   in
   let tfm = 8, 18, 8 and tsm = 59, 69, 59 in
   let tgt ?(prog = P1.i2c_tgt ~addr:0x50) ?(contract = Fn.id) ~mode (h_min, l_min, hd) name =
-    harness ?debug ~rx_never_full:true ~od_wired:P1.i2c_own ~mode ~prog
+    (* host-stream assumption (doc 3.1): the config byte is in the TX FIFO when the lane
+       starts, i.e. the config POP (pc 2) never executes with an empty FIFO *)
+    harness ?debug ~rx_never_full:true ~pop_pcs:[ 2 ] ~od_wired:P1.i2c_own ~mode ~prog
       ~contract:(contract (Lib.i2c_tgt ~h_min ~l_min ~hd)) ~own:P1.i2c_own ~od:P1.i2c_od ~cfg:0 ~cfg2:0 ~name ()
   in
   let l, h, tsu, thold = fm in

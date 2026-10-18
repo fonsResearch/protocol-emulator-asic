@@ -112,7 +112,7 @@ The package requires H ≥ 3 (D4); both grades satisfy it. Each value is the UM1
 
 The address is also patched into the program's compare immediates by the host tool when it loads the program (ISA v1 has no register-to-register compare). The firmware halts if the popped config byte differs from the patched value [O].
 
-Host-stream assumption: the RX FIFO is never full.
+Host-stream assumptions: the RX FIFO is never full, and the config byte is in the TX FIFO when the lane starts (formal finding 2026-10-18: a config byte written late leaves the lane blocked while the bus is active, and the frame check then starts in the middle of a transaction).
 
 ### 3.2 Timing parameters (steps at P = 3, 0.0667 µs per step)
 
