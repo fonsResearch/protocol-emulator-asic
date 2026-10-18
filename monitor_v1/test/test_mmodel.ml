@@ -39,6 +39,16 @@ let gen_contract st =
     | _ -> Not (And (atom cls, atom cls))
   in
   let any () = pexpr (r 2 = 0) in
+  (* requirement with an optional unit-local modifier (register bit, XNOR, elapsed time) *)
+  let rmod cls =
+    match r 8 with
+    | 0 -> Eq_reg (pexpr cls, r 16)
+    | 1 -> And (pexpr cls, Reg_bit (r 16))
+    | 2 -> Reg_bit (r 16)
+    | 3 -> And (pexpr cls, Elapsed_ge { mark = r 2; t = r 9 })
+    | 4 -> Elapsed_ge { mark = r 2; t = r 9 }
+    | _ -> pexpr cls
+  in
   let codes = ref 0 in
   let chk role = incr codes; role, !codes in
   let role_req () =
@@ -61,12 +71,11 @@ let gen_contract st =
       await ~when_:(if r 2 = 0 then True else any ()) (pexpr cls) w
     | 2 ->
       let role, cls = role_req () in
-      let rq = pexpr cls in
-      let rq = if r 4 = 0 then eq_reg rq (r 16) else rq in
+      let rq = rmod cls in
       hold ~when_:(if r 3 = 0 then any () else True) rq ~for_:(1 + r 5) ~else_:(chk role)
     | 3 ->
       let w, cls = window () in
-      hold_until (pexpr cls) (pexpr cls) w
+      hold_until (rmod cls) (pexpr cls) w
     | 4 -> skip (1 + r 4)
     | 5 ->
       let s = if r 2 = 0 then Tx_pop else Rx_push in
@@ -87,7 +96,7 @@ let gen_contract st =
       ; (if r 3 = 0
          then (
            let role, cls = role_req () in
-           [ expect (pexpr cls) ~else_:(chk role) ])
+           [ expect (rmod cls) ~else_:(chk role) ])
          else [])
       ; (if r 12 = 0 then [ raise_ (chk (if r 2 = 0 then Fail else Blame)) ] else [])
       ]
@@ -134,6 +143,8 @@ let constructs (c : Lang.t) =
       if delay > 0 then add "delay";
       if not (equal_kind kind Level) then add "edge"
     | Eq_reg (e, _) -> add "eq_reg"; ex e
+    | Reg_bit _ -> add "reg_bit"
+    | Elapsed_ge _ -> add "elapsed"
     | Not e -> ex e
     | And (a, b) | Or (a, b) -> ex a; ex b
     | _ -> ()
@@ -149,7 +160,9 @@ let constructs (c : Lang.t) =
     | Hold_until { r; e; _ } -> add "hold_until"; ex r; ex e
     | Skip _ -> add "skip"
     | Take { w; _ } -> add (if Option.is_none w then "take_idle" else "take")
-    | Expect { r; _ } -> add "expect"; ex r
+    | Expect { r; _ } ->
+      add "expect"; ex r;
+      (match r with Reg_bit _ | Eq_reg _ | Elapsed_ge _ | And (_, (Reg_bit _ | Elapsed_ge _)) -> add "expect_mod" | _ -> ())
     | Sample _ -> add "sample"
     | Match _ -> add "match"
     | Mark _ -> add "mark"
@@ -212,15 +225,15 @@ let%expect_test "random packages: ISA model = interpreter" =
     (Hashtbl.to_alist cov |> List.sort ~compare:(fun (a, _) (b, _) -> String.compare a b)
      |> List.map ~f:(fun (k, n) -> sprintf "%s %d" k n) |> String.concat ~sep:", ");
   [%expect {|
-    accepted 778 rejected 2222 cycles 311978 firings 7359 mismatches 0
+    accepted 677 rejected 2323 cycles 271477 firings 6635 mismatches 0
     instruction width 82 bits; encode/decode round-trip failures 0
-      reject  499 predicate bank full (14 entries)
-      reject  399 w0: blame check requires chip observable
-      reject  395 w0: fail check requires environment obse
-      reject  236 w1: blame check requires chip observable
-      reject  229 w1: fail check requires environment obse
-      reject  178 cannot fold raise: bundle order mark, sa
-    packages containing each construct: await 479, await_idle 376, delay 643, early 145, edge 731, eq_reg 108, expect 539, guard 216, hold 346, hold_until 308, if 142, loop 534, mark 492, match 295, raise 161, sample 494, since 94, skip 381, take 211, take_idle 215, when 301
+      reject  388 w0: fail check requires environment obse
+      reject  382 w0: blame check requires chip observable
+      reject  340 predicate bank full (14 entries)
+      reject  284 two different register/elapsed modifiers
+      reject  228 w1: fail check requires environment obse
+      reject  211 w1: blame check requires chip observable
+    packages containing each construct: await 414, await_idle 335, delay 536, early 124, edge 618, elapsed 245, eq_reg 155, expect 441, expect_mod 327, guard 177, hold 284, hold_until 282, if 117, loop 477, mark 412, match 277, raise 165, reg_bit 284, sample 437, since 85, skip 334, take 193, take_idle 209, when 248
     |}]
 ;;
 

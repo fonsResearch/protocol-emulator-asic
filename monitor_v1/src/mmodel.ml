@@ -182,7 +182,7 @@ let step_unit t (i : Interp.inputs) ~(bank : bool array) idx u =
           | Some c when not (i.push_ev && i.push_data land 0xFF = u.reg land 0xFF) -> Some (code c)
           | _ ->
             let ev = if ins.md_exp then modv () (pb ins.exp) else pb ins.exp in
-            if ins.exp <> 0 && not ev then Some (code ins.exp_chk) else None
+            if (ins.exp <> 0 || ins.md_exp) && not ev then Some (code ins.exp_chk) else None
         in
         (match fired with
          | Some ck ->

@@ -79,7 +79,7 @@ For lane L:
 | mark | 2 | on completion: none, mark 0, mark 1 |
 | smp | 1 + 4 + 4 | on completion: enable, register bit, predicate |
 | mat | 1 + 4 | on completion: match register byte 0 against the stream element pushed in this step; check index |
-| exp | 4 + 4 | on completion: expect predicate (0 = none) with the modifier applied; check index |
+| exp | 4 + 4 | on completion: expect predicate with the modifier applied; check index. The expect is present iff exp != 0 or mon bit 1 is set (exp = 0 with mon bit 1 is a bare register-bit or elapsed-time requirement) |
 | bp | 4 | on completion: branch predicate, 0 = never |
 | next, alt | 7 + 7 | successor addresses; 127 = STOP (stop silently) |
 | tsel | 1 | TAKE destination: register byte 0 or 1 |
