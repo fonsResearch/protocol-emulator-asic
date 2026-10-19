@@ -27,3 +27,23 @@ decision); y placements 41.58 / 207.90 / 41.58 (47.5 um pin channel); vector sce
 - Setup and hold slack at 16.67 ns in typ / slow / fast, in particular the SRAM fetch path (estimate <= 12.95 ns slow before wiring) and A_ADDR hold (up to 0.85 ns).
 - A_DOUT max capacitance (0.064 pF limit) on all three macros; post-GRT repair margin 30 % is carried over from core-macro.
 - `design__macro_stripe_violation__count`, IR drop (only 2 stripe pairs per macro; 7 of 38 pairs removed), LVS, KLayout DRC, antenna.
+
+## 3. CI run 1 (v1-tt 177fdd0; sources in the artifacts match the commit)
+
+The GitHub run page crashed the user's browser tab; the GDS logs were downloaded with the gh CLI
+(`ci-artifacts/v1-tt/GDS_logs`). Precheck and gate-level results were not part of the download.
+
+- The flow stopped at step 22 of 27, `Pemu.MacroColumnStripes` (exit on violations). Nothing after
+  PDN ran: no placement, routing, timing, utilisation or IR-drop numbers yet.
+- Macro bridging worked as designed: `core.u_imem_l0` and `core.u_imem_l1` bridged 4 stripes each
+  (0 violations); `core.u_lstore_l1` skipped 4 (already full height from the macro above), 0 violations.
+- The only violations: C4 (TT pin rule) on one VGND box, x 1719.315-1720.365 um (1.05 um wide),
+  y 33.8-162.76 um, in the 8.48 um channel between the lane-0 macro (x 1476.0-1712.8) and the right
+  core edge (1721.28). pdngen drew it there; the log gives no reason. Most likely channel repair next
+  to a macro (pdngen halo 10 um in this config) [inference]. The local stripe model did not predict it.
+- `PSM-0069` in error.log: GeneratePDN's own check, before the step bridges the macros (as on core-macro).
+
+Fix (user decision 2026-10-19): lane-0 macro one stripe pitch left, x = 1431.04 (same column alignment,
+pairs k = 32, 33; obstructions k = 34-36; 53.44 um to the core edge, where pair k = 37 runs full width).
+New test `test_no_narrow_channel_to_core_edge` (fails on x = 1476.0 with an 8.48 um gap; passes now);
+floorplan tests 10/10.

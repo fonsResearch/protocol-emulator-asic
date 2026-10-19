@@ -42,15 +42,15 @@
   "//": "check_power_grid runs inside GeneratePDN, before the stripe step connects the macro, so its count is not a verdict. Verdicts: Pemu.MacroColumnStripes property check (fails the step), LVS, IR drop report.",
   "ERROR_ON_PDN_VIOLATIONS": 0,
   "//": "Tiny Tapeout pin rule (precheck/pin_check.py): every VPWR/VGND port must reach within 10 um of the top and bottom die edges. Run 094ea6a failed it: the macro carves the 12 stripes over its x-span. Fix (user decision 2026-10-17): no stripes over the macro except the 2 aligned pairs (PDN_OBSTRUCTIONS on the 4 misaligned pairs, full tile height), and the step makes the aligned 4 full height across the macro, pins included.",
-  "//": "Floorplan C: lane-1 imem + store stacked at x = 3.36, lane-0 imem at x = 1476.0. Each 256x16 macro has two aligned stripe pairs (k = 0,1 left; 33,34 right; VPWR centres 9.03 + 44.96k). The 7 misaligned pairs crossing the macros (k = 2-5, 35-37) are removed over the full tile height (TT pin rule).",
+  "//": "Floorplan C: lane-1 imem + store stacked at x = 3.36, lane-0 imem at x = 1431.04. Each 256x16 macro has two aligned stripe pairs (k = 0,1 left; 32,33 right; VPWR centres 9.03 + 44.96k). The 7 misaligned pairs crossing the macros (k = 2-5, 34-36) are removed over the full tile height (TT pin rule).",
   "PDN_OBSTRUCTIONS": [
     "Metal4 97.40 0 106.12 710.64",
     "Metal4 142.36 0 151.08 710.64",
     "Metal4 187.32 0 196.04 710.64",
     "Metal4 232.28 0 241.00 710.64",
+    "Metal4 1536.12 0 1544.84 710.64",
     "Metal4 1581.08 0 1589.80 710.64",
-    "Metal4 1626.04 0 1634.76 710.64",
-    "Metal4 1671.00 0 1679.72 710.64"
+    "Metal4 1626.04 0 1634.76 710.64"
   ],
   "PEMU_STRIPE_FULL_SPAN": true,
   "//": "Crossing the VDD!/VDDARRAY! Metal4 OBS bar (y 38.825-45.465 in the 256x16 bm_bist master): RM_IHPSG13_1P_256x16_c2_bm_bist.gds (PDK 2bbec755, blob 77d647dd) has 0 Metal4 (50/0) and 0 Via3 (49/0) polygons under all 4 aligned VPWR footprints (macro x 4.62-6.72, 49.58-51.68 left column; 15.66-17.76, 60.62-62.72 right macro), nearest Metal4 2.97-3.16 um (flow/pdn/check_sram_bar_gds.py; injected-metal control BLOCKED). Magic extraction reads the LEF abstract and reports these crossings as illegal overlaps, hence ERROR_ON_ILLEGAL_OVERLAPS 0; KLayout DRC checks the real GDS.",
@@ -66,7 +66,7 @@
   "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 30,
   "FP_MACRO_HORIZONTAL_HALO": 2.0,
   "FP_MACRO_VERTICAL_HALO": 0.48,
-  "//": "Floorplan C (user decision 2026-10-19). All FS: signal pins (Metal2) on the top edge, facing the logic and the TT IO pins (y = 710), as chosen for the 64x16 on 2026-10-17 (with N, A_DOUT exceeded max cap). Left column x = 3.36 (VDD/VSS columns of the left bit-cell group under the stripe pairs at 9.03/14.65 and 53.99/59.61): lane-1 store at y = 41.58, lane-1 imem at y = 207.90 (47.5 um pin channel above the store). Right macro x = 1476.0 (pairs at 1492.71 and 1537.67), y = 41.58. y >= 41.58 leaves carved stripe segments below every macro, which the full-span step needs. Checked by flow/pdn/test_floorplan_v1.py.",
+  "//": "Floorplan C (user decision 2026-10-19). All FS: signal pins (Metal2) on the top edge, facing the logic and the TT IO pins (y = 710), as chosen for the 64x16 on 2026-10-17 (with N, A_DOUT exceeded max cap). Left column x = 3.36 (VDD/VSS columns of the left bit-cell group under the stripe pairs at 9.03/14.65 and 53.99/59.61): lane-1 store at y = 41.58, lane-1 imem at y = 207.90 (47.5 um pin channel above the store). Right macro x = 1431.04 (pairs at 1447.75 and 1492.71), y = 41.58: one stripe pitch left of the first choice (1476.0), whose 8.5 um gap to the core edge made pdngen add a 1.05 um VGND strap that failed the TT pin rule (CI run 1, C4); the 53.4 um gap now holds the full pair k = 37. y >= 41.58 leaves carved stripe segments below every macro, which the full-span step needs. Checked by flow/pdn/test_floorplan_v1.py.",
   "MACROS": {
     "RM_IHPSG13_1P_256x16_c2_bm_bist": {
       "gds": ["pdk_dir::libs.ref/sg13cmos5l_sram/gds/RM_IHPSG13_1P_256x16_c2_bm_bist.gds"],
@@ -82,7 +82,7 @@
       "instances": {
         "core.u_lstore_l1": { "location": [3.36, 41.58], "orientation": "FS" },
         "core.u_imem_l1": { "location": [3.36, 207.90], "orientation": "FS" },
-        "core.u_imem_l0": { "location": [1476.0, 41.58], "orientation": "FS" }
+        "core.u_imem_l0": { "location": [1431.04, 41.58], "orientation": "FS" }
       }
     }
   },

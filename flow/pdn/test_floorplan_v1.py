@@ -154,3 +154,15 @@ def test_neg_without_obstructions_fails_c4():
     _, _, c4 = run_flow(ms, carve_all(tile(cfg, use_obstructions=False), ms, hx, hy),
                         ["core.u_imem_l0", "core.u_imem_l1", "core.u_lstore_l1"])
     assert len(c4) > 0
+
+
+@needs_lef
+def test_no_narrow_channel_to_core_edge():
+    """CI run 1 (v1-tt 177fdd0): with an 8.5 um gap between the lane-0 macro and the right core
+    edge, pdngen drew a 1.05 um VGND strap there that failed C4. Every macro-to-core-edge gap must
+    be at most one site (0.48 um) or at least one stripe pitch, so that a full pair fits."""
+    cfg = config()
+    pitch = cfg["FP_PDN_VPITCH"] * DBU
+    for name, (bb, _) in macros(cfg).items():
+        for g in (bb[0] - round(CORE_X0 * DBU), round(CORE_X1 * DBU) - bb[2]):
+            assert g <= 480 or g >= pitch, (name, g)
