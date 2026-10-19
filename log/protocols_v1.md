@@ -122,3 +122,20 @@ Status (2026-10-18; the long runs were stopped by the user):
 
 **Controller U is a bounded result (user decision, option 1).** bmc3 found no U violation within 77 frames (Fm) and 76 frames (Sm), 3500 s each. Ticks are free, so a frame is at most one lane step. The bound covers start-up (header pops, about 25 steps), START and the first 4-5 address cells of the first transaction. It does not cover a whole transaction: the N1 witness for one status push needed 172 frames. All earlier controller counterexamples (D8 depth 26, D9 41, D10 62/63) lie inside the bound. The time per frame grows to over a minute past frame 70, so plain BMC will not reach a full transaction on this machine. An unbounded U for the controller is still open.
 
+### rIC3 (user decision 2026-10-19)
+
+rIC3 1.5.2 (HWMCC'24/'25 bit-level winner) was built locally (artifact `ric3_1.5.2_macos_arm64.tgz`). The setup:
+- dependencies vendored from crates.io and checked against the Cargo.lock SHA-256 sums;
+- toolchain nightly-2025-12-07, the publish date of rIC3 1.5.2 and logicrs 0.6.1;
+- the word-level engines (wl-bmc, wl-kind) removed with a 64-line patch, because their Bitwuzla dependency cannot be built in the sandbox; the bit-level engines are unchanged.
+
+Certificates are checked with Certifaiger (`check <model> <witness>`, Kissat backend), built from source.
+
+Calibration:
+| harness | rIC3 | time | check |
+|---|---|---|---|
+| a2_uart_tx_d4_u | UNSAT (holds) | 4 s | certificate valid (Certifaiger, 5 s); the same certificate against another model is rejected |
+| a2_i2c_ctl_fm_h2_neg | SAT | 4 s | witness converted to ABC cex format, cyclesim replay ok (bad at frame 49), decoded F53/F61 |
+
+First I2C runs: a2_i2c_ctl_fm_u and a2_i2c_tgt_fm_u ran in parallel, 1800 s each: both TIMEOUT. The two portfolios (16 engines each) shared 11 cores, so the run is inconclusive. The time limit killed only the rIC3 parent and left engines running; runs now use `formal/glimit.pl`, which kills the whole process group.
+
