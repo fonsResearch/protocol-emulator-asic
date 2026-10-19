@@ -36,6 +36,22 @@ for f in $D/${P}_*.rle; do
         else echo "$n $a: MISMATCH vs $b"; diff $D/$n.$a $D/$n.$b | head -5; fail=1; fi
       done
       continue ;;
+    usb_tx)
+      # low-speed USB: usb_signalling (dp = ch0, dm = ch1) stacked with usb_packet. A packet counts
+      # as received only if no "CRC16 ERROR" annotation lies inside it; PIDs map DATA0 -> C3,
+      # DATA1 -> 4B. The aborted packet must be rejected (CRC error or absent).
+      $SRD/srd_run 60000000 $f -d usb_signalling -o signalling=low-speed -c dp=0 -c dm=1 \
+        -s -d usb_packet -o signalling=low-speed > $D/$n.ann
+      awk '$1=="usb_packet" && $4==10 {err[NR]=$2} $1=="usb_packet" && ($4==15 || $4==16) {
+             bad=0; for (k in err) if (err[k] >= $2 && err[k] <= $3) bad=1;
+             pid=($5=="DATA0") ? "C3" : ($5=="DATA1") ? "4B" : $5; line=pid;
+             for (i=7; i<=NF && $i!="]"; i++) line=line " " $i;
+             if (!bad) print line; else rej++ }
+           END { print rej+0 > "/dev/stderr" }' $D/$n.ann > $D/$n.decoded 2> $D/$n.rejected
+      if cmp -s $D/$n.decoded $D/$n.packets; then
+        echo "$n: sigrok $(wc -l < $D/$n.decoded | tr -d ' ') CRC-valid packets = expected; rejected $(cat $D/$n.rejected)"
+      else echo "$n: MISMATCH"; diff $D/$n.decoded $D/$n.packets | head -5; fail=1; fi
+      continue ;;
     uart_rx|uart_tx) $SRD/srd_run 60000000 $f -d uart -o baudrate=115200 -c rx=0 > $D/$n.ann ;;
   esac
   # uart annotation class 0 = RX data (hex text)

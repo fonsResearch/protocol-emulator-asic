@@ -203,8 +203,33 @@ let i2c_tgt dir =
       (c.cdone ()) (List.length (Psim.pushes r)) (List.length (Psim.pops r)) stretched (Psim.show_firings r) r.model_mismatch)
 ;;
 
+(* USB-LS TX: four packets (one of them all 0xFF, for stuffing), then an underrun abort, then a
+   final packet. <name>.packets lists the expected complete packets, one per line: PID and payload
+   bytes in hex (the aborted packet is absent; the decoder must not report it as valid). *)
+let usb_tx dir =
+  let ps = [ 0xC3, []; 0x4B, [ 0x01; 0x02; 0x03 ]; 0xC3, List.init 8 ~f:(fun i -> (37 * i) land 0xFF); 0x4B, List.init 8 ~f:(fun _ -> 0xFF) ] in
+  let host = List.concat_map ps ~f:(fun (pid, pl) -> pid :: List.length pl :: pl) in
+  let aborted = [ 0xC3; 4; 0x11; 0x22 ] and late = [ 0x33; 0x44; 0x4B; 1; 0x55 ] in
+  let tx_times = List.map host ~f:(fun _ -> 0) @ List.map aborted ~f:(fun _ -> 0) @ List.map late ~f:(fun _ -> 60_000) in
+  let setup =
+    { Psim.prog = P1.usb_ls_tx; own = P1.usb_own; od = 0; cfg = P1.usb_cfg; cfg2 = 0; p = 39
+    ; contract = Lib.usb_ls_tx (); open_drain_wired_and = 0 }
+  in
+  let r =
+    Psim.run ~tx_bytes:(host @ aborted @ late) ~tx_times ~setup ~cycles:90_000
+      ~peer:(fun _ -> { Psim.drive_oe = 0; drive_val = 0 }) ()
+  in
+  Psim.write_rle ~file:(dir ^/ "usb_tx_mixed.rle") ~pins:[ 0; 1 ] r.pads;
+  let expected = ps @ [ 0x4B, [ 0x55 ] ] in
+  Out_channel.write_all (dir ^/ "usb_tx_mixed.packets")
+    ~data:(String.concat (List.map expected ~f:(fun (pid, pl) -> String.concat ~sep:" " (List.map (pid :: pl) ~f:(sprintf "%02X")) ^ "\n")));
+  printf "usb_tx_mixed: statuses %s, firings [%s], model_mismatch %d\n"
+    (String.concat ~sep:" " (List.map (Psim.pushes r) ~f:Int.to_string)) (Psim.show_firings r) r.model_mismatch
+;;
+
 let () =
   match Sys.get_argv () with
+  | [| _; "usb_tx"; dir |] -> usb_tx dir
   | [| _; "spi_ctl"; dir |] -> spi_ctl dir
   | [| _; "spi_tgt"; dir |] -> spi_tgt dir
   | [| _; "uart_rx"; dir |] -> uart_rx dir
