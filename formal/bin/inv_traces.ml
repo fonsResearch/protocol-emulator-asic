@@ -1,4 +1,4 @@
-(* Input traces for invariant mining on the I2C A2 harnesses (plan step 7, user decision
+(* Input traces for invariant mining and bounded checks on the I2C and USB A2 harnesses (plan step 7, user decision
    2026-10-19: invariant mining + k-induction). Drives the debug build of a harness in
    cyclesim with the Psim I2C peers under randomised timing, tick pattern, host traffic,
    reset/run drops and pad glitches, and records the harness inputs of every cycle plus the
@@ -24,6 +24,8 @@ let () =
   and ncy = Int.of_string argv.(4)
   and seed = Int.of_string argv.(5) in
   let is_ctl = String.is_substring name ~substring:"_ctl_" in
+  (* USB-LS TX harnesses (names containing _usb_): no peer; the host pushes random packets (PID, N, N bytes) *)
+  let is_usb = String.is_substring name ~substring:"_usb_" in
   (* INV_CLEAN=1: legal traffic only (peer at or above the UM10204 minima, prescaler ticks, no
      glitches, no pad noise, no reset/run drops); used to check that environment assumptions
      do not exclude legal behaviour *)
@@ -35,6 +37,7 @@ let () =
   let chance n = r n = 0 in
   let w32 v = Out_channel.output_string oc (String.init 4 ~f:(fun i -> Char.of_int_exn ((v lsr (8 * i)) land 0xFF))) in
   let bad_total = ref 0 in
+  let status_hist = Array.create ~len:256 0 (* USB: values pushed to the host (status bytes) *) in
   for _tr = 1 to ntr do
     let sim = Cyclesim.create circuit in
     let ip n = Cyclesim.in_port sim n in
@@ -47,14 +50,16 @@ let () =
     let scale = p + 1 in
     (* peer *)
     let drive =
-      if is_ctl
-      then (
+      if is_usb
+      then None
+      else if is_ctl
+      then Some (
         let dd = 1 + r (Int.max 1 (scale * 5)) in
         let stretch = if chance 2 then 0 else r (scale * 30) in
         let nack_write = if chance 3 then r 4 else -1 in
         let read_data = List.init 4 ~f:(fun _ -> r 256) in
         (Peers.i2c_target ~addr:0x50 ~read_data ~dd ~nack_write ~stretch ()).drive)
-      else (
+      else Some (
         (* controller peer: UM10204 Fm/Sm minima scaled to the step length, sometimes faster
            than the contract allows (assumption violations end the useful part of a trace) *)
         let base = if String.is_substring name ~substring:"_sm_" then Peers.i2c_sm else Peers.i2c_fm in
@@ -75,7 +80,13 @@ let () =
     in
     (* host TX bytes *)
     let host =
-      if is_ctl
+      if is_usb
+      then
+        List.concat
+          (List.init (2 + r 6) ~f:(fun _ ->
+             let n = if (not clean) && chance 15 then 9 + r 247 else r 9 in
+             r 256 :: n :: List.init (Int.min n 8) ~f:(fun _ -> r 256)))
+      else if is_ctl
       then
         List.concat
           (List.init (2 + r 5) ~f:(fun _ ->
@@ -106,8 +117,13 @@ let () =
         | _ -> chance tick_q
       in
       cnt := if rst = 1 && run = 1 then (if tick then 0 else !cnt + 1) else 0;
-      let pd = drive { Psim.cycle = c; out = !prev_out; oe = !prev_oe; pad = !prev_pad } in
-      let env = 0xFF land lnot (pd.drive_oe land lnot pd.drive_val) in
+      let env =
+        match drive with
+        | None -> 0xFF
+        | Some drive ->
+          let pd = drive { Psim.cycle = c; out = !prev_out; oe = !prev_oe; pad = !prev_pad } in
+          0xFF land lnot (pd.drive_oe land lnot pd.drive_val)
+      in
       let env = if glitch > 0 && (not clean) && chance glitch then env lxor (1 lsl (2 + r 2)) else env in
       let env = if chance 16 && not clean then env lxor (r 256 land 0xF3) else env in
       let push =
@@ -125,6 +141,8 @@ let () =
       let v n = Bits.to_int !(op n) in
       let bad = v "bad" in
       bad_total := !bad_total + bad;
+      if is_usb && rst = 1 && v "dbg_m_push" = 1
+      then status_hist.(v "dbg_m_pushd") <- status_hist.(v "dbg_m_pushd") + 1;
       if verbose && Option.is_none !first_blame && v "dbg_fire" land v "dbg_role" <> 0 && rst = 1 then
         first_blame := Some (c, v "dbg_pc", v "dbg_fire" land v "dbg_role");
       prev_out := v "dbg_m_out"; prev_oe := v "dbg_m_oe"; prev_pad := v "dbg_uio_in";
@@ -143,5 +161,8 @@ let () =
     Out_channel.output_bytes oc buf
   done;
   Out_channel.close oc;
-  printf "%s: %d traces x %d cycles, bad cycles %d\n" name ntr ncy !bad_total
+  printf "%s: %d traces x %d cycles, bad cycles %d\n" name ntr ncy !bad_total;
+  if is_usb
+  then
+    Array.iteri status_hist ~f:(fun i n -> if n > 0 then printf "  pushed 0x%02x: %d\n" i n)
 ;;

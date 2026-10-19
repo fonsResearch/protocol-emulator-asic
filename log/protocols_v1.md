@@ -166,7 +166,7 @@ Before any formal run (all measured, 2026-10-19):
 | harness | expected | result | depth | wall s | notes |
 |---|---|---|---|---|---|
 | a2_usb_u | PASS | **PASS** (dprove; PDR invariant 8,876 clauses, re-verified) | | 1246 | unbounded |
-| a2_usb_g7 | PASS | TIMEOUT (dprove 1,200 s, then 2,700 s) | | 2700 | contents not yet proved |
+| a2_usb_g7 | PASS | TIMEOUT (dprove 1,200 s, then 2,700 s; rIC3 portfolio alone, stopped by the user at about 1,800 s, no result); **bounded** (see below) | 24-35 per window | | contents proved bounded only |
 | a2_usb_n1_cover_neg | FAIL | FAIL, replay ok (status-0 push after a complete packet, no fail) | 50 | 52 | non-vacuity |
 | a2_usb_u_sync_neg | FAIL | FAIL, replay ok | 21 | 10 | SYNC byte 0x81 |
 | a2_usb_u_nopush_neg | FAIL | FAIL, replay ok | 35 | 18 | abort push removed |
@@ -175,3 +175,26 @@ Before any formal run (all measured, 2026-10-19):
 | a2_usb_u_sendc | (mutant) | PASS (dprove) | | 627 | the CRC mutant satisfies the on-chip contract: only the proof-side check G7 catches it |
 
 Traces: `log/cex/a2_usb_*.cex`.
+
+G7 bounded evidence (2026-10-19; user decision: rIC3 alone at most 45 min, else the bounded
+fallback). The rIC3 run was stopped by the user at about 1,800 s with no result, so G7 is
+**bounded, not proved**:
+- co-simulation of the debug harness (`formal/bin/inv_traces.exe`, USB mode: random packets
+  PID, N, payload; random push gaps; random tick patterns; adversarial mode adds pad noise,
+  N > 8 and reset/run drops): 2 x 256 traces x 30,000 cycles = 15.36M cycles, 0 bad cycles;
+  status pushes clean 502/214/161, adversarial 640/139/134 (status 0/1/2). Status 1 also
+  occurs in clean mode, where N <= 8 is always generated; probably TX-FIFO overflow at short
+  push gaps desynchronises the byte stream (inference, not checked). Controls on the same
+  generator: sendc mutant 42 bad cycles, status mutant 49 (32 traces each);
+- checkpoint BMC (`formal/inv/ckpt_bmc.py`, bmc3, 120 s per window, 8 windows in parallel):
+  8 traces (4 clean, 4 adversarial) x checkpoints 300, 2000, 6000, 12000, 20000, 28000 =
+  48 windows, 0 hits, depth reached min 24, median 33.0, max 35 frames.
+  Self-test: from a checkpoint 50 cycles before the first bad cycle of a sendc trace, the
+  method finds the failure at +17 frames in 3 s, replay ok. Time per bmc3 frame grows
+  steeply on this model (frame 33 alone about 15 s single-process), so deeper windows are
+  not cheap;
+- limitation: a window (at most 35 cycles) is much shorter than a packet (about 140 steps at
+  one tick per cycle, more at slower ticks), so the BMC part only covers failures whose
+  cause and detection lie within one window from a reached state; the long-range CRC
+  relation is covered by co-simulation only.
+

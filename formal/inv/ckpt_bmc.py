@@ -87,7 +87,7 @@ def main():
         write_with_init(g, st, p)
         cx = os.path.join(wd, "ck_%d.cex" % f)
         r = subprocess.run(
-            ["perl", "formal/glimit.pl", tmo, "yosys-abc", "-c",
+            ["perl", "formal/glimit.pl", str(int(tmo) + 30), "yosys-abc", "-c",
              "read_aiger %s; bmc3 -F %s -T %s; write_cex -a %s" % (p, depth, tmo, cx)],
             capture_output=True, text=True)
         o = re.sub(r"\x1b\[[0-9;]*m", "", r.stdout + r.stderr)
