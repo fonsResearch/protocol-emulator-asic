@@ -273,6 +273,28 @@ let is_port a =
   |: Pemu_monitor_v1.Mon_engine.is_port a
 ;;
 
+(* Host front end: ui_in[2:0] synchroniser, host SPI target, CTRL decode and the RUN bits.
+   A separate function so that formal/src/top_props.ml (run_after_reset) checks this code. *)
+type host_port =
+  { spi : Spi.t
+  ; rdata : Signal.t (* read data, driven by the caller *)
+  ; ctrl_wr : Signal.t
+  ; run_bits : Signal.t
+  }
+
+let host_port ~spec ~ui_in =
+  let sync x = reg spec (reg spec x) in
+  let s_ui = sync (select ui_in 2 0) -- "s2_ui" in
+  let cs_n = bit s_ui 0
+  and sck = bit s_ui 1
+  and mosi = bit s_ui 2 in
+  let rdata = wire 8 in
+  let spi = Spi.create ~spec ~cs_n ~sck ~mosi ~is_port ~rdata in
+  let ctrl_wr = spi.wr &: (spi.addr ==:. 0x01) in
+  let run_bits = reg spec ~enable:ctrl_wr (select spi.wdata 1 0) -- "ctrl_run" in
+  { spi; rdata; ctrl_wr; run_bits }
+;;
+
 type debug =
   { lane_inputs : Signal.t Lane_rtl.I.t array (* for the structural non-interference check *)
   ; lane_outputs : Signal.t Lane_rtl.O.t array
@@ -284,16 +306,9 @@ type debug =
 let create_with_debug ?(loadable = [| false; true |]) ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
   let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
   let sync x = reg spec (reg spec x) in
-  let s_ui = sync (select i.ui_in 2 0) -- "s2_ui"
-  and s_uio = sync i.uio_in -- "s2_uio" in
-  let cs_n = bit s_ui 0
-  and sck = bit s_ui 1
-  and mosi = bit s_ui 2 in
-  let rdata = wire 8 in
-  let spi = Spi.create ~spec ~cs_n ~sck ~mosi ~is_port ~rdata in
+  let s_uio = sync i.uio_in -- "s2_uio" in
+  let { spi; rdata; ctrl_wr; run_bits } = host_port ~spec ~ui_in:i.ui_in in
   (* CTRL *)
-  let ctrl_wr = spi.wr &: (spi.addr ==:. 0x01) in
-  let run_bits = reg spec ~enable:ctrl_wr (select spi.wdata 1 0) -- "ctrl_run" in
   let clr_fault l = ctrl_wr &: bit spi.wdata (5 + l) in
   (* lanes: forward declarations of status wires *)
   let st =

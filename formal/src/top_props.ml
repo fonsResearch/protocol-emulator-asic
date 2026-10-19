@@ -9,6 +9,13 @@
    own_disjoint   both lanes' register blocks, inputs free: own0 & own1 = 0 always.
    lane_pin_gate  lane RTL (abstract SRAM, inputs free): uio_out and uio_oe are 0 outside own.
    With own_disjoint this gives no contention on uio: at most one lane drives each pin.
+   run_after_reset_k<K>  host front end of Top_v1 ([T.host_port]: ui_in synchroniser, host SPI
+                  target, CTRL decode, RUN bits), ui_in / reset / read data free: the RUN bits
+                  are 0 in every cycle with fewer than K cycles since the last reset cycle.
+                  Since a lane runs only with its RUN bit set, no lane runs in those cycles
+                  (log/protocols_v1.md, SPI notes: the lane pin synchroniser shows reset values
+                  for 2 cycles after release). run_after_reset_cover_neg: RUN can be set at
+                  all (expected FAIL; its depth gives the tight K). K = 33 is tight: k34_neg FAILs.
    Negative controls: loader raises loaded one word early; overlap check removed. *)
 open! Core
 open Hardcaml
@@ -98,6 +105,22 @@ let own_disjoint ?debug ?bug ~name () =
   Harness.bad_circuit ?debug ~dbg:[ "own0", own.(0); "own1", own.(1) ] ~name (own.(0) &: own.(1) <>:. 0)
 ;;
 
+let run_after_reset ?debug ?k ~name () =
+  let clock = input "clock" 1
+  and rst_sync_n = input "rst_sync_n" 1 in
+  let spec = Reg_spec.create ~clock ~clear:~:rst_sync_n () in
+  let hp = T.host_port ~spec ~ui_in:(input "ui_in" 8) in
+  hp.rdata <== input "free_rdata" 8;
+  let kk = Option.value k ~default:1 in
+  let w = Int.ceil_log2 (kk + 1) in
+  let since_d = wire w in
+  let since = reg spec since_d -- "h_since" in
+  since_d <== mux2 (since <:. kk) (since +:. 1) since;
+  let set = hp.run_bits <>:. 0 in
+  let bad = match k with None -> set | Some _ -> set &: (since <:. kk) in
+  Harness.bad_circuit ?debug ~dbg:[ "run_bits", hp.run_bits; "since", since; "wr", hp.spi.wr ] ~name bad
+;;
+
 let lane_pin_gate ?debug ~name () =
   let { A1_lane.ri; _ } = A1_lane.lane_inputs () in
   let rdata = input "free_rdata" 16 in
@@ -112,5 +135,9 @@ let all ?debug () =
   ; own_disjoint ?debug ~name:"own_disjoint" ()
   ; own_disjoint ?debug ~bug:`No_overlap_check ~name:"own_disjoint_neg" ()
   ; lane_pin_gate ?debug ~name:"lane_pin_gate" ()
+  ; run_after_reset ?debug ~k:3 ~name:"run_after_reset_k3" ()
+  ; run_after_reset ?debug ~name:"run_after_reset_cover_neg" ()
+  ; run_after_reset ?debug ~k:33 ~name:"run_after_reset_k33" () (* tight: k34 fails *)
+  ; run_after_reset ?debug ~k:34 ~name:"run_after_reset_k34_neg" ()
   ]
 ;;

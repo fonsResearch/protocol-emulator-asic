@@ -78,7 +78,7 @@ Random simulation of the invariant (`formal/bin/syminv.exe`) found no violation.
 
 ### Notes
 
-- A lane that runs within 2 cycles of reset release makes the SPI target monitor blame B5. The synchroniser still shows CS = 0, so the initial CS-high check fails. In the chip, RUN is set through the host port, which takes far longer than 2 cycles, so this is not reachable in normal use [estimate, to be confirmed with the interface proof].
+- A lane that runs within 2 cycles of reset release makes the SPI target monitor blame B5. The synchroniser still shows CS = 0, so the initial CS-high check fails. In the chip, RUN is set through the host port, so this is not reachable. **Proved 2026-10-19** (`formal/src/top_props.ml`, harness `run_after_reset_k33` on `Top_v1.host_port`, the code the core uses; the refactor that exposed it leaves the emitted Verilog of top_macro, top_macro_mon and top_macro_mon_liball byte-identical): with ui_in, reset and read data free, the RUN bits are 0 in every cycle with fewer than 33 cycles since the last reset cycle (dprove PASS, unbounded, 1 s). The bound is tight: `run_after_reset_k34_neg` and `run_after_reset_cover_neg` FAIL at frame 33, replay ok (`log/cex/`); the shortest write toggles SCK every cycle, i.e. it violates the host SCK timing, so the bound needs no host assumption. A lane runs only with its RUN bit set, so no lane runs within 33 cycles of reset release; the SPI target needs 3.
 
 ## ROM library area (2026-10-18, before I2C; user decision)
 
