@@ -604,3 +604,91 @@ let i2c_tgt ~h_min ~l_min ~hd =
   ; watchers = [ frame; stretch; timing; bytes; idle ]
   }
 ;;
+
+(* USB low-speed TX, one DATA packet (doc/protocols/usb_ls_v1.md, guarantees G1-G6, G8, G9 [C];
+   G7 contents is proved in the A2 harness, not here). Written from the protocol document
+   before the firmware (procedural isolation). One step = one bit (P = 39, bit_period = 1).
+   D+ = uio0, D- = uio1, observed as the chip's own outputs. Line states: J = (dp, dm) = (0,1),
+   K = (1,0), SE0 = (0,0), SE1 = (1,1) illegal. There is no environment input, so the contract
+   has no blame checks: U for this package is "no fail". Predicates have at most 3 literals, so
+   driven-ness and SE1 are separate watchers and J/K/SE0 are tested on dp/dm only.
+   [drive] (G1): both pins driven in every step after the first one after a restart (first-step
+   convention).  [legal] (G2): never SE1.
+   [frame]: idle = J (G3); K starts a packet (guard); SYNC tail J K J K J K K (G4); SE0 within
+   [1, data_max + 1] steps (G8; data_max = PID 8 + payload 64 + CRC 16 + 14 stuffed bits); then
+   SE0 for exactly 2 steps and J for 1 (G6). Between SYNC and SE0 the line is J or K (no SE0 by
+   the await, no SE1 by [legal]).
+   [runs] (G5) and [status] (G9): see below. The language has only lower-bound elapsed tests,
+   so the underrun abort is made observable: the firmware pushes status 2 when it starts the
+   abort (doc 2.3). *)
+let usb_ls_tx () =
+  let dp = v "dp" and dm = v "dm" in
+  let j = !!dp &&& dm
+  and k = dp &&& !!dm
+  and se0 = !!dp &&& !!dm in
+  let chg = changed "dp" ||| changed "dm" in
+  let data_max = 8 + 64 + 16 + 14 in
+  let drive =
+    watcher "drive" ~base:0x90 [ skip 1; loop [ hold (v "oe0" &&& v "oe1") ~for_:4095 ~else_:(fail 1) ] ]
+  in
+  let legal = watcher "legal" ~base:0xD0 [ loop [ hold !!(dp &&& dm) ~for_:4095 ~else_:(fail 1) ] ] in
+  let hj = hold j ~for_:1 ~else_:(fail 2)
+  and hk = hold k ~for_:1 ~else_:(fail 3) in
+  let frame =
+    watcher
+      "frame"
+      ~base:0xA0
+      [ loop
+          [ guard k
+              [ loop [ hold j ~for_:4095 ~else_:(fail 1) ] ]
+              ~on:
+                [ hj; hk; hj; hk; hj; hk; hk
+                ; await se0 (win 1 (data_max + 1) ~else_:(fail 4))
+                ; hold se0 ~for_:1 ~else_:(fail 5)
+                ; hj
+                ]
+          ]
+      ]
+  in
+  let push = v "push" in
+  (* [runs] (G5): inside a packet a J/K run lasts at most 7 steps. An underrun abort is marked
+     by the status push (doc 2.3): after it the line is J until SE0, which comes 7..15 steps
+     after the step following the push (J run of at least 8 steps including the push step). *)
+  let runs =
+    watcher
+      "runs"
+      ~base:0xB0
+      [ loop
+          [ await_idle k
+          ; guard (se0 ||| push)
+              [ loop [ await chg (win 1 7 ~else_:(fail 1)) ] ]
+              ~on:
+                [ skip 1
+                ; if_ (at ~delay:1 "push")
+                    [ hold_until j se0 (win 7 15 ~else_:(fail 2)); skip 2 ]
+                    [ skip 1 ]
+                ]
+          ]
+      ]
+  in
+  (* [status] (G9): exactly one push per packet: either the abort push before the EOP, or one
+     push within 8 steps after the EOP's J step; none elsewhere inside the packet. *)
+  let status =
+    watcher
+      "status"
+      ~base:0xC0
+      [ loop
+          [ await_idle k
+          ; await_idle (push ||| se0)
+          ; if_ push
+              [ hold_until !!push se0 (win 1 4095 ~else_:(fail 1)); skip 2 ]
+              [ skip 2; await push (win 1 8 ~else_:(fail 2)) ]
+          ]
+      ]
+  in
+  { name = "usb_ls_tx_v1"
+  ; observables =
+      [ "dp", Uio_out 0; "dm", Uio_out 1; "oe0", Uio_oe 0; "oe1", Uio_oe 1; "push", Rx_push_ev ]
+  ; watchers = [ drive; legal; frame; runs; status ]
+  }
+;;

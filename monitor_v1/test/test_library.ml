@@ -30,6 +30,7 @@ let%expect_test "library packages" =
   report (Library_v1.i2c_ctl ~l:6 ~h:4 ~tsu:3 ~thold:6);
   report (Library_v1.i2c_tgt ~h_min:59 ~l_min:69 ~hd:59);
   report (Library_v1.i2c_tgt ~h_min:8 ~l_min:18 ~hd:8);
+  report (Library_v1.usb_ls_tx ());
   [%expect {|
     uart_tx_v1_d4_p0           units 2 instrs 12+2 preds 3/14 windows 3/7 codes 12/15
     uart_rx_v1_d8_m2_p1        units 2 instrs 21+11 preds 6/14 windows 7/7 codes 15/15
