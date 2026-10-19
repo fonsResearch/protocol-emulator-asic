@@ -46,6 +46,7 @@ let%expect_test "library packages" =
     i2c_ctl_v1_l6_h4           units 3 instrs 6+14+123 preds 14/14 windows 7/7 codes 12/15
     i2c_tgt_v1_h59_l69         units 5 instrs 75+1+4+26+1 preds 14/14 windows 6/7 codes 14/15
     i2c_tgt_v1_h8_l18          units 5 instrs 75+1+4+26+1 preds 14/14 windows 6/7 codes 14/15
+    usb_ls_tx_v1               units 5 instrs 2+1+11+6+6 preds 10/14 windows 7/7 codes 11/15
     |}]
 ;;
 

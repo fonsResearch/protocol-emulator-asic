@@ -50,7 +50,11 @@ let%expect_test "reference encoder: CRC-16/USB check value and SYNC" =
   printf "crc16(\"123456789\") = 0x%04X\n" (crc16 (List.map (String.to_list "123456789") ~f:Char.to_int));
   printf "DATA0 empty: %s\n" (show (fst (packet ~pid:0xC3 [])));
   printf "DATA1 0xFF 0xFF: %s\n" (show (fst (packet ~pid:0x4B [ 0xFF; 0xFF ])));
-  [%expect {| |}]
+  [%expect {|
+    crc16("123456789") = 0xB4C8
+    DATA0 empty: KJKJKJKKKKJKJKKKJKJKJKJKJKJKJKJK00J
+    DATA1 0xFF 0xFF: KJKJKJKKKKJJKJJKKKKKKKJJJJJJJKKKKKKKJJJJJJJKKKKKKKJJJ00J
+    |}]
 ;;
 
 let%expect_test "well-formed packets and aborts do not fire" =
@@ -65,7 +69,25 @@ let%expect_test "well-formed packets and aborts do not fire" =
     printf "abort before byte %d: %s\n" k
       (run (scenario ~abort_before:k ~pid:0xC3 (List.init 8 ~f:(fun i -> 0xF0 lor i))))
   done;
-  [%expect {| |}]
+  [%expect {|
+    N=0 random: ok | all 0xFF: ok | DATA1: ok
+    N=1 random: ok | all 0xFF: ok | DATA1: ok
+    N=2 random: ok | all 0xFF: ok | DATA1: ok
+    N=3 random: ok | all 0xFF: ok | DATA1: ok
+    N=4 random: ok | all 0xFF: ok | DATA1: ok
+    N=5 random: ok | all 0xFF: ok | DATA1: ok
+    N=6 random: ok | all 0xFF: ok | DATA1: ok
+    N=7 random: ok | all 0xFF: ok | DATA1: ok
+    N=8 random: ok | all 0xFF: ok | DATA1: ok
+    abort before byte 0: ok
+    abort before byte 1: ok
+    abort before byte 2: ok
+    abort before byte 3: ok
+    abort before byte 4: ok
+    abort before byte 5: ok
+    abort before byte 6: ok
+    abort before byte 7: ok
+    |}]
 ;;
 
 let%expect_test "violations fire the intended check" =
@@ -98,5 +120,17 @@ let%expect_test "violations fire the intended check" =
     ]
   in
   List.iter cases ~f:(fun (name, steps) -> printf "%-46s %s\n" name (run steps));
-  [%expect {| |}]
+  [%expect {|
+    SYNC: 8th state J instead of K                 FA3@13
+    stuffed bit missing (encoder without stuffing) FB1@26
+    EOP: one SE0 step                              FA5@64
+    EOP: three SE0 steps                           FA2@65
+    SE1 inside the packet                          FD1@18
+    D- not driven for one step                     F91@18
+    no status push                                 FC2@73
+    push inside the packet, line continues         FB2@20
+    abort with a J run of 6 steps                  FB2@36
+    gap of 9 J steps mid-packet, no push           FB1@33
+    payload of 12 bytes (data phase too long)      FA4@116
+    |}]
 ;;
