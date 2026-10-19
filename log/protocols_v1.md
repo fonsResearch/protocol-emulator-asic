@@ -89,6 +89,7 @@ The default core is lane 1 loadable, with 3 SRAM macros (not included in these a
 | 2 × UART TX (step-6 baseline) | 28 | 353,835 | 374,951 | 10.99 ns |
 | 10 committed packages (UART TX/RX, SPI ctl/tgt × 4 modes) | 646 | 395,717 | 417,200 | 10.64 ns |
 | 10 + 5 copies of SPI target m0 | 1,076 | 395,919 | - | - |
+| **all 15 packages** (10 + I2C ctl Fm/Sm, I2C tgt Fm/Sm, USB-LS TX), 2026-10-19 | 1,173 | **449,671** | 471,786 | 10.66 ns |
 
 - **ROM cost.** The 618 added words cost 41,882 µm² typ, about 68 µm² per 82-bit word (0.83 µm²/bit). This is measured, but packages that share structure (the SPI modes) lower the average.
 - **lib15 row.** It does not measure anything: identical package copies are merged by synthesis (+202 µm²).
@@ -96,6 +97,19 @@ The default core is lane 1 loadable, with 3 SRAM macros (not included in these a
 - **Fit [estimate].** The budget assumes 60 % target density over core area minus the 3 macros (84,381 µm²), and 1.34× growth from Yosys to post-route (one published IHP tile; not measured for this design).
   - 8×4 (primary): about 503k µm² Yosys-typ. lib10 uses 79 %, the projection 84-88 %.
   - 6×4 (fallback): about 366k µm². The step-6 baseline already uses 97 %, and lib10 108 %. The 6×4 fallback does not fit with the protocol ROM library.
+- **Full library (2026-10-19, measured; `rtl_v1/bin/emit_lane_rtl.exe top_macro_mon_liball`,
+  `flow/map/map_v1m.sh`, which reproduces the lib10 row exactly).** The 5 new packages add 527
+  words (I2C ctl 143 x 2, I2C tgt 107 x 2, USB 27) and +53,954 um2 typ, above the projection
+  (422k-442k). Flops rise from 3,389 to 3,760: the unit mark registers `mon_u*_m0/m1` (192 to
+  384 bits), `mon_hist*` (75 to 96) and 158 unnamed bits. These registers have their full width
+  in the RTL; on the ROM-only lane 0 synthesis had pruned the bits that no lib10 package can
+  reach, and the I2C packages (larger timing constants) make them live. About 371 x 48.9 um2 =
+  18k um2 is flops [estimate: flop cells only, without their logic]; the rest, about 36k for 527
+  words, matches the 68 um2/word measured before. Slow logic depth unchanged (10.66 ns). 15 of
+  the 16 package indices are used.
+- **Fit of the full library [estimate, same budget assumptions]:** 449.7k of about 503k
+  (8x4), i.e. 89 %, about 53k margin. The budget itself rests on the unmeasured 1.34x growth;
+  the first real number comes from the TT flow (plan step 8).
 - **Loadable store.** Loadable mode runs only 2 watchers (units 6-7), and the SPI packages use 5. So in a build without SPI in ROM, SPI would not be available at all.
 
 ## I2C (doc/protocols/i2c_v1.md; controller Sm l5 h5 tsu5 thold5, Fm l6 h4 tsu3 thold6; target Sm 59/69/59, Fm 8/18/8)

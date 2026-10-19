@@ -27,7 +27,7 @@ let () =
       | "top_macro_mon_rom" -> [| false; false |]
       | _ -> [| false; true |]
     in
-    (* top_macro_mon_lib10 / _lib15: ROM-library area study (plan step 7): the 10 committed
+    (* top_macro_mon_lib10 / _lib15 / _liball: ROM-library area study (plan step 7): the 10 committed
        protocol packages; lib15 adds five copies of the largest (SPI target, mode 0) as
        stand-ins for the planned I2C and USB packages *)
     let protocol10 =
@@ -42,6 +42,19 @@ let () =
       Pemu_monitor_v1.(
         match study with
         | Some "10" -> List.map protocol10 ~f:Compile.compile_exn
+        | Some "all" ->
+          (* plan step 7 ROM library: the 10 packages above plus I2C controller Fm/Sm, I2C
+             target Fm/Sm and USB-LS TX, with the parameters of their A2 proofs
+             (formal/src/ag_pkg.ml); 15 of the 16 package indices *)
+          List.map
+            (protocol10
+             @ [ Library_v1.i2c_ctl ~l:6 ~h:4 ~tsu:3 ~thold:6
+               ; Library_v1.i2c_ctl ~l:5 ~h:5 ~tsu:5 ~thold:5
+               ; Library_v1.i2c_tgt ~h_min:8 ~l_min:18 ~hd:8
+               ; Library_v1.i2c_tgt ~h_min:59 ~l_min:69 ~hd:59
+               ; Library_v1.usb_ls_tx ()
+               ])
+            ~f:Compile.compile_exn
         | Some "15" ->
           List.map
             (protocol10 @ List.init 5 ~f:(fun _ -> Library_v1.spi_tgt ~cpol:false ~cpha:false ~h_min:3 ~g:6))
@@ -50,6 +63,12 @@ let () =
           [ Compile.compile_exn (Library_v1.uart_tx ~d:3 ~pin:0)
           ; Compile.compile_exn (Library_v1.uart_tx ~d:4 ~pin:1) ])
     in
+    (* PEMU_LIB_STATS=1: per-package ROM word counts on stderr (area study) *)
+    if Option.is_some (Sys.getenv "PEMU_LIB_STATS")
+    then
+      List.iter lib ~f:(fun (p : Pemu_monitor_v1.Mprog.t) ->
+        let w = Array.sum (module Int) p.units ~f:(fun u -> Array.length u.code) in
+        eprintf "lib %s units %d words %d\n" p.name (Array.length p.units) w);
     let circ =
       CT.create_exn ~name:"pemu_core_v1m"
         (Top_v1.create ~loadable ~lib ~sram:(fun l ->
