@@ -134,3 +134,15 @@ let%expect_test "violations fire the intended check" =
     payload of 12 bytes (data phase too long)      FA4@116
     |}]
 ;;
+
+let%expect_test "start-up convention: reset outputs, then J undriven, then driven" =
+  let released = { st = None; push = false; oe = 0; raw = None } in
+  let j_undriven = { (line J) with oe = 0 } in
+  let pkt = scenario ~pid:0xC3 [ 0x5A ] in
+  printf "start-up ok:              %s\n" (run (released :: j_undriven :: pkt));
+  printf "third step still undriven: %s\n" (run (released :: j_undriven :: j_undriven :: pkt));
+  [%expect {|
+    start-up ok:              ok
+    third step still undriven: F91@3
+    |}]
+;;

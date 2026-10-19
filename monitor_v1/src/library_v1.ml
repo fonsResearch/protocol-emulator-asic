@@ -612,9 +612,10 @@ let i2c_tgt ~h_min ~l_min ~hd =
    K = (1,0), SE0 = (0,0), SE1 = (1,1) illegal. There is no environment input, so the contract
    has no blame checks: U for this package is "no fail". Predicates have at most 3 literals, so
    driven-ness and SE1 are separate watchers and J/K/SE0 are tested on dp/dm only.
-   [drive] (G1): both pins driven in every step after the first one after a restart (first-step
-   convention).  [legal] (G2): never SE1.
-   [frame]: idle = J (G3); K starts a packet (guard); SYNC tail J K J K J K K (G4); SE0 within
+   [drive] (G1): both pins driven from the third step after a restart (start-up convention: the
+   first two instructions are OUT 0x02 (J) and OEN 0x03, each visible one step later).
+   [legal] (G2): never SE1.
+   [frame]: idle = J from the third step after a restart (G3); K starts a packet (guard); SYNC tail J K J K J K K (G4); SE0 within
    [1, data_max + 1] steps (G8; data_max = PID 8 + payload 64 + CRC 16 + 14 stuffed bits); then
    SE0 for exactly 2 steps and J for 1 (G6). Between SYNC and SE0 the line is J or K (no SE0 by
    the await, no SE1 by [legal]).
@@ -629,7 +630,7 @@ let usb_ls_tx () =
   let chg = changed "dp" ||| changed "dm" in
   let data_max = 8 + 64 + 16 + 14 in
   let drive =
-    watcher "drive" ~base:0x90 [ skip 1; loop [ hold (v "oe0" &&& v "oe1") ~for_:4095 ~else_:(fail 1) ] ]
+    watcher "drive" ~base:0x90 [ skip 2; loop [ hold (v "oe0" &&& v "oe1") ~for_:4095 ~else_:(fail 1) ] ]
   in
   let legal = watcher "legal" ~base:0xD0 [ loop [ hold !!(dp &&& dm) ~for_:4095 ~else_:(fail 1) ] ] in
   let hj = hold j ~for_:1 ~else_:(fail 2)
@@ -638,7 +639,8 @@ let usb_ls_tx () =
     watcher
       "frame"
       ~base:0xA0
-      [ loop
+      [ skip 2
+      ; loop
           [ guard k
               [ loop [ hold j ~for_:4095 ~else_:(fail 1) ] ]
               ~on:

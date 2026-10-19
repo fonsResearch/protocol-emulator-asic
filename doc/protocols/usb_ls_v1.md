@@ -47,8 +47,10 @@ only (not monitored on chip); **[O]** = checked only by co-simulation and the si
 - One step = one bit (P = 39, bit_period = 1).
 - Line state per step: J = (dp, dm) = (0, 1); K = (1, 0); SE0 = (0, 0); (1, 1) is illegal (SE1).
 - Driven: `oe0` = `oe1` = 1.
-- First-step convention: the program drives J (or releases both pins) in its first step
-  (assembler lint).
+- Start-up convention (amended 2026-10-19 while writing the contract, before any firmware): the
+  program's first two instructions are `OUT 0x02` (J) and `OEN 0x03`. Each takes one step and is
+  visible from the next step, so after a restart the outputs are the reset values in the first
+  step and J undriven in the second; G1 and G3 apply from the third step.
 
 ## 2. Host interface
 
