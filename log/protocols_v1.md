@@ -145,3 +145,33 @@ Calibration:
 
 First I2C runs: a2_i2c_ctl_fm_u and a2_i2c_tgt_fm_u ran in parallel, 1800 s each: both TIMEOUT. The two portfolios (16 engines each) shared 11 cores, so the run is inconclusive. The time limit killed only the rIC3 parent and left engines running; runs now use `formal/glimit.pl`, which kills the whole process group.
 
+## USB-LS TX (doc/protocols/usb_ls_v1.md; D+ uio0, D- uio1; one step per bit, P = 39)
+
+Contract `Library_v1.usb_ls_tx` (5 units, 10/14 predicates, 7/7 windows, 11/15 codes; no blame
+checks, so U = no fail). Contents (G7) and status values are checked by the proof-side receiver
+circuit `formal/src/usb_check.ml`. Firmware `Programs_v1.usb_ls_tx`. Host-stream assumption as
+for all packages: the RX FIFO is never full (`rx_never_full`).
+
+Before any formal run (all measured, 2026-10-19):
+- contract tests on reference waveforms (`protocols_v1/test/test_usb.ml`): N = 0..8 (random,
+  all 0xFF, DATA1) and aborts before each payload byte do not fire; 11/11 hand-made violations
+  fire the intended check; start-up convention test;
+- co-simulation: every packet equals the independent encoder `Usb_ref` bit for bit, all line
+  runs are whole 40-cycle bits, statuses 0/2/1 as specified, no firings, Interp vs compiled
+  model 0 mismatches;
+- sigrok (`usb_signalling` + `usb_packet`, low speed): 5 CRC-valid packets decoded = expected,
+  the aborted packet rejected with a CRC16 error; negative control (one expected byte changed)
+  reports a mismatch.
+
+| harness | expected | result | depth | wall s | notes |
+|---|---|---|---|---|---|
+| a2_usb_u | PASS | **PASS** (dprove; PDR invariant 8,876 clauses, re-verified) | | 1246 | unbounded |
+| a2_usb_g7 | PASS | TIMEOUT (dprove 1,200 s, then 2,700 s) | | 2700 | contents not yet proved |
+| a2_usb_n1_cover_neg | FAIL | FAIL, replay ok (status-0 push after a complete packet, no fail) | 50 | 52 | non-vacuity |
+| a2_usb_u_sync_neg | FAIL | FAIL, replay ok | 21 | 10 | SYNC byte 0x81 |
+| a2_usb_u_nopush_neg | FAIL | FAIL, replay ok | 35 | 18 | abort push removed |
+| a2_usb_g7_sendc_neg | FAIL | FAIL, dprove trace, replay ok | 58 | 199 | payload sent with SEND (CRC not updated) |
+| a2_usb_g7_status_neg | FAIL | FAIL, dprove trace, replay ok | 50 | 131 | status 3 instead of 0 |
+| a2_usb_u_sendc | (mutant) | PASS (dprove) | | 627 | the CRC mutant satisfies the on-chip contract: only the proof-side check G7 catches it |
+
+Traces: `log/cex/a2_usb_*.cex`.
