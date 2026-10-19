@@ -39,7 +39,7 @@ the local machine (11 CPUs) unless marked as estimates.
 | + T6 (keyed bit relations) | 48,427; k=1: CTI (lane_pc 33 / mon_u0_pc 3); k=3: CTI, 18 s |
 | + lower bounds and joint keys | 109,667; base 109,598; k=3 (property assumed and checked): CTI with 100,479 alive, 710 s |
 | strengthened model from that set | 8,757 original ANDs kept, 307,836 appended, extension check ok; bmc3 reaches bad' at frame 8 (a mined lemma is false at depth 8; the set had not converged) |
-| k=3, property assumed only, FIFO-data lemmas pruned | start 91,728 (base depth 12); stopped at the 1 h limit after 11,204 iterations with about 71,100 alive (71,098 at iteration 11,181) and still eroding at about 290 lemmas/min (79,908 at 1,391 s, 71,098 at 3,218 s); not converged |
+| k=3, property assumed only, FIFO-data lemmas pruned | start 91,728 (base depth 12); stopped at the 1 h limit after 11,204 iterations with 71,061 alive at the last progress line (iteration 11,201) and still eroding at about 290 lemmas/min (79,908 at 1,391 s, 71,098 at 3,218 s); not converged |
 
 Not yet run on the current tooling: target Houdini, rIC3 or ABC on any strengthened model.
 

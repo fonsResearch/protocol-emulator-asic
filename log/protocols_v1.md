@@ -116,9 +116,10 @@ Status (2026-10-18; the long runs were stopped by the user):
 | a2_i2c_ctl_fm_h2_neg | FAIL | FAIL, replay ok | 46 | 41 | firmware H - 2 |
 | a2_i2c_ctl_fm_nowired_neg | FAIL | FAIL (NO-BMC-CEX) | 198 | 738 | free pads instead of wired-AND |
 | a2_i2c_tgt_fm_noassume_neg | FAIL | FAIL, replay ok | 52 | 11 | after D11 |
-| a2_i2c_tgt_fm_u / sm_u | PASS | not yet run to completion after D11 | | | before D11: F61 at depth 158 (D11) |
-| a2_i2c_tgt_fm_n1_cover_neg | FAIL | TIMEOUT 2400 s (before D11) | | | |
-| a2_i2c_tgt_fm_noack_neg / stretchhigh_neg | FAIL | FAIL at 151 / 213 before D11, NO-BMC-CEX, not decoded | | | |
+| a2_i2c_tgt_fm_u | PASS | **FAIL** (dprove, frame 275, 2,155 s); traces F51@239 and F52@274 via checkpoint BMC, replay ok | 239 / 274 | 2155 | D12 (open): contract accepts conditions one step apart |
+| a2_i2c_tgt_sm_u | PASS | TIMEOUT (dprove 2,400 s) | | 2400 | after D11; D12 likely applies (not checked) |
+| a2_i2c_tgt_fm_n1_cover_neg | FAIL | TIMEOUT (dprove 2,400 s) | | 2400 | after D11 |
+| a2_i2c_tgt_fm_noack_neg / stretchhigh_neg | FAIL | FAIL at 239 / 274 (dprove 805 / 862 s), dprove traces replay ok, decoded F51 / F52 | 239 / 274 | 805 / 862 | same frames and codes as the unmutated package (D12): not evidence of mutant detection until rerun |
 
 **Controller U is a bounded result (user decision, option 1).** bmc3 found no U violation within 77 frames (Fm) and 76 frames (Sm), 3500 s each. Ticks are free, so a frame is at most one lane step. The bound covers start-up (header pops, about 25 steps), START and the first 4-5 address cells of the first transaction. It does not cover a whole transaction: the N1 witness for one status push needed 172 frames. All earlier controller counterexamples (D8 depth 26, D9 41, D10 62/63) lie inside the bound. The time per frame grows to over a minute past frame 70, so plain BMC will not reach a full transaction on this machine. An unbounded U for the controller is still open.
 
