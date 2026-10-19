@@ -97,7 +97,12 @@ last state. The test happens just before the POP, so a POP never blocks inside a
   between SYNC and EOP equals the PID byte, the N payload bytes popped from the TX FIFO, and the
   CRC16 over the payload, as computed by the reference encoder (USB 2.0 coding order: CRC over
   data, then stuffing, then NRZI). For an aborted packet, the bits before the abort run are a
-  prefix of that sequence. This is a property of the A2 harness, not of the on-chip monitor.
+  prefix of that sequence. This is a property of the A2 harness, not of the on-chip monitor. It
+  is checked by an independent low-speed **receiver** circuit in the harness
+  (`formal/src/usb_check.ml`: NRZI decode, unstuffing, byte comparison with the popped bytes,
+  byte count and CRC16 at the first SE0), which is equivalent to comparing against the
+  reference encoder and easier to align in time. The pure OCaml encoder
+  (`protocols_v1/src/usb_ref.ml`) is the oracle for co-simulation and the contract tests.
 - G8 Progress [C]: once the PID byte is popped, the EOP ends within a bound of B steps
   (B = 8 + 8 + 8N + 16 + stuffed bits + 3; the contract uses the bound for N = 8).
 - G9 Status [C for the push, P for the value]: exactly one status push per packet: within 8 steps

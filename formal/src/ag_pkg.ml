@@ -43,6 +43,7 @@ module Compile = Pemu_monitor_v1.Compile
 type goal =
   | Push_ok (* a push event *)
   | Pop_ok (* a pop event *)
+  | Push_data of int (* a push event carrying this byte *)
 
 type io =
   { clock : Signal.t
@@ -154,11 +155,26 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ~io ~
   in
   let env_bad_seen = sticky env_bad "h_env_bad" in
   let ok = ~:(env_bad_seen |: env_bad) in
+  (* USB-LS TX contents (G7, G9 values): proof-side receiver, D+ = uio0, D- = uio1 *)
+  let usb_mm =
+    match mode with
+    | `G7 ->
+      fst
+        (Usb_check.create ~clock ~running ~step:(running &: tick) ~dp:(bit o.uio_out 0) ~dm:(bit o.uio_out 1)
+           ~pop_ev:o.pop_ev ~pop_data:o.pop_data ~push_ev:o.push_ev ~push_data:o.push_data)
+    | _ -> gnd
+  in
   let bad =
     match mode with
+    | `G7 -> ok &: usb_mm
     | `U -> ok &: fail_now &: ~:(blame_seen |: blame_now)
     | `N1 goal ->
-      let g = match goal with Push_ok -> o.push_ev | Pop_ok -> o.pop_ev in
+      let g =
+        match goal with
+        | Push_ok -> o.push_ev
+        | Pop_ok -> o.pop_ev
+        | Push_data v -> o.push_ev &: (o.push_data ==:. v)
+      in
       ok &: g &: ~:(fail_seen |: fail_now |: blame_seen |: blame_now)
   in
   (* observable behaviour per cycle, for the symmetry lemma *)
@@ -484,6 +500,33 @@ let i2c_all ?debug () =
   ]
 ;;
 
+(* ---- USB-LS TX (doc/protocols/usb_ls_v1.md) ---- *)
+let usb_mut ~from ~to_ =
+  let m = List.map P1.usb_ls_tx ~f:(fun x -> if Isa1.equal x from then to_ else x) in
+  if List.equal Isa1.equal m P1.usb_ls_tx then raise_s [%message "usb mutant does not change the program"];
+  m
+;;
+
+let usb_all ?debug () =
+  let h ?(prog = P1.usb_ls_tx) ~mode name =
+    harness ?debug ~rx_never_full:true ~mode ~prog ~contract:(Lib.usb_ls_tx ()) ~own:P1.usb_own ~od:0
+      ~cfg:P1.usb_cfg ~cfg2:0 ~name ()
+  in
+  let sendc = usb_mut ~from:(Isa1.Ser (Sendc R2)) ~to_:(Isa1.Ser (Send R2))
+  and sync = usb_mut ~from:(Isa1.Ldi (L Sr, 0x80)) ~to_:(Isa1.Ldi (L Sr, 0x81))
+  and status = usb_mut ~from:(Isa1.Ldi (L R1, 0)) ~to_:(Isa1.Ldi (L R1, 3))
+  and nopush = usb_mut ~from:(Isa1.Push R3) ~to_:Isa1.Nop in
+  [ h ~mode:`U "a2_usb_u"
+  ; h ~mode:`G7 "a2_usb_g7"
+  ; h ~mode:(`N1 (Push_data 0)) "a2_usb_n1_cover_neg"
+  ; h ~prog:sendc ~mode:`G7 "a2_usb_g7_sendc_neg"
+  ; h ~prog:sendc ~mode:`U "a2_usb_u_sendc"
+  ; h ~prog:sync ~mode:`U "a2_usb_u_sync_neg"
+  ; h ~prog:status ~mode:`G7 "a2_usb_g7_status_neg"
+  ; h ~prog:nopush ~mode:`U "a2_usb_u_nopush_neg"
+  ]
+;;
+
 let all ?debug () =
   let rx ?(prog = P1.uart_rx ~d:8 ~pin:1) ?(contract = Lib.uart_rx ~d:8 ~m:2 ~pin:1) ~mode name =
     harness ?debug ~rx_never_full:true ~mode ~prog ~contract ~own:0 ~od:0 ~cfg:0 ~cfg2:0 ~name ()
@@ -501,4 +544,5 @@ let all ?debug () =
   ]
   @ spi_all ?debug ()
   @ i2c_all ?debug ()
+  @ usb_all ?debug ()
 ;;
