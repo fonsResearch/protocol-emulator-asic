@@ -120,7 +120,8 @@ Status (2026-10-18; the long runs were stopped by the user):
 | a2_i2c_tgt_sm_u (before EA1) | PASS | TIMEOUT (dprove 2,400 s) | | 2400 | |
 | a2_i2c_tgt_fm_n1_cover_neg (before EA1) | FAIL | TIMEOUT (dprove 2,400 s) | | 2400 | |
 | a2_i2c_tgt_fm_noack_neg / stretchhigh_neg (before EA1) | FAIL | FAIL at 239 / 274, same frames and codes as the unmutated package (D12) | 239 / 274 | 805 / 862 | not evidence of mutant detection |
-| a2_i2c_tgt_fm_u (with EA1) | PASS | not yet proved; D12 traces excluded (bad never rises); no violation in 512 clean co-sim traces (7.68M cycles) or in 40 checkpoint-BMC windows (50 frames, 120 s each; depth reached not recorded) | | | |
+| a2_i2c_tgt_fm_u (with EA1; bounded, user decision 2026-10-19) | PASS | no violation: D12 traces excluded; clean co-sim 512 x 15,000 cycles (7.68M cycles, 7,045,522 guarded), bad 0; checkpoint BMC from cycles 300/1,000/2,000/4,000/8,000 of 8 clean traces: 38 windows checked to 40 frames, 2 windows stopped at the 400 s cap (depth not reported); not an unbounded proof | 40 per window | | `formal/inv/ckpt_bmc.py`, `trace2cex.py` |
+| a2_i2c_tgt_sm_u (with EA1; bounded, user decision 2026-10-19) | PASS | no violation: clean co-sim 512 x 15,000 cycles (7.68M cycles, 7,108,062 guarded), bad 0; checkpoint BMC: 40 windows checked to 40 frames; not an unbounded proof | 40 per window | | |
 | a2_i2c_tgt_fm_n1_cover_neg (with EA1) | FAIL | FAIL: witness from a clean co-sim trace, replay ok, no firing | 1844 | | non-vacuity of EA1 + contract |
 | a2_i2c_tgt_fm_noack_neg (with EA1) | FAIL | FAIL: F54 (missing data ACK), clean co-sim trace, replay ok | 1907 | | own mechanism |
 | a2_i2c_tgt_fm_stretchhigh_neg (with EA1) | FAIL | FAIL: F61 (high watcher: SCL pulled while high), clean co-sim trace, replay ok | 873 | | own mechanism |

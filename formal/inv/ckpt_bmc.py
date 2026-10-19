@@ -92,7 +92,9 @@ def main():
             capture_output=True, text=True)
         o = re.sub(r"\x1b\[[0-9;]*m", "", r.stdout + r.stderr)
         hit = re.search(r"asserted in frame (\d+)", o)
-        print("checkpoint %d: %s" % (f, ("bad at +%s" % hit.group(1)) if hit else "no hit"), flush=True)
+        clean = re.search(r"No output asserted in (\d+) frames", o)
+        print("checkpoint %d: %s" % (f, ("bad at +%s" % hit.group(1)) if hit
+                                     else "no hit, %s frames checked" % (clean.group(1) if clean else "?")), flush=True)
         if hit:
             _, suf = read_cex(cx)
             full = os.path.join(wd, "full_%d.cex" % f)
