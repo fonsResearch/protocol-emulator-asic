@@ -18,6 +18,15 @@
    side: [rx_never_full] = the RX FIFO is never full; [pop_pcs] = the lane never executes a
    POP at one of these program addresses while the TX FIFO is empty (the host keeps a byte
    ready for every frame, SPI target).
+   [i2c_env (gap, scl, sda)] (I2C target, user decision 2026-10-19 on D12: an environment
+   assumption that the chip does NOT monitor, listed with the physical assumptions in
+   doc/protocols/i2c_v1.md). Both parts constrain only what the environment drives (its own
+   input bits; 1 = released), never the wired-AND bus level, so a chip pull can never raise
+   them (D7 pattern). A-gap: changes of the environment's SDA drive (synchronised as the pads,
+   sampled at lane steps) while the bus SCL is high in this step and the previous step are at
+   least [gap] steps apart. A-idle: the environment releases SCL and SDA in every cycle in which
+   the lane is running and has not yet popped since its last restart (the pop cycle included);
+   a halted or disabled lane puts no constraint on the bus.
    [od_wired] (I2C): for these pins the pad is the wired-AND of the free environment input and
    the lane's own pull (uio_oe and not uio_out, owned pins) in the same cycle, as on an
    open-drain bus in silicon (the pad follows the output flop within the cycle; the
@@ -67,7 +76,7 @@ type core_out =
   }
 
 (* The harness logic on given inputs. *)
-let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ~io ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () =
+let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ~io ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () =
   let clock = io.clock in
   let gs = Reg_spec.create ~clock () in
   let started = reg gs vdd -- "env_started" in
@@ -114,6 +123,35 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ~io ~mode ~pro
     List.fold pop_pcs ~init:env_bad ~f:(fun acc a ->
       acc |: (running &: tick &: (o.pc ==:. a) &: (o.tx_level ==:. 0)))
   in
+  let env_bad =
+    match i2c_env with
+    | None -> env_bad
+    | Some (gap, scl_pin, sda_pin) ->
+      let rs = Reg_spec.create ~clock () in
+      let fb n w f =
+        let d = wire w in
+        let q = reg rs d -- n in
+        d <== f q;
+        q
+      in
+      let scl = bit (sync2 uio_in) scl_pin (* bus SCL as the lane and monitor see it *)
+      and sda = bit (sync2 io.uio_in) sda_pin (* the environment's own SDA drive *) in
+      let step = running &: tick in
+      let valid = fb "h_i2c_valid" 1 (fun q -> mux2 ~:running gnd (q |: step)) in
+      let scl_p = fb "h_i2c_scl_p" 1 (fun q -> mux2 step scl q) in
+      let sda_p = fb "h_i2c_sda_p" 1 (fun q -> mux2 step sda q) in
+      let cond = step &: valid &: scl &: scl_p &: (sda ^: sda_p) in
+      let w = Int.ceil_log2 (gap + 1) in
+      let since =
+        fb "h_i2c_since" w (fun q ->
+          mux2 ~:running (of_int ~width:w gap)
+            (mux2 cond (zero w) (mux2 (step &: (q <:. gap)) (q +:. 1) q)))
+      in
+      let gap_bad = cond &: (since <:. gap - 1) in
+      let popped = fb "h_i2c_popped" 1 (fun q -> mux2 ~:running gnd (q |: o.pop_ev)) in
+      let idle_bad = running &: ~:popped &: ~:(bit io.uio_in scl_pin &: bit io.uio_in sda_pin) in
+      env_bad |: gap_bad |: idle_bad
+  in
   let env_bad_seen = sticky env_bad "h_env_bad" in
   let ok = ~:(env_bad_seen |: env_bad) in
   let bad =
@@ -142,9 +180,9 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ~io ~mode ~pro
 (* harness name -> contract, for the reference-interpreter decode of counterexamples *)
 let contracts : Pemu_monitor_v1.Lang.t String.Table.t = String.Table.create ()
 
-let harness ?debug ?rx_never_full ?pop_pcs ?od_wired ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
+let harness ?debug ?rx_never_full ?pop_pcs ?od_wired ?i2c_env ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
   Hashtbl.set contracts ~key:name ~data:contract;
-  let c = core ?rx_never_full ?pop_pcs ?od_wired ~io:(free_io ()) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () in
+  let c = core ?rx_never_full ?pop_pcs ?od_wired ?i2c_env ~io:(free_io ()) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () in
   Harness.bad_circuit ?debug ~dbg:c.dbg ~name c.bad
 ;;
 
@@ -427,7 +465,8 @@ let i2c_all ?debug () =
   let tgt ?(prog = P1.i2c_tgt ~addr:0x50) ?(contract = Fn.id) ~mode (h_min, l_min, hd) name =
     (* host-stream assumption (doc 3.1): the config byte is in the TX FIFO when the lane
        starts, i.e. the config POP (pc 2) never executes with an empty FIFO *)
-    harness ?debug ~rx_never_full:true ~pop_pcs:[ 2 ] ~od_wired:P1.i2c_own ~mode ~prog
+    harness ?debug ~rx_never_full:true ~pop_pcs:[ 2 ] ~od_wired:P1.i2c_own
+      ~i2c_env:(hd, 2, 3) (* SCL = uio2, SDA = uio3 (user decision 2026-10-18) *) ~mode ~prog
       ~contract:(contract (Lib.i2c_tgt ~h_min ~l_min ~hd)) ~own:P1.i2c_own ~od:P1.i2c_od ~cfg:0 ~cfg2:0 ~name ()
   in
   let l, h, tsu, thold = fm in

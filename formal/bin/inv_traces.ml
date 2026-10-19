@@ -24,6 +24,10 @@ let () =
   and ncy = Int.of_string argv.(4)
   and seed = Int.of_string argv.(5) in
   let is_ctl = String.is_substring name ~substring:"_ctl_" in
+  (* INV_CLEAN=1: legal traffic only (peer at or above the UM10204 minima, prescaler ticks, no
+     glitches, no pad noise, no reset/run drops); used to check that environment assumptions
+     do not exclude legal behaviour *)
+  let clean = Option.is_some (Sys.getenv "INV_CLEAN") in
   let circuit = Registry.find ~debug:true name in
   let oc = Out_channel.create file in
   let rng = Random.State.make [| seed |] in
@@ -38,7 +42,7 @@ let () =
     let set n v = let p = ip n in p := Bits.of_int ~width:(Bits.width !p) v in
     (* tick pattern: prescaler period, with optional random jitter or fully random ticks *)
     let p = if is_ctl then 1 + r 15 else if chance 3 then 1 + r 7 else 3 in
-    let tick_mode = r 4 (* 0,1: prescaler; 2: prescaler with jitter; 3: random *) in
+    let tick_mode = if clean then 0 else r 4 (* 0,1: prescaler; 2: prescaler with jitter; 3: random *) in
     let tick_q = 1 + r 4 in
     let scale = p + 1 in
     (* peer *)
@@ -54,7 +58,7 @@ let () =
         (* controller peer: UM10204 Fm/Sm minima scaled to the step length, sometimes faster
            than the contract allows (assumption violations end the useful part of a trace) *)
         let base = if String.is_substring name ~substring:"_sm_" then Peers.i2c_sm else Peers.i2c_fm in
-        let num = if chance 6 then 2 + r 2 else 4 + r 8 and den = 4 in
+        let num = if chance 6 && not clean then 2 + r 2 else 4 + r 8 and den = 4 in
         let sc x = Int.max 2 (x * num * scale / (den * 4)) in
         let t =
           { Peers.tlow = sc base.tlow; thigh = sc base.thigh; thd_sta = sc base.thd_sta
@@ -93,8 +97,8 @@ let () =
     let verbose = Option.is_some (Sys.getenv "INV_VERBOSE") in
     let first_blame = ref None in
     for c = 0 to ncy - 1 do
-      let rst = if c <= rst_at || chance 40_000 then 0 else 1 in
-      let run = if c < run_at || chance 30_000 then 0 else 1 in
+      let rst = if c <= rst_at || ((not clean) && chance 40_000) then 0 else 1 in
+      let run = if c < run_at || ((not clean) && chance 30_000) then 0 else 1 in
       let tick =
         match tick_mode with
         | 0 | 1 -> !cnt = p
@@ -104,10 +108,13 @@ let () =
       cnt := if rst = 1 && run = 1 then (if tick then 0 else !cnt + 1) else 0;
       let pd = drive { Psim.cycle = c; out = !prev_out; oe = !prev_oe; pad = !prev_pad } in
       let env = 0xFF land lnot (pd.drive_oe land lnot pd.drive_val) in
-      let env = if glitch > 0 && chance glitch then env lxor (1 lsl (2 + r 2)) else env in
-      let env = if chance 16 then env lxor (r 256 land 0xF3) else env in
+      let env = if glitch > 0 && (not clean) && chance glitch then env lxor (1 lsl (2 + r 2)) else env in
+      let env = if chance 16 && not clean then env lxor (r 256 land 0xF3) else env in
       let push =
-        (not (Queue.is_empty host)) && ((c = 1 && first_push) || (c > 1 && c % gap = 0 && not (chance 20)))
+        (* the first push lands in the first cycle after reset release (a push under reset is
+           lost and would violate the target's config-byte host assumption) *)
+        (not (Queue.is_empty host))
+        && ((c = rst_at + 1 && first_push) || (c > rst_at + 1 && c % gap = 0 && not (chance 20)))
       in
       let wdata = if push then Queue.dequeue_exn host else r 256 in
       let rx_pop = if chance 10 then 0 else 1 in

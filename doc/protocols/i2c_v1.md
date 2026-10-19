@@ -219,3 +219,30 @@ Target firmware (`Programs_v1.i2c_tgt`, 141 words; same program for Sm and Fm):
 - firmware mutants fail without an earlier blame: write ACK missing F54, write bits LSB-first F57, read bits LSB-first F55, SCL pulled in a high phase F61, read data changed in a high phase F61. A mutant that ACKs a different address is silent ([O], as stated in 4.6);
 - spec-free cross-check (`xcheck.sh … i2c_tgt`, 3 random scenarios incl. stretching): the decoded bus equals the controller transcript, the decoded writes to 0x50 equal the lane's pushes, and the decoded reads from 0x50 equal the lane's pops.
 
+## 6. Unmonitored environment assumption of the target theorem (D12, user decision 2026-10-19)
+
+The target package's U and N1 are proved under an environment assumption that the chip does
+**not** monitor. It is part of the harness (`Ag_pkg.core ~i2c_env:(hd, 2, 3)`), not of the
+contract, and is listed with the physical assumptions (`doc/concept/assume_guarantee.md`,
+EA1). Both parts constrain only what the environment drives (its own SCL/SDA bits,
+1 = released), never the wired-AND bus level, so a chip pull can never trigger them.
+
+- **A-gap.** Changes of the environment's SDA drive (synchronised like the pads and sampled at
+  lane steps) while the bus SCL is high in this step and the previous step (I2C conditions) are
+  at least `hd` steps apart (Fm 8, Sm 59 steps at P = 3). UM10204 requires at least tHD;STA
+  after a START and tBUF (longer) between a STOP and the next START, so this is the weaker
+  bound.
+- **A-idle.** The environment releases SCL and SDA in every cycle in which the target lane is
+  running and has not yet popped its config byte since its last restart (the pop cycle
+  included). A halted or disabled lane puts no constraint on the bus.
+
+Why: the frame watcher detects START by edge and only after its config `take`, while the
+firmware detects it by level; and the firmware samples SDA only every few steps during SCL
+high, so it cannot see a condition that is undone within one or two steps. Without the
+assumption, U fails (D12, `log/disagreements.md`; traces `log/cex/d12_*.cex`).
+
+Checked against legal traffic: on 512 clean co-simulation traces (UM10204-timed controller
+peer, prescaler ticks, no glitches, `INV_CLEAN=1 inv_traces.exe`), the assumption excludes
+cycles in 38 traces, all of them target (re)starts while the bus is busy: 28 halt on a
+mismatched config byte followed by `clear_fault`, and 10 have a START within the first 40
+cycles. No other traffic is excluded.

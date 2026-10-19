@@ -64,6 +64,12 @@ N2 and N3 are the honest limit: a contract is a reading of prose, and no proof c
 | PH7 | the wrapper's reset synchroniser behaves as modelled | currently checked by replay only [F] |
 | PH8 | supply is stable | analogue |
 
+Unmonitored environment assumptions (not physical; each one weakens the "unconditional" claim for its package and is stated with the package):
+
+| id | assumption | package |
+|---|---|---|
+| EA1 | I2C conditions driven by the environment are at least hd steps apart, and the environment keeps the bus idle until the target has popped its config byte after a (re)start (`doc/protocols/i2c_v1.md` section 6) | I2C target Sm/Fm (D12, user decision 2026-10-19) |
+
 Every proof report lists the subset it relies on.
 
 ## 4. Proof chain
