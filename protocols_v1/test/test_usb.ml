@@ -146,3 +146,85 @@ let%expect_test "start-up convention: reset outputs, then J undriven, then drive
     third step still undriven: F91@3
     |}]
 ;;
+
+(* ---- co-simulation: lane model running Programs_v1.usb_ls_tx (P = 39), monitor, host ---- *)
+module P1 = Pemu_spec_v1.Programs_v1
+
+let setup =
+  { Psim.prog = P1.usb_ls_tx; own = P1.usb_own; od = 0; cfg = P1.usb_cfg; cfg2 = 0; p = 39
+  ; contract = Lib.usb_ls_tx (); open_drain_wired_and = 0 }
+;;
+
+(* run-length decode of the driven line per cycle into bit-time states; checks that every run is
+   a whole number of 40-cycle bits *)
+let line_of (r : Psim.result) =
+  let st (o, oe) =
+    if oe land 3 <> 3 then None
+    else match o land 3 with 0b10 -> Some J | 0b01 -> Some K | 0b00 -> Some SE0 | _ -> Some SE0
+  in
+  let runs = ref [] in
+  Array.iter r.outs ~f:(fun x ->
+    let s = st x in
+    match !runs with
+    | (s', n) :: rest when Option.equal equal_state s s' -> runs := (s', n + 1) :: rest
+    | _ -> runs := (s, 1) :: !runs);
+  let runs = List.rev !runs in
+  let bad = List.filter (List.drop (List.drop_last_exn runs) 2) ~f:(fun (_, n) -> n mod 40 <> 0) in
+  runs, bad
+;;
+
+(* packets = maximal stretches from a K that follows idle J to the J after SE0 SE0 *)
+let packets runs =
+  let bits = List.concat_map runs ~f:(fun (s, n) -> match s with Some s -> List.init (n / 40) ~f:(fun _ -> s) | None -> []) in
+  let rec go acc cur = function
+    | [] -> List.rev acc
+    | SE0 :: SE0 :: J :: rest -> go (List.rev (J :: SE0 :: SE0 :: cur) :: acc) [] rest
+    | J :: rest when List.is_empty cur -> go acc [] rest
+    | s :: rest -> go acc (s :: cur) rest
+  in
+  go [] [] bits
+;;
+
+let cosim ?tx_times ~cycles host expected =
+  let r = Psim.run ~tx_bytes:host ?tx_times ~setup ~cycles ~peer:(fun _ -> { Psim.drive_oe = 0; drive_val = 0 }) () in
+  let runs, bad = line_of r in
+  let got = packets runs in
+  printf "  firings [%s] model_mismatch %d status %s; non-integral runs %d\n" (Psim.show_firings r) r.model_mismatch
+    (String.concat ~sep:" " (List.map (Psim.pushes r) ~f:(sprintf "%d"))) (List.length bad);
+  List.iteri got ~f:(fun i p ->
+    let ok = match List.nth expected i with Some e -> List.equal equal_state e p | None -> false in
+    printf "  packet %d: %d bits, equals reference %b%s\n" i (List.length p) ok
+      (match List.nth expected i with Some e when not ok -> "\n    got " ^ show p ^ "\n    ref " ^ show e | _ -> ""));
+  if List.length got <> List.length expected then printf "  packets: got %d, expected %d\n" (List.length got) (List.length expected)
+;;
+
+let%expect_test "co-simulation: packets equal the reference encoder" =
+  let pk pid pl = fst (packet ~pid pl) in
+  let ps = [ 0xC3, []; 0x4B, [ 0x01; 0x02; 0x03 ]; 0xC3, List.init 8 ~f:(fun i -> (37 * i) land 0xFF); 0x4B, List.init 8 ~f:(fun _ -> 0xFF) ] in
+  let host = List.concat_map ps ~f:(fun (pid, pl) -> pid :: List.length pl :: pl) in
+  cosim ~cycles:40_000 host (List.map ps ~f:(fun (p, l) -> pk p l));
+  [%expect {|
+    firings [] model_mismatch 0 status 0 0 0 0; non-integral runs 0
+    packet 0: 35 bits, equals reference true
+    packet 1: 59 bits, equals reference true
+    packet 2: 99 bits, equals reference true
+    packet 3: 110 bits, equals reference true
+    |}]
+;;
+
+let%expect_test "co-simulation: TX underrun aborts with status 2, then the next packet is sent" =
+  (* header and 2 payload bytes at once; bytes 3.. and the next packet only much later *)
+  let host = [ 0xC3; 4; 0x11; 0x22; 0x33; 0x44; 0x4B; 1; 0x55 ] in
+  let tx_times = [ 0; 0; 0; 0; 20_000; 20_000; 20_000; 20_000; 20_000 ] in
+  cosim ~tx_times ~cycles:40_000 host [ fst (packet ~abort_before:2 ~abort_j:9 ~pid:0xC3 [ 0x11; 0x22; 0x33; 0x44 ]); fst (packet ~pid:0x4B [ 0x55 ]) ];
+  [%expect {|
+    firings [] model_mismatch 0 status 2 0; non-integral runs 0
+    packet 0: 44 bits, equals reference true
+    packet 1: 43 bits, equals reference true
+    |}]
+;;
+
+let%expect_test "co-simulation: N > 8 pushes status 1 and halts" =
+  cosim ~cycles:10_000 [ 0xC3; 9; 1; 2; 3 ] [];
+  [%expect {| firings [] model_mismatch 0 status 1; non-integral runs 0 |}]
+;;

@@ -298,3 +298,35 @@ let i2c_tgt ~addr =
        ; ins (Mov (M R1, S Sr)); ins (Ldi (L Sr, 0xFF)); ins (Pin (2, Out_msb)); ins (Mov (M Sr, S R1)); jmp "rd_bits" ]
      @ [ Lbl "halt"; ins Halt ])
 ;;
+
+(* USB low-speed TX, one DATA packet per header (doc/protocols/usb_ls_v1.md). Pair mode on
+   uio0 (D+) / uio1 (D-): own = 0x03, od = 0, cfg = 0x7A (pair, nrzi, stuff, crc_en, crc16, LSB
+   first), cfg2 = 0 (pair_base 0); P = 39 with bit period 1 (one step per bit).
+   Registers: r0 PID, r1 N (then status 0), r2 N copy / payload byte, r3 abort status 2,
+   lc payload count. Host framing: PID byte, N, N payload bytes. Status: 0 sent, 1 N > 8
+   (lane halts), 2 aborted on TX underrun (pushed in the first abort step, then J for 9 steps,
+   then EOP; the remaining bytes of the packet are discarded). *)
+let usb_own = 0x03
+let usb_cfg = 0x7A
+
+let usb_ls_tx =
+  let br c lbl = I (fun f -> Br (c, f lbl)) and jmp lbl = I (fun f -> Jmp (f lbl)) in
+  let djnz lbl = I (fun f -> Djnz (f lbl)) in
+  asm
+    ([ (* start-up convention: J, then drive both pins *)
+      ins (Out 0x02); ins (Oen 0x03)
+    ; ins (Ldi (L R3, 1)); ins (Ser (Period R3))
+    ; Lbl "pkt"; ins (Pop R0); ins (Pop R1)
+      (* N <= 8 check: count r2 down at most 8 times *)
+    ; ins (Mov (M R2, S R1)); ins (Ldi (L Lc, 9))
+    ; Lbl "nchk"; ins (Cmp (C R2, 0)); br 1 "ok"; ins (Addi (R2, 0xFF)); djnz "nchk"
+    ; ins (Ldi (L R1, 1)); ins (Push R1); ins Halt
+    ; Lbl "ok"; ins (Ldi (L R3, 2)); ins (Ldi (L Sr, 0x80))
+    ; ins (Ser (Send Sr)); ins (Ser (Send R0)); ins (Ser Crci)
+    ; ins (Cmp (C R1, 0)); br 1 "crc"; ins (Mov (M Lc, S R1))
+    ; Lbl "byte"; br 5 "abort"; ins (Pop R2); ins (Ser (Sendc R2)); djnz "byte"
+    ; Lbl "crc"; ins (Ser Crcs); ins (Ser Eop); ins (Ser Idle); ins (Ldi (L R1, 0)); ins (Push R1); jmp "pkt"
+    ; Lbl "abort"; ins (Ser Idle); ins (Push R3) ] @ waits 7
+    @ [ ins (Ser Eop)
+      ; Lbl "disc"; ins (Pop R2); djnz "disc"; jmp "pkt" ])
+;;
