@@ -13,7 +13,8 @@
 
   "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
   "//": "Users have reported that values up to 80 worked well for them.",
-  "PL_TARGET_DENSITY_PCT": 60,
+  "//": "v1-tt run 3 (user decision 2026-10-19): 60 -> 48 to spread the logic (~43% of the core area after synthesis) and dilute the routing hotspots of run 2 (GRT overflow 1,421; ~25k DRT violations).",
+  "PL_TARGET_DENSITY_PCT": 48,
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
@@ -64,6 +65,8 @@
   "RUN_POST_GRT_DESIGN_REPAIR": true,
   "//": "Run dad0fc3: post-GRT repair ran but saw only 4 fanout violations; A_DOUT[5] stayed at 0.0654 (typ) / 0.0675 (fast) pF vs 0.064 after detailed routing, i.e. the routed load is at least 13% above the global-route estimate. Margin 10 -> 30 makes post-GRT repair buffer nets estimated above 0.0448 pF.",
   "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 30,
+  "//": "Fail-fast guard (user decision 2026-10-19): detailed_route -droute_end_iter 1. OpenROAD FlexDR::main breaks when iter > END_ITERATION, so iterations 0 and 1 run (run 2: 74 + 64 min, starting 2 h 10 min into the job), and the flow ends inside GitHub's 6 h limit: either clean, or at the routing DRC check with artifacts uploaded. Restore the default (64) once routing converges.",
+  "DRT_OPT_ITERS": 1,
   "FP_MACRO_HORIZONTAL_HALO": 2.0,
   "FP_MACRO_VERTICAL_HALO": 0.48,
   "//": "Floorplan C (user decision 2026-10-19). All FS: signal pins (Metal2) on the top edge, facing the logic and the TT IO pins (y = 710), as chosen for the 64x16 on 2026-10-17 (with N, A_DOUT exceeded max cap). Left column x = 3.36 (VDD/VSS columns of the left bit-cell group under the stripe pairs at 9.03/14.65 and 53.99/59.61): lane-1 store at y = 41.58, lane-1 imem at y = 207.90 (47.5 um pin channel above the store). Right macro x = 1431.04 (pairs at 1447.75 and 1492.71), y = 41.58: one stripe pitch left of the first choice (1476.0), whose 8.5 um gap to the core edge made pdngen add a 1.05 um VGND strap that failed the TT pin rule (CI run 1, C4); the 53.4 um gap now holds the full pair k = 37. y >= 41.58 leaves carved stripe segments below every macro, which the full-span step needs. Checked by flow/pdn/test_floorplan_v1.py.",

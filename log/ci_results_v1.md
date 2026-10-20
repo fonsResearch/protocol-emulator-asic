@@ -68,3 +68,8 @@ No artifacts (a cancelled job uploads none); evidence is the job log.
 - Interpretation [inference]: global demand fits, but local hotspots leave about 25k detailed-routing violations;
   at ~1 h per iteration the route cannot finish inside GitHub's 6 h job limit without reducing congestion.
   The hotspot locations are unknown (no artifacts).
+
+Run 3 changes (user decisions 2026-10-19): `PL_TARGET_DENSITY_PCT` 60 -> 48 (only design-side change);
+fail-fast guard `DRT_OPT_ITERS` 1 (iterations 0 and 1 per OpenROAD master `FlexDR::main`; the CI OpenROAD
+version is not printed in the log, so this reading is unverified for CI). Correction: in run 2 detailed routing
+started 2 h 10 min after the job start (19:59 -> 22:08), not ~4 h as first stated.
