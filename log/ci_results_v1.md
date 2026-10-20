@@ -47,3 +47,24 @@ Fix (user decision 2026-10-19): lane-0 macro one stripe pitch left, x = 1431.04 
 pairs k = 32, 33; obstructions k = 34-36; 53.44 um to the core edge, where pair k = 37 runs full width).
 New test `test_no_narrow_channel_to_core_edge` (fails on x = 1476.0 with an 8.48 um gap; passes now);
 floorplan tests 10/10.
+
+## 4. CI run 2 (v1-tt 8d90d04; GitHub run log logs_106540443244, job cancelled at the 6 h limit)
+
+No artifacts (a cancelled job uploads none); evidence is the job log.
+
+| step (UTC 2026-10-19/20) | duration |
+|---|---|
+| synthesis -> PDN (Pemu.MacroColumnStripes: 4/4/skip 4 bridged, **C4 0 violations on 63 pin boxes**) | 20:02-20:06 |
+| placement, CTS | 20:06-20:10 |
+| ResizerTimingPostCTS | 22 min |
+| GlobalRouting | 19 min; final usage 56.81 %, overflow 1,421 (max H 7 / V 6) after 50 congestion iterations, continued only because of `-allow_congestion`; wirelength 3.60 m |
+| RepairDesignPostGRT | 67 min |
+| antenna repair, diodes | 3 min |
+| DetailedRouting | started 22:08, cancelled 01:59: iteration 0 -> 45,342 violations (74 min), 1 -> 27,023 (64 min), 2 -> 24,951 (65 min), 3 at 70 % with 14,858 |
+
+- Signal layers Metal2-Metal4 only (tt-support-tools IHPTech `project_top_metal_layer = "Metal4"`; GRT log
+  "max routing layer Metal4"); Metal4 also carries the PDN stripes. Derated resources M2 197,497 / M3 241,815 / M4 195,266.
+- The floorplan fix of run 1 is confirmed: the stray strap is gone.
+- Interpretation [inference]: global demand fits, but local hotspots leave about 25k detailed-routing violations;
+  at ~1 h per iteration the route cannot finish inside GitHub's 6 h job limit without reducing congestion.
+  The hotspot locations are unknown (no artifacts).
