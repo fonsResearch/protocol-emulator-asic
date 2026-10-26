@@ -37,6 +37,25 @@ Differences (facts, typ):
 - Logic depth without wires grows from 3.9 ns (lanes) to 7.1 ns (monitor) and 10.2-11.0 ns (ROM
   library or loadable path).
 
+Flop/logic split (facts, from each run's `stat.txt`; flops = sg13cmos5l df*/dl* cells at their
+typ liberty areas; data `log/fig/sweep_flop_split.json`):
+
+| difference | flops | flop area | logic area | total |
+|---|---|---|---|---|
+| monitor engine (nomon to ROM-only, 2 UART) | +973 | 47,666 | 38,938 | 86,604 |
+| loadable path, lane 1 (ROM-only to l1, 2 UART) | +1,304 | 63,881 | 106,342 | 170,224 |
+| loadable path, lane 0 (l1 to both, 2 UART) | +1,303 | 63,833 | 105,971 | 169,803 |
+| ROM library 2 UART to 15, ROM-only | +948 | 46,441 | 96,989 | 143,430 |
+| ROM library 2 UART to 15, lane 1 loadable | +586 | 28,708 | 67,129 | 95,836 |
+
+- The loadable path is about 62 % logic (context and instruction-register selection, fetcher).
+  Moving its state into SRAM removes at most its flops (about 64k per lane) unless the selection
+  logic also shrinks.
+- About a third of the ROM-library cost is flops. Synthesis prunes per-unit state bits that no
+  shipped package can reach; larger timing constants make them live (as found for I2C in step 7).
+  Per-unit counter width is therefore a v2 design parameter, not a fixed cost.
+- Flop totals match earlier measurements (l1_lib10 3,389 and l1_all 3,760, log/protocols_v1.md).
+
 For reference, v1-tt on 8x4 (lane 1 loadable, 15 packages, 3 macros) sits at 40.0 % on the same
 metric, and it did not route (log/ci_results_v1.md, runs 2-3).
 

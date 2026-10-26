@@ -1,0 +1,62 @@
+{
+ "both_all": {
+  "flops": 4703,
+  "flop_area": 230394,
+  "total": 571671,
+  "logic": 341277
+ },
+ "both_lib10": {
+  "flops": 4544,
+  "flop_area": 222605,
+  "total": 546705,
+  "logic": 324100
+ },
+ "both_uart2": {
+  "flops": 4477,
+  "flop_area": 219323,
+  "total": 523638,
+  "logic": 304315
+ },
+ "l1_all": {
+  "flops": 3760,
+  "flop_area": 184198,
+  "total": 449671,
+  "logic": 265473
+ },
+ "l1_lib10": {
+  "flops": 3389,
+  "flop_area": 166023,
+  "total": 395717,
+  "logic": 229694
+ },
+ "l1_uart2": {
+  "flops": 3174,
+  "flop_area": 155490,
+  "total": 353835,
+  "logic": 198344
+ },
+ "nomon": {
+  "flops": 897,
+  "flop_area": 43943,
+  "total": 97007,
+  "logic": 53064
+ },
+ "rom_all": {
+  "flops": 2818,
+  "flop_area": 138050,
+  "total": 327041,
+  "logic": 188991
+ },
+ "rom_lib10": {
+  "flops": 2233,
+  "flop_area": 109392,
+  "total": 247348,
+  "logic": 137956
+ },
+ "rom_uart2": {
+  "flops": 1870,
+  "flop_area": 91609,
+  "total": 183611,
+  "logic": 92002
+ }
+}
