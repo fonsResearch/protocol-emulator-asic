@@ -1,0 +1,14 @@
+nomon typ area 97007.198400  t=20s
+rom_uart2 typ area 183610.816200  t=42s
+rom_lib10 typ area 247347.588600  t=85s
+l1_uart2 typ area 353834.535600  t=88s
+rom_all typ area 327041.215200  t=117s
+l1_lib10 typ area 395716.746600  t=117s
+nomon slow area 101240.382600 depth 3907.77 ps  t=17s
+rom_uart2 slow area 189987.638400 depth 7099.21 ps  t=32s
+both_uart2 typ area 523637.654400  t=112s
+l1_all typ area 449670.614400  t=136s
+both_lib10 typ area 546704.953200  t=109s
+l1_uart2 slow area 374950.825200 depth 10991.80 ps  t=52s
+both_all typ area 571671.248400  t=120s
+rom_all slow area 336733.173000 depth 10150.15 ps  t=75s
