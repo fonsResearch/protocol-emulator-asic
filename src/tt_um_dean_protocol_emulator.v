@@ -2,15 +2,18 @@
  * Copyright (c) 2026 dean
  * SPDX-License-Identifier: MIT
  *
- * Tiny Tapeout top-level wrapper. Hand-written on purpose so the TT pin
- * contract does not depend on Hardcaml's port naming. It instantiates the
- * Hardcaml-generated core (src/pemu_core.v, flop-memory variant; emitted by
- * rtl/bin/generate.exe) and adds only the reset synchroniser. ena is ignored.
+ * Tiny Tapeout top-level wrapper, core v1. Hand-written on purpose so the TT pin contract
+ * does not depend on Hardcaml's port naming. It instantiates the Hardcaml-generated core
+ * (src/pemu_core_v1m.v: two driver lanes, monitor engine with the 15-package ROM library;
+ * emitted by rtl_v1/bin/emit_lane_rtl.exe top_macro_mon_liball, COMBDLY post-processed per
+ * decision V7) and adds only the reset synchroniser. ena is ignored.
  *
- * Reset: rst_n is treated as an asynchronous input. rst_sync_n is asserted
- * asynchronously and released synchronously through two flops (reset
- * synchroniser). The flops use async reset-to-0, which maps to sg13cmos5l
- * dfrbp-type cells; no async-set flop is required.
+ * SRAM macros (RM_IHPSG13_1P_256x16_c2_bm_bist): core.u_imem_l0 (lane 0 program),
+ * core.u_imem_l1 (lane 1 program), core.u_lstore_l1 (lane 1 loadable monitor store).
+ *
+ * Reset: rst_n is treated as an asynchronous input. rst_sync_n is asserted asynchronously
+ * and released synchronously through two flops. The flops use async reset-to-0, which maps
+ * to sg13cmos5l dfrbp-type cells; the core itself uses synchronous clear only.
  */
 `default_nettype none
 
@@ -33,7 +36,7 @@ module tt_um_dean_protocol_emulator (
   end
   wire rst_sync_n = rst_sync[1];
 
-  pemu_core core (
+  pemu_core_v1m core (
       .clock     (clk),
       .rst_sync_n(rst_sync_n),
       .ui_in     (ui_in),
