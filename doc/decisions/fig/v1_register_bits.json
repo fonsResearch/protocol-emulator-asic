@@ -1,0 +1,15 @@
+{
+ "total_bits": 3665,
+ "monitor_bits": 2705,
+ "groups": {
+  "Unnamed (generated names)": 899,
+  "Monitor: other": 262,
+  "Monitor: loadable context": 731,
+  "Monitor: timestamps and history": 352,
+  "Monitor: per-unit state (u0-u7)": 960,
+  "Monitor: pin remap tables": 192,
+  "Monitor: loadable instruction registers": 208,
+  "Lanes, host port, prescaler (named)": 61
+ },
+ "source": "v1-tt:src/pemu_core_v1m.v (posedge regs by name)"
+}
