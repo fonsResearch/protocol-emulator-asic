@@ -21,8 +21,8 @@ from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, RisingEdge
 
 VEC_DIR = Path(__file__).resolve().parent / "vectors"
-SCENARIOS = sorted(p.stem for p in VEC_DIR.glob("*.vec"))
-CLOCK_NS = 20  # matches src/config.json CLOCK_PERIOD; functional replay is period-independent
+SCENARIOS = sorted(p.stem for p in VEC_DIR.glob("v1_*.vec"))  # core v1 (rtl_v1/bin/dump_tt_vectors_v1.ml)
+CLOCK_NS = 20  # functional replay is period-independent (no timing in RTL/GL sim); config CLOCK_PERIOD is 16.67
 
 
 def load(name):
@@ -82,11 +82,11 @@ async def replay_spec_trace(dut, scenario):
 
 @cocotb.test()
 async def comparator_negative_control(dut):
-    """Replays uart_d4, then checks the comparator flags exactly one injected bit flip.
+    """Replays v1_rom_uart, then checks the comparator flags exactly one injected bit flip.
 
     Guards against a harness that cannot fail (e.g. sampling the wrong signals or
     comparing a list with itself). It does not replace a mutated-DUT check."""
-    rows = load("uart_d4")
+    rows = load("v1_rom_uart")
     observed = await replay(dut, rows)
     assert not mismatches(observed, rows), "clean replay must match before the control"
     c = max(i for i, r in enumerate(rows) if r[3][2] & 1)  # last cycle with uo_out[0] = 1

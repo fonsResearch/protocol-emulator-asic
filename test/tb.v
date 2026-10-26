@@ -9,7 +9,7 @@ module tb ();
   // Dump the signals to a FST file. You can view it with gtkwave or surfer.
   initial begin
     $dumpfile("tb.fst");
-    $dumpvars(0, tb);
+    $dumpvars(1, tb);  // top-level pins only: a full-depth dump of core v1 is too large
     #1;
   end
 
