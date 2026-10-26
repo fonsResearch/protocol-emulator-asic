@@ -21,8 +21,12 @@ let () =
   then (
     (* top_macro_mon: default build, lane 1 loadable (user decision 2026-10-18);
        top_macro_mon_both: both lanes loadable; top_macro_mon_rom: ROM only *)
+    (* top_macro_mon_sweep (v2 step 2 area sweep): PEMU_LOADABLE = rom | l1 | both and
+       PEMU_LIB = uart2 | lib10 | all select the configuration *)
+    let sweep = String.equal mode "top_macro_mon_sweep" in
+    let env_or v d = Option.value (Sys.getenv v) ~default:d in
     let loadable =
-      match mode with
+      match (if sweep then "top_macro_mon_" ^ env_or "PEMU_LOADABLE" "l1" else mode) with
       | "top_macro_mon_both" -> [| true; true |]
       | "top_macro_mon_rom" -> [| false; false |]
       | _ -> [| false; true |]
@@ -30,31 +34,21 @@ let () =
     (* top_macro_mon_lib10 / _lib15 / _liball: ROM-library area study (plan step 7): the 10 committed
        protocol packages; lib15 adds five copies of the largest (SPI target, mode 0) as
        stand-ins for the planned I2C and USB packages *)
-    let protocol10 =
-      Pemu_monitor_v1.(
-        let m = [ false, false; false, true; true, false; true, true ] in
-        [ Library_v1.uart_tx ~d:4 ~pin:0; Library_v1.uart_rx ~d:8 ~m:2 ~pin:1 ]
-        @ List.map m ~f:(fun (cpol, cpha) -> Library_v1.spi_ctl ~cpol ~cpha ~h:2)
-        @ List.map m ~f:(fun (cpol, cpha) -> Library_v1.spi_tgt ~cpol ~cpha ~h_min:3 ~g:6))
+    let protocol10 = Rom_lib.protocol10 () in
+    let study =
+      if sweep
+      then (
+        match env_or "PEMU_LIB" "uart2" with
+        | "lib10" -> Some "10"
+        | "all" -> Some "all"
+        | _ -> None)
+      else String.chop_prefix mode ~prefix:"top_macro_mon_lib"
     in
-    let study = String.chop_prefix mode ~prefix:"top_macro_mon_lib" in
     let lib =
       Pemu_monitor_v1.(
         match study with
         | Some "10" -> List.map protocol10 ~f:Compile.compile_exn
-        | Some "all" ->
-          (* plan step 7 ROM library: the 10 packages above plus I2C controller Fm/Sm, I2C
-             target Fm/Sm and USB-LS TX, with the parameters of their A2 proofs
-             (formal/src/ag_pkg.ml); 15 of the 16 package indices *)
-          List.map
-            (protocol10
-             @ [ Library_v1.i2c_ctl ~l:6 ~h:4 ~tsu:3 ~thold:6
-               ; Library_v1.i2c_ctl ~l:5 ~h:5 ~tsu:5 ~thold:5
-               ; Library_v1.i2c_tgt ~h_min:8 ~l_min:18 ~hd:8
-               ; Library_v1.i2c_tgt ~h_min:59 ~l_min:69 ~hd:59
-               ; Library_v1.usb_ls_tx ()
-               ])
-            ~f:Compile.compile_exn
+        | Some "all" -> List.map (Rom_lib.all15 ()) ~f:Compile.compile_exn
         | Some "15" ->
           List.map
             (protocol10 @ List.init 5 ~f:(fun _ -> Library_v1.spi_tgt ~cpol:false ~cpha:false ~h_min:3 ~g:6))
