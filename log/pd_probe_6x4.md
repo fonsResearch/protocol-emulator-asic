@@ -101,5 +101,49 @@ DRT violations after iterations 0 and 1, post-CTS setup WNS/TNS at 20 ns and the
 16.67 and 25 ns [estimate: WNS shifted by the period change, valid only if the critical path does
 not change], hold buffer count, std-cell growth over synthesis, A_DOUT max-cap, stage runtimes.
 
-Known limitation: none of the probes contains the loadable path or a column floorplan. They measure
+## 3. CI probe results (runs of 2026-10-26/27, facts from the gds job logs)
+
+Runs: probe6x4-uart2 40420618996, probe6x4-lib10 40420619616, probe6x4-all 40420619385. All three
+ran the whole flow (70 steps, through Netgen LVS) and then failed with "harden failed" on the
+deferred checks. That is expected: detailed routing was capped at iterations 0-1 and antenna repair
+was off. Precheck and gate-level jobs were skipped because the gds job failed.
+
+| | uart2 (21.7 %) | lib10 (29.2 %) | all (38.6 %) | v1-tt run 3, 8x4 (40.0 %) |
+|---|---|---|---|---|
+| effective utilisation (IFP-0104) | 0.283 | 0.356 | 0.451 | 0.469 |
+| GRT usage M2 / M3 / M4 | 24.8 / 31.3 / 1.2 % | 39.2 / 48.8 / 5.0 % | 70.0 / 79.5 / 26.5 % | 72.6 / 76.4 / 28.6 % |
+| GRT overflow (total) | **0** | **0** | 77 | 3,129 |
+| wirelength | 0.99 m | 1.55 m | 2.82 m | 3.85 m |
+| DRT violations after iter. 0 / 1 | 7,218 / 3,833 | 13,496 / 7,455 | 25,489 / 13,678 | 47,509 / 29,241 |
+| DRT time (2 iterations) | 27 min | 44 min | 65 min | 141 min |
+| setup at 20 ns after CTS | no violations | no violations | 948 endpoints, WNS -6.312 -> +0.051 ns after repair | (16.67 ns) -1.085 ns |
+| std cells after CTS repair | 254,263 | 330,654 | 432,344 | 595,658 |
+| growth over Yosys typ | 1.385 | 1.337 | 1.322 | 1.235 (over LibreLane synth) |
+| timing-repair buffers | 3,854 (50.4k) | 4,787 (59.2k) | 6,171 (73.2k) | 8,445 (101.6k) |
+| KLayout DRC errors | 1,325 | 2,455 | 4,243 | - |
+| total job time | 41 min | 62 min | 102 min | cancelled at 6 h |
+
+Residual DRT violations are mostly Metal2 shorts and spacing (uart2: 2,283 shorts, 1,336 spacing).
+KLayout DRC categories are not read yet (they are in the GDS_logs artifacts). Hold-buffer counts
+from the log are not reported: the parse gave inconsistent numbers.
+
+Findings:
+- **Global routing fits with zero overflow up to 29 % utilisation** (lib10). At 38.6 % (all), 6x4
+  still routes globally with 77 overflow against v1-tt's 3,129 on 8x4 at a similar utilisation.
+  [Inference:] the difference comes from the loadable path and its cross-die store, which these
+  netlists do not have.
+- **Detailed routing was not allowed to converge**, so these runs do not show that the designs
+  route clean. Iterations take 11-28 min here against 63-78 min on v1, so a full detailed route
+  (default DRT_OPT_ITERS 64) fits inside 6 h for uart2 and lib10 [estimate: about 10 iterations,
+  with later ones shorter].
+- **20 ns closes setup** for all three after CTS (the 15-package library needs repair from -6.3 ns).
+  60 MHz was not tested.
+- **Area growth from Yosys typ to post-CTS std cells is 1.32-1.39x**, so v1's assumed 1.34x was
+  about right for area. v1's budget failed on routing, which area does not predict. For v2,
+  budgets are set by measured GRT overflow (zero at <= 29 % here), with area growth as a secondary
+  check.
+
+## 4. Known limitation
+
+None of the probes contains the loadable path or a column floorplan. They measure
 how routability scales with the ROM-only family; v2's own floorplan is checked again at step 5.
