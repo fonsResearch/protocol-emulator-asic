@@ -28,12 +28,12 @@ A programmable protocol emulator with an on-chip assumption monitor.
   earlier, under stated physical assumptions (doc/concept/assume_guarantee.md). This is proved on
   the specification; the link to the chip is being completed (log/proofs_v2.md).
 
-Clock: 48 MHz.
+Clock: 33 MHz (timing signed off at the slow corner, 1.08 V / 125 C; see log/ci_results_v2.md). The lane divisors are host registers, so a different clock only changes the divisor values.
 
 ## How to test
 
 All access is through the host SPI port on `ui[0]` CS_n, `ui[1]` SCK, `ui[2]` MOSI and `uo[0]`
-MISO: mode 0, MSB first. SCK high and low at least 4 clock cycles each (up to 6 MHz at 48 MHz).
+MISO: mode 0, MSB first. SCK high and low at least 4 clock cycles each (up to about 4 MHz at 33 MHz).
 The first byte is {R/W (1 = read), address[6:0]}; data bytes follow with an auto-incrementing
 address.
 

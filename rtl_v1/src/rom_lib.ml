@@ -24,12 +24,14 @@ let all15 () =
 
 (* v2 minimum library (doc/decisions/arch_v2_options.md, V2-5): UART TX, UART RX, SPI controller
    mode 0, SPI target mode 0, with the divisor P each package is documented to run at on the
-   48 MHz v2 clock (V2-1): UART 115200 baud (TX 4 steps/bit: 48e6 / (115200 * 4) = 104.2 cycles
-   per step, P = 103; RX 8 steps/bit: 52.1, P = 51); SPI at P = 7 (controller SCLK
-   48 MHz / (2 * h * (P + 1)) = 1.5 MHz with h = 2). *)
+   33 MHz v2 clock (V2-1, revised 2026-10-27): UART 115200 baud (TX 4 steps/bit:
+   33e6 / (115200 * 4) = 71.6 cycles per step, P = 71, bit = 288 cycles, +0.5 %; RX 8 steps/bit:
+   35.8, P = 35, bit = 288 cycles, +0.5 %); SPI at P = 7 (controller SCLK
+   33 MHz / (2 * h * (P + 1)) = 1.03 MHz with h = 2). The divisor is a host register, so other
+   clocks only change these numbers. *)
 let minimum_v2_with_p () =
-  [ Library_v1.uart_tx ~d:4 ~pin:0, 103
-  ; Library_v1.uart_rx ~d:8 ~m:2 ~pin:1, 51
+  [ Library_v1.uart_tx ~d:4 ~pin:0, 71
+  ; Library_v1.uart_rx ~d:8 ~m:2 ~pin:1, 35
   ; Library_v1.spi_ctl ~cpol:false ~cpha:false ~h:2, 7
   ; Library_v1.spi_tgt ~cpol:false ~cpha:false ~h_min:3 ~g:6, 7
   ]

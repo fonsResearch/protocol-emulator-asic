@@ -127,6 +127,7 @@ that set is decided when 8x4 opens.
 | item | decision | rationale |
 |---|---|---|
 | V2-1 | **48 MHz** (CLOCK_PERIOD 20.83 ns) | exact USB-LS bit timing; keeps the Fm I2C target possible at P = 3 later; 2-UART probe would pass by WNS shift. Fallback if minimum v2 does not close: 40 MHz, accepting the USB-LS and Fm-target consequences in V2-1 |
+| V2-1 rev. 2026-10-27 | **33 MHz** (CLOCK_PERIOD 30.30 ns), slow-corner sign-off; fallback 30 MHz | Round-1 CI (log/ci_results_v2.md): routing, DRC, LVS and precheck clean, but slow-corner setup -6.80 ns at 48 MHz and -2.55 ns at 40 MHz; the critical path is about 27.6 ns (reset synchroniser through the unit-step and verdict cone), which pre-route parasitic estimates miss by about 6 ns. 33 MHz keeps USB-LS exact (22 cycles/bit) and UART at +0.5 %. Cost: the Fm I2C target (increment 6) is dropped unless a later timing increment restores 48 MHz |
 | V2-2 | **5 units per lane, serial**; unit count a generator parameter | covers every package; min P 4; the paired engine is deferred to increment 6 |
 | V2-3 | **I2C target out of minimum v2**; Sm target in increment 3, Fm target in increment 6 | D13 cannot be met for Fm with a serial 5-unit engine |
 | V2-4 | **Logic ROM for minimum v2**; a redesigned, cheaper loadable path in increment 2 | ROM is measured to route. Loadable contracts are required for step 11 (held-out protocols monitored with no RTL change), so the loadable path is the main design risk after minimum v2. Target: one loadable lane within the remaining budget (29 % minus minimum v2) |
