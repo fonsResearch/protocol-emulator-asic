@@ -33,7 +33,7 @@ module S = Pemu_monitor_v1.Mon_spec
 module L = Pemu_monitor_v1.Mon_lane
 module M = Pemu_monitor_v1.Mprog
 
-let harness ?debug ?bug ?(spacing = 8) ~j ~name () =
+let harness ?debug ?bug ?(slots = S.n_units) ?(spacing = 8) ~j ~name () =
   let clock = input "clock" 1 in
   let gs = Reg_spec.create ~clock () in
   let started = reg gs vdd -- "env_started" in
@@ -110,7 +110,7 @@ let harness ?debug ?bug ?(spacing = 8) ~j ~name () =
   let lint = ref None in
   let present = Array.init S.n_units ~f:(fun u -> if u = j then vdd else inp (sprintf "free_in_present%d" u) 1) in
   let lo =
-    L.create ~front ~probe:(fun x -> lint := Some x) ~only_unit:j ?bug ~tables ~present
+    L.create ~slots ~front ~probe:(fun x -> lint := Some x) ~only_unit:j ?bug ~tables ~present
       ~fetch:(fun _cur pc ->
         lane_pc <== pc;
         mux2 step w_spec g_w)
@@ -182,7 +182,7 @@ let harness ?debug ?bug ?(spacing = 8) ~j ~name () =
   in
   let i_np = pending |: st_eq (st_mux m_now rst_st entry) spec_st in
   let i_seq =
-    (lint.busy_q ==: (seen &: (since >=:. 1) &: (since <=:. 7) &: ~:rst_win))
+    (lint.busy_q ==: (seen &: (since >=:. 1) &: (since <=:. slots - 1) &: ~:rst_win))
     &: (~:(lint.busy_q) |: (uresize lint.slot_q 4 ==: since))
   in
   let inv_bad = ~:(i_ghost &: i_pend &: i_np &: i_seq) in
@@ -199,5 +199,10 @@ let all ?debug () =
   List.init 8 ~f:(fun j -> harness ?debug ~j ~name:(sprintf "r1_mon_lane_u%d" j) ())
   @ [ harness ?debug ~j:3 ~bug:`Smask_unlatched ~name:"r1_mon_lane_u3_smask_neg" ()
     ; harness ?debug ~j:7 ~spacing:7 ~name:"r1_mon_lane_u7_t7_neg" ()
+    ]
+  (* v2 (doc/decisions/arch_v2_options.md V2-2): 5 slots, assumption T5 *)
+  @ List.init 5 ~f:(fun j -> harness ?debug ~slots:5 ~spacing:5 ~j ~name:(sprintf "r1v2_s5_u%d" j) ())
+  @ [ harness ?debug ~slots:5 ~spacing:5 ~j:3 ~bug:`Smask_unlatched ~name:"r1v2_s5_u3_smask_neg" ()
+    ; harness ?debug ~slots:5 ~spacing:4 ~j:4 ~name:"r1v2_s5_u4_t4_neg" ()
     ]
 ;;
