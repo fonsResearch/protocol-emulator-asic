@@ -59,7 +59,25 @@ v1_rom_uart (12,817 cycles): lane 0 runs UART TX with ROM package 0 enabled at P
 program gives VERDICT 00 00 00 00; the start-bit mutant gives VERDICT 01 15 (fail, code 0x15),
 cleared by CTRL. v1_reset_mid (9,133 cycles): ID and restart as v1.
 
-## 6. Open in step 4
+## 6. Carried-over proofs (2026-10-27)
+
+- Lane A1 and the prescaler lemma: `rtl_v1/src/lane_rtl.ml`, `prescaler16.ml`, `sram256.ml` and
+  `spec_v1/` are unchanged between main and v2-6x4 (`git diff --stat` empty). The v1 results in
+  log/proofs_v1.md therefore apply to the v2 lanes.
+- `formal/src/top_props.ml` builds the register blocks, host port and lane directly; it does not use
+  the monitor or `Top_v1.create`. Re-run on the v2 tree (dprove):
+
+| harness | result | wall s |
+|---|---|---|
+| load_gate | PASS | 98 |
+| load_gate_neg | FAIL depth 3, replay ok | 0 |
+| own_disjoint | PASS | 0 |
+| own_disjoint_neg | FAIL depth 2, replay ok | 0 |
+| lane_pin_gate | PASS | 1 |
+| run_after_reset_k3 / k33 | PASS / PASS | 0 / 1 |
+| run_after_reset_cover_neg / k34_neg | FAIL depth 33 / 33, replay ok | 0 / 0 |
+
+## 7. Open in step 4
 
 - COMBDLY post-process of the 5-slot netlist and its Yosys equivalence (`tools/check_combdly_equiv.sh`):
   not run yet (held for user approval).
