@@ -122,7 +122,31 @@ Lanes, units per lane, evaluation rate, library and loadable path are generator 
 set is checked by local synthesis and floorplan tests only (rule 8 of v2_lessons.md). The content of
 that set is decided when 8x4 opens.
 
-## Recommended combination (for reference; not adopted)
+## Decisions (2026-10-27; made by the agent, the user delegated all design decisions)
+
+| item | decision | rationale |
+|---|---|---|
+| V2-1 | **48 MHz** (CLOCK_PERIOD 20.83 ns) | exact USB-LS bit timing; keeps the Fm I2C target possible at P = 3 later; 2-UART probe would pass by WNS shift. Fallback if minimum v2 does not close: 40 MHz, accepting the USB-LS and Fm-target consequences in V2-1 |
+| V2-2 | **5 units per lane, serial**; unit count a generator parameter | covers every package; min P 4; the paired engine is deferred to increment 6 |
+| V2-3 | **I2C target out of minimum v2**; Sm target in increment 3, Fm target in increment 6 | D13 cannot be met for Fm with a serial 5-unit engine |
+| V2-4 | **Logic ROM for minimum v2**; a redesigned, cheaper loadable path in increment 2 | ROM is measured to route. Loadable contracts are required for step 11 (held-out protocols monitored with no RTL change), so the loadable path is the main design risk after minimum v2. Target: one loadable lane within the remaining budget (29 % minus minimum v2) |
+| V2-5 | **UART TX, UART RX, SPI controller mode 0, SPI target mode 0** | about 21-24 % [estimate]; covers both roles of the first two protocols |
+| V2-6 | **2 lanes** | concurrency and the non-interference lemma |
+| V2-7 | **probe floorplan** | the only one with CI evidence |
+| V2-8 | **two CI runs of minimum v2: post-GRT timing repair off and on** | measures the experimental step on our design before relying on it |
+| V2-9 | **state width a generator parameter, sized to the shipped library** | makes the pruning explicit and visible to the proofs |
+| V2-10 | **keep option A (ISA v1)** | no item above needs an ISA change |
+| V2-11 | **parameters only; content decided when 8x4 opens** | rule 8 |
+
+Increment order after minimum v2 is green (step 7; each one through P&R before the next):
+1. I2C controller Sm/Fm (P = 14, 3 units; completes the UART/SPI/I2C baseline);
+2. loadable contracts on one lane (new microarchitecture);
+3. I2C target Sm;
+4. SPI modes 1-3;
+5. USB-LS TX;
+6. paired evaluation for the Fm I2C target.
+
+## Recommended combination (for reference; superseded by the decisions above)
 
 2 lanes; 5 serial units per lane; logic ROM with UART TX/RX and SPI controller/target mode 0; 48 MHz;
 probe floorplan; post-GRT timing repair tried in one probe; state width sized to the library; I2C
