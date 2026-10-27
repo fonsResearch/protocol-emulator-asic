@@ -77,7 +77,40 @@ cleared by CTRL. v1_reset_mid (9,133 cycles): ID and restart as v1.
 | run_after_reset_k3 / k33 | PASS / PASS | 0 / 1 |
 | run_after_reset_cover_neg / k34_neg | FAIL depth 33 / 33, replay ok | 0 / 0 |
 
-## 7. Open in step 4
+## 7. Composition lemma C3: analysis and decision (2026-10-27)
+
+Chip composition vs the A2 harness (`formal/src/ag_pkg.ml`):
+
+- **Firing time.** Mon_spec reports unit j's firing in the step cycle t. The chip engine reports it in
+  cycle t + j (R1), stamped t (monitor_isa_v1.md: "Firings are stamped with the step cycle t").
+- **Blame to the lane.** Registered, so it arrives at t + j + 1 on the chip and at t + 1 in the
+  harness. Lane spec and RTL consume a blame through a bypass, `blame_now = bpend | (blame_in & rob)`
+  (`spec_v1/src/lane_circuit.ml` l. 142, `rtl_v1/src/lane_rtl.ml` l. 277). A blame arriving in the
+  step cycle is therefore taken by that step. Admission gives j <= slots - 1 <= P, so the chip blame
+  arrives no later than the lane's next step, and that step sees it as in the harness.
+- **Divergence after a blame.** A host `clear_fault` within j cycles after a blaming step can leave
+  the chip and the harness in different lane states. This only happens after a blame has fired, and U
+  constrains only fails before the first blame, so U is unaffected [argument; to be checked by the
+  differential run below].
+- **Verdict pins.** `uo[1]` (fail) and `uo[2]` (blame) rise when the firing is recorded, up to slots - 1
+  cycles after its step. Within one step, a fail from unit 0 can appear on the pin before a blame from
+  unit 4.
+
+**Decision (agent, under the user's delegation):** the chip-level theorem is stated on step stamps:
+every recorded fail has a recorded blame with stamp <= the fail stamp (FAIL_TIME, BLAME_TIME, VERDICT).
+The pins are documented as indicators with up to slots - 1 cycles of latency. Rejected alternative:
+delay both flags to the end of the slot window in hardware (small RTL change, but a new engine proof
+for an indicator).
+
+C3 plan:
+1. A wiring lemma on the v2 top with the lanes and engine cut: the engine's lane view equals
+   (lane outputs & OWN, lane xo bits, raw pads); blame_in(L) = the engine's blame(L), registered.
+2. A stamp-order lemma from R1 plus the verdict block.
+3. A differential cyclesim: v2 top RTL against the harness composition (lane model + Mon_spec, wired as
+   in ag_pkg), with random environments, host clears and resets, for each shipped package. Compare the
+   verdict (flags, codes, stamps) and pins up to the documented latency.
+
+## 8. Open in step 4
 
 - Done 2026-10-27: COMBDLY post-process of the 5-slot netlist (7,033 assignments, no X literals). It
   is proven EQUIVALENT to the Hardcaml Verilog (`tools/check_combdly_equiv.sh`, Yosys equiv_simple
