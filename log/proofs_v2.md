@@ -79,9 +79,11 @@ cleared by CTRL. v1_reset_mid (9,133 cycles): ID and restart as v1.
 
 ## 7. Open in step 4
 
-- COMBDLY post-process of the 5-slot netlist and its Yosys equivalence (`tools/check_combdly_equiv.sh`):
-  not run yet (held for user approval).
-- RTL replay of the v2 vectors on the post-processed Verilog: after the above.
+- Done 2026-10-27: COMBDLY post-process of the 5-slot netlist (7,033 assignments, no X literals). It
+  is proven EQUIVALENT to the Hardcaml Verilog (`tools/check_combdly_equiv.sh`, Yosys equiv_simple
+  -seq 2 + equiv_induct, 830 s). RTL replay of the v2 vectors on it: 3/3. Floorplan tests 6/6.
+  It is in the TT build at `src/pemu_core_v1m.v` (commit ada5d7d). CI variants: v2-6x4-pgrt
+  (post-GRT timing repair on), v2-6x4-40mhz (25 ns).
 - `top_props` (load gate, OWN, pin gating, RUN after reset) on the v2 top; composition lemma C3.
 - Lane A1: lanes are unchanged, so the v1 lane A1 (log/proofs_v1.md) applies. To confirm by
   checking that `Lane_rtl` is byte-identical in the emitted v2 netlist.
