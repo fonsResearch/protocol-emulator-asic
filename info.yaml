@@ -5,7 +5,7 @@ project:
   discord:      ""                              # Your discord username (optional)
   description:  "Firmware-programmable protocol emulator with an end-to-end verified firmware-to-pins flow"
   language:     "Hardcaml (OCaml) emitted to Verilog"
-  clock_hz:     48000000  # v2 decision V2-1 (doc/decisions/arch_v2_options.md): 48 MHz, CLOCK_PERIOD 20.83 ns
+  clock_hz:     40000000  # fallback variant of decision V2-1 (25 ns); not the chosen clock
 
   # Jane Street competition allocation: 8x4 (tt-support-tools ihp-sg13cmos5l tile_sizes.yaml,
   # 1724.16 x 710.64 um, commit d66cf179).
