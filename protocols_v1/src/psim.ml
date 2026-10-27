@@ -56,10 +56,12 @@ type result =
 
 (* [tx_times]: earliest cycle at which the host may write each TX byte (default 0; shorter
    lists leave the rest at 0) *)
-(* [on_cycle cy mi fired]: observation hook, called once per cycle with the monitor inputs and
+(* [clear_at]: cycles in which the host's clear_fault input is high.
+   [on_cycle cy mi fired]: observation hook, called once per cycle with the monitor inputs and
    the interpreter's firings of that cycle (used by the C3 replay test). *)
 let run
   ?(on_cycle = fun (_ : int) (_ : Interp.inputs) (_ : (Lang.role * int) list) -> ())
+  ?(clear_at = [])
   ?(tx_bytes = [])
   ?(tx_times = [])
   ?(rx_pop_every = 1)
@@ -122,7 +124,7 @@ let run
         { rst_sync_n = rst; tick; run = run_in; loaded = true; len = List.length setup.prog
         ; own = setup.own; od = setup.od; cfg = setup.cfg; cfg2 = setup.cfg2; pins = !sync2
         ; tx_push; tx_wdata; rx_pop = cy % rx_pop_every = 0; blame_in = !blame_q
-        ; clear_fault = false }
+        ; clear_fault = List.mem clear_at cy ~equal:Int.equal }
     in
     if tick then incr steps;
     let mi : Interp.inputs =

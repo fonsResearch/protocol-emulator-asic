@@ -36,6 +36,7 @@ module Ox = struct
     ; m_pop_d : 'a [@bits 8]
     ; m_push : 'a
     ; m_push_d : 'a [@bits 8]
+    ; m_clr : 'a
     }
   [@@deriving hardcaml]
 end
@@ -66,6 +67,7 @@ type h =
   ; outs : (int, int * int) Hashtbl.t (* chip cycle -> uio_out, uio_oe during that cycle *)
   ; pads : (int, int) Hashtbl.t (* chip cycle -> resolved uio pad *)
   ; mon : (int, Interp.inputs) Hashtbl.t (* chip cycle -> lane 0 monitor inputs *)
+  ; mutable clears : int list (* chip cycles with lane 0 clear_fault high *)
   }
 
 let no_peer (_ : Psim.chip_view) = { Psim.drive_oe = 0; drive_val = 0 }
@@ -108,6 +110,7 @@ let cycle h =
       ; ui_in = Bits.to_int !(i.ui_in); uio_in = pad; uo_out = gi ob.m_xo lsl 3
       ; uio_out = gi ob.m_out; uio_oe = gi ob.m_oe; pop_ev = gb ob.m_pop; pop_data = gi ob.m_pop_d
       ; push_ev = gb ob.m_push; push_data = gi ob.m_push_d };
+  if gb ob.m_clr then h.clears <- h.n :: h.clears;
   let out = Bits.to_int !(o.top.uio_out) and oe = Bits.to_int !(o.top.uio_oe) in
   Hashtbl.set h.outs ~key:(h.n + 1) ~data:(out, oe) (* valid during cycle n + 1 *);
   Hashtbl.set h.pads ~key:h.n ~data:pad;
@@ -147,12 +150,13 @@ let create () =
         let lo = d.lane_outputs.(0) in
         { Ox.top = o; m_run = d.mon_running.(0); m_tick = d.lane_inputs.(0).tick
         ; m_out = Signal.(lo.uio_out &: d.own.(0)); m_oe = Signal.(lo.uio_oe &: d.own.(0)); m_xo = lo.xo
-        ; m_pop = lo.pop_ev; m_pop_d = lo.pop_data; m_push = lo.push_ev; m_push_d = lo.push_data })
+        ; m_pop = lo.pop_ev; m_pop_d = lo.pop_data; m_push = lo.push_ev; m_push_d = lo.push_data
+        ; m_clr = d.lane_inputs.(0).clear_fault })
   in
   let h =
     { sim; rst_n = false; s0 = false; s1 = false; cs_n = true; sck = false; mosi = false; miso = 0; n = 0
     ; c_rst = -1; off = 0; peer = no_peer; wired = 0; prev_out = 0; prev_oe = 0; prev2_out = 0; prev2_oe = 0; prev_pad = 0xFF
-    ; outs = Hashtbl.create (module Int); pads = Hashtbl.create (module Int); mon = Hashtbl.create (module Int) }
+    ; outs = Hashtbl.create (module Int); pads = Hashtbl.create (module Int); mon = Hashtbl.create (module Int); clears = [] }
   in
   wait h 3; h.rst_n <- true; wait h 6; h
 ;;
@@ -164,13 +168,16 @@ type chip_result =
   { outs : (int, int * int) Hashtbl.t
   ; pads : (int, int) Hashtbl.t
   ; mon : (int, Interp.inputs) Hashtbl.t
+  ; clears : int list (* Psim time *)
+  ; first_units : int (* FIRST_UNITS: fail unit [2:0], blame unit [6:4] *)
   ; off : int
   ; first_fail : (int * int) option (* code, Psim-time cycle of the step stamp *)
   ; first_blame : (int * int) option
   ; rx : int list
   }
 
-let chip_run ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles =
+(* [ctrl_writes]: (Psim time at which the CTRL write transaction starts, value) *)
+let chip_run ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
   let h = create () in
   let b = 0x10 in
   write h b [ setup.own ]; write h (b + 1) [ setup.od ];
@@ -186,7 +193,11 @@ let chip_run ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles =
   h.off <- h.n + ctrl_write_len - k;
   h.peer <- peer;
   write h 0x01 [ 0x01 ];
-  wait h cycles;
+  let stop = h.off + cycles in
+  List.iter (List.sort ctrl_writes ~compare:(fun (a, _) (b, _) -> Int.compare a b)) ~f:(fun (t, v) ->
+    while h.n < h.off + t do cycle h done;
+    write h 0x01 [ v ]);
+  while h.n < stop do cycle h done;
   h.peer <- no_peer;
   let v = read h 0x40 12 in
   let code i = List.nth_exn v i and time i = le32 (List.sub v ~pos:i ~len:4) in
@@ -195,7 +206,8 @@ let chip_run ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles =
   and first_blame = if code 0 land 2 = 2 then Some (code 2, to_psim (time 8)) else None in
   let lvl = (List.hd_exn (read h (b + 11) 1) lsr 4) land 0xF in
   let rx = if lvl = 0 then [] else read h (b + 10) lvl in
-  { outs = h.outs; pads = h.pads; mon = h.mon; off = h.off; first_fail; first_blame; rx }
+  { outs = h.outs; pads = h.pads; mon = h.mon; off = h.off
+  ; clears = List.rev_map h.clears ~f:(fun n -> n - h.off); first_units = code 3; first_fail; first_blame; rx }
 ;;
 
 let psim_first r role =
@@ -219,7 +231,7 @@ let compare_one ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles =
   let pmi = Array.create ~len:cycles None in
   let on_cycle cy mi _ = pmi.(cy) <- Some mi in
   let r = Psim.run ~on_cycle ~tx_bytes ~rx_pop_every:1_000_000_000 ~setup ~cycles ~peer:(peer ()) () in
-  let c = chip_run ~k ~setup ~pkg ~tx_bytes ~peer:(peer ()) ~cycles in
+  let c = chip_run ~k ~setup ~pkg ~tx_bytes ~peer:(peer ()) ~cycles () in
   let pm, pf = pin_mismatches ~own:setup.own c r ~from:0 ~upto:cycles in
   let sf = psim_first r Fail and sb = psim_first r Blame in
   let px = Psim.pushes r in
@@ -267,7 +279,7 @@ let peer_bytes = [ 0x96; 0x01; 0x80; 0xC3; 0x5A; 0xF0; 0x33; 0xE7 ]
 let calibrate () =
   let setup = uart_tx_setup (P1.uart_tx ~d:4) and cycles = 3000 in
   let r = Psim.run ~tx_bytes:[ 0xA5; 0x3C ] ~rx_pop_every:1_000_000_000 ~setup ~cycles ~peer:no_peer () in
-  let c = chip_run ~k:0 ~setup ~pkg:0 ~tx_bytes:[ 0xA5; 0x3C ] ~peer:no_peer ~cycles in
+  let c = chip_run ~k:0 ~setup ~pkg:0 ~tx_bytes:[ 0xA5; 0x3C ] ~peer:no_peer ~cycles () in
   List.filter (List.init 400 ~f:Fn.id) ~f:(fun k ->
     fst (pin_mismatches ~own:setup.own { c with off = c.off - k } r ~from:0 ~upto:cycles) = 0)
 ;;

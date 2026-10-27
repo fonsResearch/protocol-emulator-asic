@@ -156,6 +156,46 @@ run, and both lanes active. The U-preservation argument after a blame is still u
 no clears, and post-blame behaviour matched because nothing intervened. Items 1 (wiring lemma) and 2
 (stamp-order lemma) are not done.
 
+### 7.2 Differential cyclesim: host clears and randomised environments (2026-10-27)
+
+`rtl_v1/test/test_c3_env.ml` reuses the 7.1 harness. Psim gained `?clear_at`. The chip harness issues CTRL
+writes (0x21: RUN lane 0, clear fault lane 0) during the run. The write is timed so that the
+`clear_fault` pulse lands at a chosen Psim time; the measured latency from transaction start is
+194 cycles. The observed pulse times then drive Psim.
+
+**Clear-window sweep.** Release on blame is set (cfg bit 0), and the clear lands at t + d around the
+first blame step t. C3 predicts divergence exactly for 1 <= d <= j, where j is the blaming unit's
+slot: there the clear wipes the harness lane's pending blame (arrived at t + 1) before the chip's
+blame arrives at t + j + 1. At d = j + 1 the clear wins over the same-cycle blame, so the two agree again.
+
+| scenario | first blame | j | d tested | diverged |
+|---|---|---|---|---|
+| UART RX 8 % fast | 32@4421 | 0 | -40, 0..6, 10, 40, 70, 200 | none (window empty) |
+| SPI ctl, MISO hold glitch (frame 3, bit 4), tco 3 | 91@1145 | 4 | same | d = 1..4 only; from cycle 1154 (the lane's next step); first-blame verdict identical |
+
+Prediction mismatches: 0 in both. This confirms the C3 analysis at the cycle level: the only
+chip/harness divergence is a lane state change after a blame has been recorded, so U (no fail
+before the first blame) is unaffected.
+
+**Randomised environments** (seeded, 16 cases, one clear each, placed near a blame half of the time):
+- 6 UART RX: rate x0.90-1.10, glitch / short-stop / none, rob 0/1.
+- 6 SPI target: hp 24-64, gap 100-300, five controller defect kinds, rob 0/1.
+- 4 SPI controller: tco 0-20.
+
+11 cases have a blame. None diverge, in any cycle of the monitor-input stream, pins, verdict or
+pushes. Three clears landed within slots - 1 cycles after a blame, but on j = 0 blames, so the
+non-empty-window case is covered by the sweep only.
+
+Harness pitfalls fixed on the way, all test bugs and not design differences:
+1. Random peer parameters must be drawn once, outside the peer constructor; a draw inside gave the
+   chip and Psim different peers.
+2. The chip keeps running during the post-run SPI readback. Received bytes are therefore compared
+   from the pushes recorded inside the window, and the FIFO readback is checked only as a prefix.
+3. Clears must start after the CTRL-write latency.
+
+Still open: reset during a run, both lanes active at once, the wiring lemma (item 1) and the stamp-order
+lemma (item 2).
+
 ## 8. Open in step 4
 
 - Done 2026-10-27: COMBDLY post-process of the 5-slot netlist (7,033 assignments, no X literals). It
