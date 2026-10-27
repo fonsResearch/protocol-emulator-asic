@@ -124,8 +124,52 @@ was off. Precheck and gate-level jobs were skipped because the gds job failed.
 | total job time | 41 min | 62 min | 102 min | cancelled at 6 h |
 
 Residual DRT violations are mostly Metal2 shorts and spacing (uart2: 2,283 shorts, 1,336 spacing).
-KLayout DRC categories are not read yet (they are in the GDS_logs artifacts). Hold-buffer counts
-from the log are not reported: the parse gave inconsistent numbers.
+KLayout DRC and hold repair are in section 3a (read from the GDS_logs artifacts).
+
+### 3a. Post-route timing, DRC categories, hold (added 2026-10-27, facts from the GDS_logs artifacts)
+
+Post-route STA (`*-openroad-stapostpnr/summary.rpt`, 20 ns, after RCX on the **unconverged**
+route, so parasitics are not sign-off quality):
+
+| | uart2 | lib10 | all |
+|---|---|---|---|
+| setup WNS slow / typ / fast (ns) | **-0.509** / +7.270 / +11.809 | **-7.114** / +3.006 / +8.877 | **-14.391** / **-1.364** / +5.799 |
+| setup violating endpoints, slow | 23 | 756 | 1,020 |
+| hold WNS worst corner (ns), violations | +0.108, 0 | +0.103, 0 | +0.111, 0 |
+| max-cap / max-slew violations (overall) | 11 / 2 | 4 / 15 | 12 / 284 |
+
+Worst slow-corner path (`max.rpt`):
+- uart2: from `core.u_imem_l0/A_DOUT[2]`, SRAM clock-to-output 5.41 ns at the slow corner, then
+  the lane decode (single stages up to 1.31 ns).
+- lib10 and all: register to register through `_1`-drive cells on long wires (single stages up
+  to 1.74 ns and 2.70 ns; slew up to 3.16 ns on `all`). The 284 max-slew violations of `all` fit
+  this pattern.
+
+KLayout DRC (`64-klayout-drc/reports/drc.klayout.lyrdb`):
+
+| | uart2 | lib10 | all |
+|---|---|---|---|
+| total | 1,325 | 2,455 | 4,243 |
+| M2.b Metal2 space/notch | 1,296 | 2,382 | 4,130 |
+| M3.b Metal3 space/notch | 25 | 45 | 87 |
+| M2.a Metal2 width | 4 | 26 | 22 |
+| other | - | 2 metal2 off-grid at (632.76, 448.24) | 2 M4.b at (7.8-8.0, 40.2-41.6), 1 V1.b, 1 V3.a at (691.1, 548.8) |
+| located at a macro (2 µm halo) | 1 | 1 | 6 |
+
+All but a handful are routing spacing and width errors, which is what an unconverged detailed route
+leaves. The two M4.b errors in `all` lie just below the lower-left corner of `u_imem_l1`
+(y 41.58), where a power stripe meets the macro edge. They are to be checked in a converged run
+(step 5).
+
+Hold repair (`38-openroad-resizertimingpostcts` log): endpoints with hold violations 1,882 /
+2,142 / 2,559; "Inserted N hold buffers" 2,457 / 440 / 16. The buffer counts do not follow the
+endpoint counts. I have not explained this (possibly hold fixed by resizing in the larger
+designs); post-route hold is clean in all three.
+
+Flow fact: `RUN_POST_GRT_RESIZER_TIMING` (LibreLane 3.1.0.dev3 `flows/classic.py`) defaults to
+False and is described there as experimental ("may result in hangs and/or extended run times").
+These runs therefore had no timing repair after global routing; only `RepairDesignPostGRT`
+(slew/cap/fanout) ran.
 
 Findings:
 - **Global routing fits with zero overflow up to 29 % utilisation** (lib10). At 38.6 % (all), 6x4
@@ -136,14 +180,46 @@ Findings:
   route clean. Iterations take 11-28 min here against 63-78 min on v1, so a full detailed route
   (default DRT_OPT_ITERS 64) fits inside 6 h for uart2 and lib10 [estimate: about 10 iterations,
   with later ones shorter].
-- **20 ns closes setup** for all three after CTS (the 15-package library needs repair from -6.3 ns).
-  60 MHz was not tested.
+- **Setup at 20 ns closes after CTS but not after routing** (section 3a; corrected 2026-10-27).
+  Post-route slow-corner WNS is -0.51 / -7.11 / -14.39 ns. Even the smallest probe misses 20 ns at
+  the slow corner, with the instruction-SRAM output (5.41 ns clock-to-output) at the head of its
+  worst path. The post-route numbers come from an unconverged route without post-GRT timing repair,
+  so they bound the problem rather than measure the final slack. The post-CTS estimate misses it
+  by 0.5-14 ns, the same lesson as v1's logic-depth estimate. 60 MHz was not tested.
+  [Estimate:] without changes, a ROM-carrying v2 should plan for a slow-corner period above 20 ns
+  (about 27 ns for lib10 by WNS shift) unless post-GRT timing repair, the floorplan or the logic
+  closes the gap.
 - **Area growth from Yosys typ to post-CTS std cells is 1.32-1.39x**, so v1's assumed 1.34x was
   about right for area. v1's budget failed on routing, which area does not predict. For v2,
   budgets are set by measured GRT overflow (zero at <= 29 % here), with area growth as a secondary
   check.
 
-## 4. Known limitation
+## 4. Measured budget handed to step 3
+
+Same metric as section 1 (Yosys typ std cells / (6x4 core minus macros)), same flow settings.
+
+| quantity | measured | source |
+|---|---|---|
+| zero global-routing overflow | up to **29.2 %** (247k µm², 2,233 flops); 38.6 % gives 77 | probes lib10, all |
+| Metal3 usage at 29.2 % / 38.6 % | 48.8 % / 79.5 % | GRT reports |
+| post-CTS std-cell growth | 1.32-1.39x Yosys typ | probes |
+| post-route slow-corner setup at 20 ns | fails at every point tested (-0.51 ns at 21.7 %) | section 3a |
+| SRAM 256x16 clock-to-output, slow corner | 5.41 ns in the probe context | uart2 `max.rpt` |
+| CI job time | 41 / 62 / 102 min with DRT capped at 2 iterations | job logs |
+
+Not measured (gaps):
+- a converged detailed route;
+- 16.67 or 25 ns runs;
+- post-GRT timing repair;
+- the 512x16 macro;
+- a column floorplan;
+- any loadable-path netlist on 6x4.
+
+The budget for the v2 decision is therefore **"at most about 29 % for zero GRT overflow; clock
+period above 20 ns at the slow corner unless shown otherwise"**. Both bounds come from probes, not
+sign-off. A converged run of the chosen v2 configuration (step 5) replaces them.
+
+## 5. Known limitation
 
 None of the probes contains the loadable path or a column floorplan. They measure
 how routability scales with the ROM-only family; v2's own floorplan is checked again at step 5.
