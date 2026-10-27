@@ -301,6 +301,8 @@ type debug =
   ; own : Signal.t array
   ; lane_uids : (int * int) list array
       (* per lane: uid ranges of the signals built by its prescaler and its Lane_rtl.create *)
+
+  ; mon_running : Signal.t array (* per lane: the monitor's running input (test visibility) *)
   }
 
 let create_with_debug ?(loadable = [| false; true |]) ?mon_slots ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
@@ -467,6 +469,7 @@ let create_with_debug ?(loadable = [| false; true |]) ?mon_slots ?lib ~(sram : i
     ; lane_outputs = lane_out
     ; own = Array.map ctl ~f:(fun c -> c.own)
     ; lane_uids
+    ; mon_running = Array.init 2 ~f:running
     } )
 ;;
 

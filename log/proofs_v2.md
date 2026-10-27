@@ -110,6 +110,52 @@ C3 plan:
    in ag_pkg), with random environments, host clears and resets, for each shipped package. Compare the
    verdict (flags, codes, stamps) and pins up to the documented latency.
 
+### 7.1 Differential cyclesim, plan item 3 (directed part, 2026-10-27)
+
+`rtl_v1/test/test_c3_diff.ml`: the v2 top RTL (Top_v1, ROM monitor, 5 slots, `Rom_lib.minimum_v2`,
+behavioural SRAMs) is driven through its pins by a bit-banged host SPI master and a protocol peer.
+It is compared with Psim (Lane_model, Interp, and Mmodel cross-check, wired as in ag_pkg) on the same
+firmware, peer and divisor. RUN-to-start latency is calibrated on UART TX: unique k = 19.
+The test runs 9 scenarios in the `rtl_v1/test` runtest, about 25 s:
+
+| scenario | monitor inputs | pads, pins | fail | blame | rx bytes |
+|---|---|---|---|---|---|
+| uart_tx correct | = | = | - / - | - / - | = (0) |
+| uart_tx bad start | = | = | 13@81 / 13@81 | - / - | = (0) |
+| uart_rx nominal | = | = | - / - | - / - | = (8) |
+| uart_rx 8% fast | = | = | - / - | 32@4421 / 32@4421 | = (6) |
+| uart_rx late sampling | = | = | 4B@7021 / 4B@7021 | - / - | = (6) |
+| spi_ctl m0 tco 3 | = | = | - / - | - / - | = (8) |
+| spi_ctl m0 tco 14 | = | = | - / - | 91@113 / 91@113 | = (8) |
+| spi_tgt m0 hp 40 | = | = | - / - | - / - | = (8) |
+| spi_tgt m0 early CS | = | = | - / - | 52@2345 / 52@2345 | = (7) |
+
+The table is psim / chip. Times are Psim cycles; chip stamps are mapped to Psim time. "Monitor inputs" means
+lane 0's running, tick, uio_in, owned uio_out/uio_oe and FIFO events, compared every cycle. `uo_out`
+(the xo bits) was zero on the chip throughout, and Psim drives it as 0.
+
+Finding during bring-up (a testbench issue, not RTL): the first harness version resolved pads from
+the same-cycle outputs. Psim has one cycle of output-to-pad delay (`Lane_model.step` returns the
+pre-update outputs, and the pad of cycle t uses those of t - 1). Pin calibration hid the skew, and
+all stamps came out +1. With the time-based SPI controller peer, the early-CS blame came 2 steps
+early (chip 52@2330, psim 52@2345) and pins diverged after it. The diagnosis:
+1. `rtl_v1/test/test_c3_replay.ml` replays Psim's monitor-input stream into Mon_spec and
+   Mon_lane (5 slots). All three give B52@2345.
+2. Replaying the chip's own monitor-input stream (from `Top_v1.create_with_debug`) into Interp
+   reproduced every chip verdict exactly, so the RTL monitor matched the spec on the inputs it got.
+3. The streams differed only in running/tick vs pad phase.
+
+Fix: the chip harness now applies Psim's pad delay. As a side effect, this showed that the comparison
+detects a one-cycle phase change between lane and environment.
+
+Test-only RTL-adjacent change: `Top_v1.debug` gained `mon_running` (visibility). The emitted v2 netlist is
+byte-identical (sha1 c89129a5..., v2min, 5 slots). `Psim.run` gained an optional `on_cycle` hook.
+
+Not yet covered by item 3 (still open): random environments, host `clear_fault` and resets during a
+run, and both lanes active. The U-preservation argument after a blame is still untested. The directed scenarios fire
+no clears, and post-blame behaviour matched because nothing intervened. Items 1 (wiring lemma) and 2
+(stamp-order lemma) are not done.
+
 ## 8. Open in step 4
 
 - Done 2026-10-27: COMBDLY post-process of the 5-slot netlist (7,033 assignments, no X literals). It

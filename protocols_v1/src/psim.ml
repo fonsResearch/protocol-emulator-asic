@@ -56,7 +56,14 @@ type result =
 
 (* [tx_times]: earliest cycle at which the host may write each TX byte (default 0; shorter
    lists leave the rest at 0) *)
-let run ?(tx_bytes = []) ?(tx_times = []) ?(rx_pop_every = 1) ~setup ~cycles ~(peer : chip_view -> peer_drive) () =
+(* [on_cycle cy mi fired]: observation hook, called once per cycle with the monitor inputs and
+   the interpreter's firings of that cycle (used by the C3 replay test). *)
+let run
+  ?(on_cycle = fun (_ : int) (_ : Interp.inputs) (_ : (Lang.role * int) list) -> ())
+  ?(tx_bytes = [])
+  ?(tx_times = [])
+  ?(rx_pop_every = 1)
+  ~setup ~cycles ~(peer : chip_view -> peer_drive) () =
   let words = Isa1.assemble setup.prog in
   let lane = L.create words in
   let pkg = Compile.compile_exn setup.contract in
@@ -126,6 +133,7 @@ let run ?(tx_bytes = []) ?(tx_times = []) ?(rx_pop_every = 1) ~setup ~cycles ~(p
     let fa = Interp.step mon mi
     and fb = Mmodel.step mm mi in
     if not ([%equal: (Lang.role * int) list] fa fb) then incr mism;
+    on_cycle cy mi fa;
     List.iter fa ~f:(fun (r, c) -> Queue.enqueue events (cy, Fire (r, c)));
     if o.push_ev then Queue.enqueue events (cy, Push o.push_data);
     if o.pop_ev then Queue.enqueue events (cy, Pop o.pop_data);
