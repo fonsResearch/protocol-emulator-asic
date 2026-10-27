@@ -21,3 +21,30 @@ let all15 () =
     ; Library_v1.usb_ls_tx ()
     ]
 ;;
+
+(* v2 minimum library (doc/decisions/arch_v2_options.md, V2-5): UART TX, UART RX, SPI controller
+   mode 0, SPI target mode 0, with the divisor P each package is documented to run at on the
+   48 MHz v2 clock (V2-1): UART 115200 baud (TX 4 steps/bit: 48e6 / (115200 * 4) = 104.2 cycles
+   per step, P = 103; RX 8 steps/bit: 52.1, P = 51); SPI at P = 7 (controller SCLK
+   48 MHz / (2 * h * (P + 1)) = 1.5 MHz with h = 2). *)
+let minimum_v2_with_p () =
+  [ Library_v1.uart_tx ~d:4 ~pin:0, 103
+  ; Library_v1.uart_rx ~d:8 ~m:2 ~pin:1, 51
+  ; Library_v1.spi_ctl ~cpol:false ~cpha:false ~h:2, 7
+  ; Library_v1.spi_tgt ~cpol:false ~cpha:false ~h_min:3 ~g:6, 7
+  ]
+;;
+
+let minimum_v2 () = List.map (minimum_v2_with_p ()) ~f:fst
+
+(* Static admissibility (D13 recurrence check, log/harness_audit_v2.md C4): a serial monitor with
+   [slots] slots admits RUN only for P >= slots - 1, and a package must fit in the slots.
+   Returns the violations; [] means every shipped package runs monitored at its documented P. *)
+let admissibility_violations ~slots (lib : (Lang.t * int) list) =
+  List.filter_map lib ~f:(fun (c, p) ->
+    let m = Compile.compile_exn c in
+    let units = Array.length m.units in
+    if units > slots || p < slots - 1
+    then Some (sprintf "%s: units %d (slots %d), P %d (min %d)" m.name units slots p (slots - 1))
+    else None)
+;;

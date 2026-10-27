@@ -14,7 +14,12 @@
      running sets all bits of [mask]. A unit whose bit was set before the current step
      reads its reset state at its slot, and the slot write commits it. A non-running cycle
      inside a slot window does not affect the units still to be processed in that step:
-     they belong to a step that Mon_spec evaluated before the restart. *)
+     they belong to a step that Mon_spec evaluated before the restart.
+
+   [slots] (v2, default 8 = Mon_spec.n_units): number of unit state entries and slots per step.
+   Units slots .. 7 have no state and never fire; the assumption becomes "ticks at least [slots]
+   cycles apart" (T<slots>). Refines Mon_spec for packages with at most [slots] units. pc6/pc7
+   (loadable units) exist only with 8 slots. *)
 open! Core
 open Hardcaml
 open Signal
@@ -51,6 +56,7 @@ type internals =
   }
 
 let create
+  ?(slots = S.n_units)
   ?front
   ?probe
   ?only_unit
@@ -60,6 +66,7 @@ let create
   ~(fetch : Signal.t -> Signal.t -> Signal.t)
   (i : _ I.t)
   =
+  if slots < 1 || slots > S.n_units then raise_s [%message "Mon_lane: bad slot count" (slots : int)];
   let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
   let nspec = Reg_spec.create ~clock:i.clock () in
   let running, step, bank =
@@ -71,7 +78,7 @@ let create
   and slot = wire 3 in
   let busy_q = reg spec busy -- "mon_busy"
   and slot_q = reg spec slot -- "mon_slot" in
-  busy <== (step |: (busy_q &: (slot_q <>:. 7)));
+  busy <== (step |: (busy_q &: (slot_q <>:. slots - 1)));
   slot <== mux2 step (one 3) (slot_q +:. 1);
   let active = step |: busy_q in
   let cur = mux2 step (zero 3) slot_q in
@@ -104,7 +111,7 @@ let create
     | Some `Pc_eff_mask_only | None -> mux2 step mask_q smask
   in
   (* unit state file *)
-  let ds = Array.init S.n_units ~f:(fun _ -> List.map S.ustate_widths ~f:wire) in
+  let ds = Array.init slots ~f:(fun _ -> List.map S.ustate_widths ~f:wire) in
   let qs =
     Array.mapi ds ~f:(fun u d ->
       List.map2_exn d [ "pc"; "k"; "m0"; "m1"; "reg"; "stopped" ] ~f:(fun d n ->
@@ -119,9 +126,9 @@ let create
   let st_raw =
     S.ustate_of_list (List.init 6 ~f:(fun f -> sel (Array.map qs ~f:(fun q -> List.nth_exn q f))))
   in
-  let start = sel tables.starts in
+  let start = sel (Array.sub tables.starts ~pos:0 ~len:slots) in
   let rst_st = S.ustate_reset ~start in
-  let masked = mux cur (bits_lsb eff_mask) in
+  let masked = mux cur (List.take (bits_lsb eff_mask) slots) in
   let st =
     S.ustate_of_list
       (List.map2_exn (S.ustate_to_list rst_st) (S.ustate_to_list st_raw) ~f:(fun r q ->
@@ -137,10 +144,10 @@ let create
     let m = mux2 pending (bit smask u) (bit mask_q u) in
     mux2 m tables.starts.(u) (List.hd_exn qs.(u))
   in
-  let present_cur = sel present in
+  let present_cur = sel (Array.sub present ~pos:0 ~len:slots) in
   let act = active &: present_cur &: ~:(st.stopped) in
   let guard =
-    let g f = sel (Array.map tables.guards ~f) in
+    let g f = sel (Array.map (Array.sub tables.guards ~pos:0 ~len:slots) ~f) in
     ( g (fun (a, _, _, _, _) -> a)
     , g (fun (_, b, _, _, _) -> b)
     , g (fun (_, _, c, _, _) -> c)
@@ -163,15 +170,15 @@ let create
   ; overrun = step &: busy_q
   ; busy = busy_q
   ; act
-  ; pc6 = pc_eff 6
-  ; pc7 = pc_eff 7
+  ; pc6 = (if slots = S.n_units then pc_eff 6 else zero 7)
+  ; pc7 = (if slots = S.n_units then pc_eff 7 else zero 7)
   }
 ;;
 
 (* single ROM package *)
-let of_package (p : Mprog.t) i =
+let of_package ?slots (p : Mprog.t) i =
   let tables = S.tables_of_package p in
   let present = Array.map tables.present ~f:(fun b -> if b then vdd else gnd) in
   let fetch u pc = mux u (List.init S.n_units ~f:(fun k -> S.rom_fetch p k pc)) in
-  create ~tables ~present ~fetch i
+  create ?slots ~tables ~present ~fetch i
 ;;

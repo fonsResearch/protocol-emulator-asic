@@ -303,7 +303,8 @@ type debug =
       (* per lane: uid ranges of the signals built by its prescaler and its Lane_rtl.create *)
   }
 
-let create_with_debug ?(loadable = [| false; true |]) ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
+let create_with_debug ?(loadable = [| false; true |]) ?mon_slots ?lib ~(sram : int -> Lane_rtl.sram) (i : _ I.t) =
+  (* [mon_slots] (v2): monitor unit slots per lane, passed to Mon_engine (default 8) *)
   let spec = Reg_spec.create ~clock:i.clock ~clear:~:(i.rst_sync_n) () in
   let sync x = reg spec (reg spec x) in
   let s_uio = sync i.uio_in -- "s2_uio" in
@@ -416,7 +417,7 @@ let create_with_debug ?(loadable = [| false; true |]) ?lib ~(sram : int -> Lane_
            ; a_bist_din = zero 16; a_bist_bm = zero 16 })
           .a_dout
       in
-      Pemu_monitor_v1.Mon_engine.create ~loadable ~clock:i.clock ~rst_sync_n:i.rst_sync_n ~lib ~store
+      Pemu_monitor_v1.Mon_engine.create ?slots:mon_slots ~loadable ~clock:i.clock ~rst_sync_n:i.rst_sync_n ~lib ~store
         ~host:{ wr = spi.wr; addr = spi.addr; wdata = spi.wdata
               ; clr_verdict = ctrl_wr &: bit spi.wdata 4 }
         ~lanes ~ui_in:i.ui_in ~uio_in:i.uio_in ())
@@ -469,4 +470,4 @@ let create_with_debug ?(loadable = [| false; true |]) ?lib ~(sram : int -> Lane_
     } )
 ;;
 
-let create ?loadable ?lib ~sram i = fst (create_with_debug ?loadable ?lib ~sram i)
+let create ?loadable ?mon_slots ?lib ~sram i = fst (create_with_debug ?loadable ?mon_slots ?lib ~sram i)

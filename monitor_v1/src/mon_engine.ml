@@ -274,10 +274,18 @@ type loader_probe =
   }
 
 let create
+  ?(slots = S.n_units)
   ?probe_ctx
   ?(bug : [ `Fetch_running_only | `Ld_no_delay ] option)
   ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> Signal.t)
   ~(host : host) ~(lanes : lane_view array) ~ui_in ~uio_in () =
+  (* v2 [slots] (default 8): unit slots per lane (Mon_lane). With fewer than 8 slots there are no
+     loadable units 6/7, and every ROM package must fit in the slots (elaboration-time checks). *)
+  if slots < S.n_units && Array.exists loadable ~f:Fn.id
+  then raise_s [%message "Mon_engine: the loadable path needs 8 slots" (slots : int)];
+  List.iter lib ~f:(fun (p : M.t) ->
+    if Array.length p.units > slots
+    then raise_s [%message "Mon_engine: package needs more units than slots" p.name (Array.length p.units : int) (slots : int)]);
   let spec = Reg_spec.create ~clock ~clear:~:rst_sync_n () in
   let wr_at a = host.wr &: (host.addr ==:. a) in
   (* free-running cycle counter (wraps) *)
@@ -455,7 +463,7 @@ let create
       ; uo_out = v.uo_out; uio_out = v.uio_out; uio_oe = v.uio_oe; pop_ev = v.pop_ev
       ; pop_data = v.pop_data; push_ev = v.push_ev; push_data = v.push_data }
     in
-    let o = Mon_lane.create ~tables ~present ~fetch i in
+    let o = Mon_lane.create ~slots ~tables ~present ~fetch i in
     busy <== o.busy;
     act <== o.act;
     cur <== o.unit_;
@@ -471,7 +479,8 @@ let create
     let step = rst_sync_n &: v.running &: v.tick in
     let stamp_l = reg spec ~enable:step now_q -- sprintf "mon_stamp%d" l in
     let stamp = mux2 step now_q stamp_l in
-    let min_p = mux2 (ld_mode &: (lu ==:. 3)) (of_int ~width:16 13) (of_int ~width:16 7) in
+    (* ROM mode: P + 1 >= slots (T<slots>); loadable modes as v1 (slots = 8) *)
+    let min_p = mux2 (ld_mode &: (lu ==:. 3)) (of_int ~width:16 13) (of_int ~width:16 (slots - 1)) in
     let ready = ~:ld_mode |: ctx_loaded in
     let regs8 =
       [| pkg; zero 1 @: loading_q @: ctx_loaded @: zero 3 @: lu; ctx_base; zero 8; st_addr; zero 8

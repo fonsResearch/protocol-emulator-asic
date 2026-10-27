@@ -41,6 +41,7 @@ let () =
         match env_or "PEMU_LIB" "uart2" with
         | "lib10" -> Some "10"
         | "all" -> Some "all"
+        | "v2min" -> Some "v2min"
         | _ -> None)
       else String.chop_prefix mode ~prefix:"top_macro_mon_lib"
     in
@@ -49,6 +50,7 @@ let () =
         match study with
         | Some "10" -> List.map protocol10 ~f:Compile.compile_exn
         | Some "all" -> List.map (Rom_lib.all15 ()) ~f:Compile.compile_exn
+        | Some "v2min" -> List.map (Rom_lib.minimum_v2 ()) ~f:Compile.compile_exn
         | Some "15" ->
           List.map
             (protocol10 @ List.init 5 ~f:(fun _ -> Library_v1.spi_tgt ~cpol:false ~cpha:false ~h_min:3 ~g:6))
@@ -65,7 +67,7 @@ let () =
         eprintf "lib %s units %d words %d\n" p.name (Array.length p.units) w);
     let circ =
       CT.create_exn ~name:"pemu_core_v1m"
-        (Top_v1.create ~loadable ~lib ~sram:(fun l ->
+        (Top_v1.create ~loadable ?mon_slots:(Option.map (Sys.getenv "PEMU_SLOTS") ~f:Int.of_string) ~lib ~sram:(fun l ->
            Sram256.blackbox
              ~instance:(if l < 2 then sprintf "u_imem_l%d" l else sprintf "u_lstore_l%d" (l - 2))))
     in

@@ -38,12 +38,13 @@ let spaced_inputs ~spacing st =
 ;;
 
 (* fill all 8 units by repeating the compiled watchers (shared tables, so still valid) *)
-let fill8 (p : Mprog.t) =
+let fill8 ?(n_to = Mon_spec.n_units) (p : Mprog.t) =
   let n = Array.length p.units in
-  { p with units = Array.init Mon_spec.n_units ~f:(fun k -> p.units.(k mod n)) }
+  { p with units = Array.init n_to ~f:(fun k -> p.units.(k mod n)) }
 ;;
 
-let run ?(fill = false) ~spacing ~packages ~cycles ~seed0 () =
+(* [slots] (v2): Mon_lane slot count; with [fill] every package gets exactly [slots] units *)
+let run ?(slots = Mon_spec.n_units) ?(fill = false) ~spacing ~packages ~cycles ~seed0 () =
   let pk = ref 0 and steps = ref 0 and firings = ref 0 and mism = ref 0 and overruns = ref 0 in
   let excluded = ref 0 and first = ref None in
   let seed = ref seed0 in
@@ -52,11 +53,12 @@ let run ?(fill = false) ~spacing ~packages ~cycles ~seed0 () =
     let st = Random.State.make [| !seed; 23 |] in
     match Compile.compile (Test_mmodel.gen_contract st) with
     | Error _ -> ()
+    | Ok p when Array.length p.units > slots && not fill -> ignore p
     | Ok p ->
-      let p = if fill then fill8 p else p in
+      let p = if fill then fill8 ~n_to:slots p else p in
       incr pk;
       let ss = Test_mon_spec.sim_of p
-      and sl = Sim_l.create (Mon_lane.of_package p) in
+      and sl = Sim_l.create (Mon_lane.of_package ~slots p) in
       let inp = spaced_inputs ~spacing st in
       let lo : _ Mon_lane.O.t = Cyclesim.outputs ~clock_edge:Before sl in
       let expected = Hashtbl.create (module Int) (* cycle -> (unit, role, code) *)
@@ -94,12 +96,12 @@ let run ?(fill = false) ~spacing ~packages ~cycles ~seed0 () =
       done;
       (* compare over windows of steps with no reset cycle *)
       List.iter !step_cycles ~f:(fun c ->
-        if List.exists (List.init 8 ~f:(fun d -> c + d)) ~f:(Hash_set.mem rst_cycles)
-           || c + 7 >= cycles
+        if List.exists (List.init slots ~f:(fun d -> c + d)) ~f:(Hash_set.mem rst_cycles)
+           || c + slots - 1 >= cycles
         then incr excluded
         else (
           incr steps;
-          for d = 0 to 7 do
+          for d = 0 to slots - 1 do
             let e = Hashtbl.find expected (c + d)
             and g = Hashtbl.find got (c + d) in
             Option.iter e ~f:(fun _ -> incr firings);
@@ -116,8 +118,9 @@ let run ?(fill = false) ~spacing ~packages ~cycles ~seed0 () =
           done))
   done;
   Option.iter !first ~f:print_endline;
-  printf "%sspacing %d: packages %d steps %d (excluded %d) firings %d mismatches %d overruns %d\n"
-    (if fill then "8 units, " else "") spacing !pk !steps !excluded !firings !mism !overruns
+  printf "%s%sspacing %d: packages %d steps %d (excluded %d) firings %d mismatches %d overruns %d\n"
+    (if slots = Mon_spec.n_units then "" else sprintf "%d slots, " slots)
+    (if fill then sprintf "%d units, " slots else "") spacing !pk !steps !excluded !firings !mism !overruns
 ;;
 
 let%expect_test "time-multiplexed lane = spec circuit" =
@@ -132,5 +135,21 @@ let%expect_test "time-multiplexed lane = spec circuit" =
     spacing 13: packages 50 steps 10636 (excluded 224) firings 4188 mismatches 0 overruns 0
     seed 2006 step 2990 slot 7: spec ((7 Blame 6)) lane ()
     8 units, spacing 7: packages 50 steps 18780 (excluded 362) firings 30921 mismatches 3310 overruns 10237
+    |}]
+;;
+
+(* v2 (doc/decisions/arch_v2_options.md V2-2): 5 slots, assumption T5 *)
+let%expect_test "time-multiplexed lane, 5 slots = spec circuit" =
+  run ~slots:5 ~spacing:5 ~packages:200 ~cycles:3000 ~seed0:3000 ();
+  run ~slots:5 ~fill:true ~spacing:5 ~packages:200 ~cycles:3000 ~seed0:3500 ();
+  run ~slots:5 ~fill:true ~spacing:9 ~packages:50 ~cycles:3000 ~seed0:4000 ();
+  (* assumption broken (T4): shows it is needed *)
+  run ~slots:5 ~fill:true ~spacing:4 ~packages:50 ~cycles:3000 ~seed0:4500 ();
+  [%expect {|
+    5 slots, spacing 5: packages 200 steps 101632 (excluded 1197) firings 32435 mismatches 0 overruns 0
+    5 slots, 5 units, spacing 5: packages 200 steps 101646 (excluded 1205) firings 112451 mismatches 0 overruns 0
+    5 slots, 5 units, spacing 9: packages 50 steps 15080 (excluded 171) firings 17659 mismatches 0 overruns 0
+    seed 4501 step 2890 slot 4: spec ((4 Fail 4)) lane ()
+    5 slots, 5 units, spacing 4: packages 50 steps 30670 (excluded 387) firings 37539 mismatches 5613 overruns 16827
     |}]
 ;;
