@@ -196,6 +196,38 @@ Harness pitfalls fixed on the way, all test bugs and not design differences:
 Still open: reset during a run, both lanes active at once, the wiring lemma (item 1) and the stamp-order
 lemma (item 2).
 
+### 7.3 Differential cyclesim: both lanes at once (2026-10-27)
+
+`rtl_v1/test/test_c3_two.ml` runs two ROM packages concurrently on disjoint pins. It compares them
+with two independent Psim lanes, each with its own peer; the chip sees the composed peer drive. Per lane it compares
+the monitor-input stream (uio_in on that lane's interface pins only), the owned pins and the pushes in every cycle.
+Globally it compares the first fail and first blame, including the lane bits (VERDICT bits 2/3), against
+the spec rule "earliest stamp, lane 0 on ties".
+
+| scenario | per-lane streams, pins, pushes | first fail | first blame |
+|---|---|---|---|
+| A L0 uart_tx, L1 spi_ctl tco 3 | = / = | - | - |
+| B L0 uart_tx bad start, L1 spi_ctl tco 14 | = / = | L0 13@81 = | L1 91@113 = |
+| C L0 uart_rx 8 % fast, L1 spi_tgt early CS | = / = | - | L1 52@2345 = (L0 32@4421 later) |
+| D = B with lanes swapped | = / = | L1 13@81 = | L0 91@113 = |
+| E = C with lanes swapped | = / = | - | L0 52@2345 = |
+| F L0 uart_tx, L1 spi_ctl tco 14, release on blame | = / = (L1 faults: 0 pushes) | - | L1 91@113 = |
+| G L0 spi_tgt early CS release on blame, L1 uart_tx | = / = (L0 faults: 2 pushes) | - | L0 52@2345 = |
+
+This covers lane-1 wiring of the lane view, the per-lane blame return (F, G), non-interference
+(a faulting lane leaves the other unchanged), both package orders, and the cross-lane first choice.
+Not covered: equal stamps across lanes (the tie rule); the scenarios do not produce one.
+
+**C3 item 1 (wiring lemma), disposition.** In the RTL the engine's lane view is literally the
+expressions the lemma states (`Top_v1`, construction of `lanes` for `Mon_engine.create`: running,
+tick, uio_out & OWN, uio_oe & OWN, xo in its uo_out position, FIFO events, raw ui_in/uio_in). The
+lane's blame_in is the engine's registered `mon_blame_to_lane<L>`. A formal lemma at RTL level
+would therefore be vacuous. The residual risks are:
+- lane-index mapping inside the engine, covered by 7.3 (both orders, release on blame on each lane);
+- netlist-level wiring, covered by E4/E5 equivalence of the final GDS netlist against the RTL, to be
+  re-run on the green v2 run.
+Item 1 is closed on this basis (agent decision; a reviewer may still ask for a formal statement).
+
 ## 8. Open in step 4
 
 - Done 2026-10-27: COMBDLY post-process of the 5-slot netlist (7,033 assignments, no X literals). It

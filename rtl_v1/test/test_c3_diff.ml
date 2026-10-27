@@ -37,6 +37,15 @@ module Ox = struct
     ; m_push : 'a
     ; m_push_d : 'a [@bits 8]
     ; m_clr : 'a
+    ; m1_run : 'a
+    ; m1_tick : 'a
+    ; m1_out : 'a [@bits 8]
+    ; m1_oe : 'a [@bits 8]
+    ; m1_xo : 'a [@bits 2]
+    ; m1_pop : 'a
+    ; m1_pop_d : 'a [@bits 8]
+    ; m1_push : 'a
+    ; m1_push_d : 'a [@bits 8]
     }
   [@@deriving hardcaml]
 end
@@ -68,6 +77,7 @@ type h =
   ; pads : (int, int) Hashtbl.t (* chip cycle -> resolved uio pad *)
   ; mon : (int, Interp.inputs) Hashtbl.t (* chip cycle -> lane 0 monitor inputs *)
   ; mutable clears : int list (* chip cycles with lane 0 clear_fault high *)
+  ; mon1 : (int, Interp.inputs) Hashtbl.t (* chip cycle -> lane 1 monitor inputs *)
   }
 
 let no_peer (_ : Psim.chip_view) = { Psim.drive_oe = 0; drive_val = 0 }
@@ -110,6 +120,12 @@ let cycle h =
       ; ui_in = Bits.to_int !(i.ui_in); uio_in = pad; uo_out = gi ob.m_xo lsl 3
       ; uio_out = gi ob.m_out; uio_oe = gi ob.m_oe; pop_ev = gb ob.m_pop; pop_data = gi ob.m_pop_d
       ; push_ev = gb ob.m_push; push_data = gi ob.m_push_d };
+  Hashtbl.set h.mon1 ~key:h.n
+    ~data:
+      { Interp.rst_sync_n = h.s1; running = gb ob.m1_run; tick = gb ob.m1_tick
+      ; ui_in = Bits.to_int !(i.ui_in); uio_in = pad; uo_out = gi ob.m1_xo lsl 5
+      ; uio_out = gi ob.m1_out; uio_oe = gi ob.m1_oe; pop_ev = gb ob.m1_pop; pop_data = gi ob.m1_pop_d
+      ; push_ev = gb ob.m1_push; push_data = gi ob.m1_push_d };
   if gb ob.m_clr then h.clears <- h.n :: h.clears;
   let out = Bits.to_int !(o.top.uio_out) and oe = Bits.to_int !(o.top.uio_oe) in
   Hashtbl.set h.outs ~key:(h.n + 1) ~data:(out, oe) (* valid during cycle n + 1 *);
@@ -147,16 +163,20 @@ let create () =
           Top_v1.create_with_debug ~loadable:[| false; false |] ~mon_slots:5 ~lib
             ~sram:(fun _ i -> fst (Sram256.behavioural i)) i
         in
-        let lo = d.lane_outputs.(0) in
+        let lo = d.lane_outputs.(0) and l1 = d.lane_outputs.(1) in
         { Ox.top = o; m_run = d.mon_running.(0); m_tick = d.lane_inputs.(0).tick
         ; m_out = Signal.(lo.uio_out &: d.own.(0)); m_oe = Signal.(lo.uio_oe &: d.own.(0)); m_xo = lo.xo
         ; m_pop = lo.pop_ev; m_pop_d = lo.pop_data; m_push = lo.push_ev; m_push_d = lo.push_data
-        ; m_clr = d.lane_inputs.(0).clear_fault })
+        ; m_clr = d.lane_inputs.(0).clear_fault
+        ; m1_run = d.mon_running.(1); m1_tick = d.lane_inputs.(1).tick
+        ; m1_out = Signal.(l1.uio_out &: d.own.(1)); m1_oe = Signal.(l1.uio_oe &: d.own.(1)); m1_xo = l1.xo
+        ; m1_pop = l1.pop_ev; m1_pop_d = l1.pop_data; m1_push = l1.push_ev; m1_push_d = l1.push_data })
   in
   let h =
     { sim; rst_n = false; s0 = false; s1 = false; cs_n = true; sck = false; mosi = false; miso = 0; n = 0
     ; c_rst = -1; off = 0; peer = no_peer; wired = 0; prev_out = 0; prev_oe = 0; prev2_out = 0; prev2_oe = 0; prev_pad = 0xFF
-    ; outs = Hashtbl.create (module Int); pads = Hashtbl.create (module Int); mon = Hashtbl.create (module Int); clears = [] }
+    ; outs = Hashtbl.create (module Int); pads = Hashtbl.create (module Int); mon = Hashtbl.create (module Int); clears = []
+    ; mon1 = Hashtbl.create (module Int) }
   in
   wait h 3; h.rst_n <- true; wait h 6; h
 ;;
