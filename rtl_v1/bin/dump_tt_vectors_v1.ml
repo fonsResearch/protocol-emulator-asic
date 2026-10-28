@@ -15,6 +15,8 @@ open Pemu_spec_v1
 open Pemu_monitor_v1
 open Pemu_rtl_v1
 module Sim = Cyclesim.With_interface (Top_v1.I) (Top_v1.O)
+module Psim = Pemu_protocols_v1.Psim
+module Peers = Pemu_protocols_v1.Peers
 
 type h =
   { sim : (Bits.t ref Top_v1.I.t, Bits.t ref Top_v1.O.t) Cyclesim.t
@@ -29,6 +31,11 @@ type h =
   ; mutable miso : int
   ; rows : Buffer.t
   ; mutable n : int
+  ; mutable peer : (Psim.chip_view -> Psim.peer_drive) option
+      (* v2 scenarios: a protocol peer in the loop; the pad of each cycle resolves the chip's
+         current drive (values after the previous edge) and the peer's drive, pull-up idle *)
+  ; mutable t0 : int (* peer time origin *)
+  ; mutable prev_pad : int
   }
 
 let ui h =
@@ -43,6 +50,13 @@ let cycle h =
   and uout = Bits.to_int !(o.uio_out)
   and uoe = Bits.to_int !(o.uio_oe) in
   h.miso <- uo land 1;
+  (match h.peer with
+   | None -> ()
+   | Some p ->
+     let (pd : Psim.peer_drive) = p { Psim.cycle = h.n - h.t0; out = uout; oe = uoe; pad = h.prev_pad } in
+     let pad = (uoe land uout) lor (lnot uoe land pd.drive_oe land pd.drive_val) lor (lnot uoe land lnot pd.drive_oe land 0xFF) in
+     h.uio_in <- pad land 0xFF;
+     h.prev_pad <- h.uio_in);
   bprintf h.rows "%x %02x %02x %02x %02x %02x\n" (Bool.to_int h.rst_n) (ui h) h.uio_in uoe uout uo;
   (* rst_n low clears the synchroniser asynchronously (within this cycle) *)
   if not h.rst_n then (h.s0 <- false; h.s1 <- false);
@@ -137,7 +151,8 @@ let create () =
   in
   let h =
     { sim; rst_n = false; s0 = false; s1 = false; cs_n = true; sck = false; mosi = false; ui_hi = 0
-    ; uio_in = 0xFF; miso = 0; rows = Buffer.create 65536; n = 0 }
+    ; uio_in = 0xFF; miso = 0; rows = Buffer.create 65536; n = 0; peer = None; t0 = 0
+    ; prev_pad = 0xFF }
   in
   wait h 3;
   h.rst_n <- true;
@@ -226,12 +241,104 @@ let reset_mid h =
   List.rev !log
 ;;
 
+let compose peers (v : Psim.chip_view) =
+  List.fold peers ~init:{ Psim.drive_oe = 0; drive_val = 0 } ~f:(fun (acc : Psim.peer_drive) p ->
+    let (d : Psim.peer_drive) = p v in
+    { Psim.drive_oe = acc.drive_oe lor d.drive_oe; drive_val = acc.drive_val lor (d.drive_val land d.drive_oe) })
+;;
+
+let hex l = String.concat ~sep:" " (List.map l ~f:(sprintf "%02X"))
+
+let rx_fifo h ~lane =
+  let b = 0x10 + (16 * lane) in
+  let lvl = (read1 h (b + 11) lsr 4) land 0xF in
+  if lvl = 0 then [] else read h (b + 10) lvl
+;;
+
+(* v2 minimum (PEMU_LIB=v2min), divisors of Rom_lib.minimum_v2_with_p at 33 MHz. Lane 1: SPI
+   controller m0 (ROM package 2, P = 7) against an SPI target peer whose MISO bit 4 of frame 3
+   violates hold (blame 0x91). Lane 0: UART RX (package 1, P = 35) against a 115200-baud sender
+   at 33 MHz (286.46 cycles per bit). *)
+let v2_spi_ctl_uart_rx h =
+  let log = ref [] in
+  let note fmt = ksprintf (fun s -> log := s :: !log) fmt in
+  write h 0x10 [ 0x00 ];
+  write h 0x12 [ 35; 0 ];
+  load h ~lane:0 (Programs_v1.uart_rx ~d:8 ~pin:1);
+  set_pkg h ~lane:0 ~idx:1 (List.nth_exn lib 1);
+  write h 0x20 [ Programs_v1.spi_own_ctl ];
+  write h 0x22 [ 7; 0 ];
+  write h 0x25 [ Programs_v1.spi_cfg_ctl ];
+  write h 0x26 [ Programs_v1.spi_cfg2_ctl ];
+  load h ~lane:1 (Programs_v1.spi_ctl ~cpol:false ~cpha:false);
+  set_pkg h ~lane:1 ~idx:2 (List.nth_exn lib 2);
+  write h 0x29 [ 0xA5; 0x3C; 0x00; 0xFF; 0x81; 0x7E; 0x55; 0x0F ];
+  let tgt =
+    Peers.spi_target ~cpol:false ~cpha:false ~tco:3 ~send:[ 0x96; 0x01; 0x80; 0xC3; 0x5A; 0xF0; 0x33; 0xE7 ]
+      ~miso_glitch:(3, 4) ~glitch_len:10 ()
+  in
+  let bp = 33e6 /. 115200. in
+  let snd =
+    Peers.sender ~pin:1 ~bp ~frames:(Peers.frames_of ~bp ~st0:400 [ 0x55; 0xC3; 0x0F; 0xA5 ] ~gap:(fun b -> 50 + b))
+      ~defect:No_defect
+  in
+  h.t0 <- h.n;
+  h.peer <- Some (compose [ tgt.drive; snd ]);
+  write h 0x01 [ 0x03 ];
+  wait h 13000;
+  h.peer <- None;
+  h.uio_in <- 0xFF;
+  note "VERDICT %s STATUS 0x%02X" (hex (read h 0x40 12)) (read1 h 0x02);
+  note "lane 0 UART RX bytes [%s]" (hex (rx_fifo h ~lane:0));
+  note "lane 1 SPI ctl RX bytes [%s]; peer received [%s]" (hex (rx_fifo h ~lane:1)) (hex (tgt.received ()));
+  List.rev !log
+;;
+
+(* Lane 1: SPI target m0 (package 3, P = 7, release on blame) against an SPI controller peer whose
+   frame 5 raises CS after 9 edges (blame 0x52, lane 1 faults); then the host clears the fault
+   and the verdict. Lane 0: UART TX (package 0, P = 71, 288 cycles per bit). *)
+let v2_spi_tgt_uart_tx h =
+  let log = ref [] in
+  let note fmt = ksprintf (fun s -> log := s :: !log) fmt in
+  write h 0x10 [ 0x01 ];
+  write h 0x12 [ 71; 0 ];
+  load h ~lane:0 (Programs_v1.uart_tx ~d:4);
+  set_pkg h ~lane:0 ~idx:0 (List.nth_exn lib 0);
+  write h 0x19 [ 0xA5; 0x3C; 0x96 ];
+  write h 0x20 [ Programs_v1.spi_own_tgt ];
+  write h 0x22 [ 7; 0 ];
+  write h 0x25 [ 0x01 ];
+  load h ~lane:1 (Programs_v1.spi_tgt ~cpol:false ~cpha:false);
+  set_pkg h ~lane:1 ~idx:3 (List.nth_exn lib 3);
+  write h 0x29 [ 0xA5; 0x3C; 0x00; 0xFF; 0x81; 0x7E; 0x55; 0x0F ];
+  let ctl =
+    Peers.spi_controller ~cpol:false ~cpha:false ~hp:40 ~setup:40 ~hold:40 ~gap:144 ~mdly:2 ~t0:400
+      ~bytes:[ 0x96; 0x01; 0x80; 0xC3; 0x5A; 0xF0; 0x33; 0xE7 ] ~defect:(Early_rise (5, 9)) ()
+  in
+  h.t0 <- h.n;
+  h.peer <- Some ctl.cdrive;
+  write h 0x01 [ 0x03 ];
+  wait h (Int.max (ctl.frames_end + 300) 9500);
+  h.peer <- None;
+  h.uio_in <- 0xFF;
+  note "VERDICT %s STATUS 0x%02X" (hex (read h 0x40 12)) (read1 h 0x02);
+  note "lane 1 SPI tgt RX bytes [%s]" (hex (rx_fifo h ~lane:1));
+  write h 0x01 [ 0x03 lor 0x40 lor 0x10 ];
+  wait h 50;
+  note "after clear fault L1 + CLR_VERDICT: VERDICT 0x%02X STATUS 0x%02X" (read1 h 0x40) (read1 h 0x02);
+  List.rev !log
+;;
+
 let () =
   let dir = (Sys.get_argv ()).(1) in
   List.iter
     ([ "v1_rom_uart", rom_uart ]
      @ (if loadable.(1) then [ "v1_loadable_l1", loadable_l1 ] else [])
-     @ [ "v1_reset_mid", reset_mid ])
+     @ [ "v1_reset_mid", reset_mid ]
+     @
+     if String.equal (env_or "PEMU_LIB" "all") "v2min"
+     then [ "v2_spi_ctl_uart_rx", v2_spi_ctl_uart_rx; "v2_spi_tgt_uart_tx", v2_spi_tgt_uart_tx ]
+     else [])
     ~f:(fun (name, f) ->
       let h = create () in
       let log = f h in

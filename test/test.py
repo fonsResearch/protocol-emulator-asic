@@ -21,7 +21,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, RisingEdge
 
 VEC_DIR = Path(__file__).resolve().parent / "vectors"
-SCENARIOS = sorted(p.stem for p in VEC_DIR.glob("v1_*.vec"))  # core v1 (rtl_v1/bin/dump_tt_vectors_v1.ml)
+SCENARIOS = sorted(p.stem for p in [*VEC_DIR.glob("v1_*.vec"), *VEC_DIR.glob("v2_*.vec")])  # core v1/v2 (rtl_v1/bin/dump_tt_vectors_v1.ml)
 CLOCK_NS = 20  # functional replay is period-independent (no timing in RTL/GL sim); config CLOCK_PERIOD is 16.67
 
 

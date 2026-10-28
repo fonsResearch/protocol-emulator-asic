@@ -200,6 +200,21 @@ let%expect_test "C3: two lanes at once" =
     [ uart_tx (); spi_ctl ~tco:3 () ] ~cycles:6000;
   run ~prefix:(prefix, 157, 1) ~k ~name:"I: after reset 1 cycle long, 157 cycles into the prefix: C"
     [ uart_rx ~rate:1.08 (); spi_tgt ~defect:(Peers.Early_rise (2, 9)) () ] ~cycles:30_000;
+  (* D13 check at the documented 33 MHz divisors (Rom_lib.minimum_v2_with_p): UART TX P = 71,
+     UART RX P = 35 with a 115200-baud sender (33e6 / 115200 = 286.46 cycles per bit), SPI P = 7 *)
+  let p_of i = snd (List.nth_exn (Pemu_rtl_v1.Rom_lib.minimum_v2_with_p ()) i) in
+  let bp33 = 33e6 /. 115200. in
+  let rx33 ?(defect = Peers.No_defect) () =
+    let frames bp = Peers.frames_of ~bp ~st0:400 [ 0x55; 0xC3; 0x0F; 0xA5; 0x00; 0xFF ] ~gap:(fun b -> 50 + b) in
+    { (uart_rx ~rate:1.0 ()) with
+      name = "uart_rx P35 115200@33MHz"; setup = { (D.rx_setup ()) with p = p_of 1 }
+    ; peer = (fun () -> Peers.sender ~pin:1 ~bp:bp33 ~frames:(frames bp33) ~defect) }
+  in
+  let tx33 () = let c = uart_tx () in { c with name = "uart_tx P71"; setup = { c.setup with p = p_of 0 } } in
+  run ~k ~name:"J: documented P: L0 uart_rx P=35, L1 spi_ctl P=7 tco 3" [ rx33 (); spi_ctl ~tco:3 () ] ~cycles:20_000;
+  run ~k ~name:"K: documented P: L0 uart_tx P=71, L1 spi_tgt P=7" [ tx33 (); spi_tgt () ] ~cycles:12_000;
+  run ~k ~name:"L: documented P: L0 uart_rx P=35 short stop (frame 2), L1 spi_ctl P=7 tco 14"
+    [ rx33 ~defect:(Peers.Short_stop 2) (); spi_ctl ~tco:14 () ] ~cycles:20_000;
   [%expect {|
     A: L0 uart_tx, L1 spi_ctl tco 3 (no firings)
       lane 0 uart_tx                    mon-in =      pins =      pushes = (0) | psim fail - blame -
