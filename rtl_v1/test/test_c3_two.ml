@@ -28,8 +28,7 @@ let compose peers (v : Psim.chip_view) =
     { Psim.drive_oe = acc.drive_oe lor d.drive_oe; drive_val = acc.drive_val lor (d.drive_val land d.drive_oe) })
 ;;
 
-let chip_run2 ~k ~(lanes : lane_cfg list) ~cycles =
-  let h = D.create () in
+let configure h (lanes : lane_cfg list) =
   List.iter lanes ~f:(fun c ->
     let b = 0x10 + (16 * c.lane) and s = c.setup in
     D.write h b [ s.own ];
@@ -45,7 +44,30 @@ let chip_run2 ~k ~(lanes : lane_cfg list) ~cycles =
     let p = List.nth_exn D.lib c.pkg in
     D.write h (0x50 + (8 * c.lane)) [ 0x80 lor c.pkg ];
     D.write h (0x60 + (16 * c.lane)) (Array.to_list p.remap);
-    if not (List.is_empty c.tx_bytes) then D.write h (b + 9) c.tx_bytes);
+    if not (List.is_empty c.tx_bytes) then D.write h (b + 9) c.tx_bytes)
+;;
+
+(* [prefix]: lanes run for [run_for] cycles after RUN, then reset is asserted for [rst_len]
+   cycles; the measured scenario is then configured from scratch on the same chip instance *)
+let chip_run2 ?prefix ~k ~(lanes : lane_cfg list) ~cycles () =
+  let h = D.create () in
+  (match prefix with
+   | None -> ()
+   | Some (pl, run_for, rst_len) ->
+     configure h pl;
+     h.wired <- List.fold pl ~init:0 ~f:(fun a c -> a lor c.setup.open_drain_wired_and);
+     h.peer <- compose (List.map pl ~f:(fun c -> c.peer ()));
+     D.write h 0x01 [ List.fold pl ~init:0 ~f:(fun a c -> a lor (1 lsl c.lane)) ];
+     D.wait h run_for;
+     let uo = Hardcaml.Bits.to_int !((Hardcaml.Cyclesim.outputs h.sim : _ D.Ox.t).top.uo_out) in
+     printf "  prefix at reset: verdict pins fail %d blame %d\n" ((uo lsr 1) land 1) ((uo lsr 2) land 1);
+     h.peer <- D.no_peer;
+     h.rst_n <- false;
+     D.wait h rst_len;
+     h.rst_n <- true;
+     h.c_rst <- -1;
+     D.wait h 6);
+  configure h lanes;
   h.wired <- List.fold lanes ~init:0 ~f:(fun a c -> a lor c.setup.open_drain_wired_and);
   h.off <- h.n + D.ctrl_write_len - k;
   h.peer <- compose (List.map lanes ~f:(fun c -> c.peer ()));
@@ -63,8 +85,8 @@ let chip_run2 ~k ~(lanes : lane_cfg list) ~cycles =
   h, v, rx
 ;;
 
-let run ~k ~name (lanes : lane_cfg list) ~cycles =
-  let h, v, chip_rx = chip_run2 ~k ~lanes ~cycles in
+let run ?prefix ~k ~name (lanes : lane_cfg list) ~cycles =
+  let h, v, chip_rx = chip_run2 ?prefix ~k ~lanes ~cycles () in
   printf "%s\n" name;
   let firsts =
     List.map2_exn lanes chip_rx ~f:(fun c crx ->
@@ -170,6 +192,14 @@ let%expect_test "C3: two lanes at once" =
     [ uart_tx (); rob (spi_ctl ~tco:14 ()) ] ~cycles:6000;
   run ~k ~name:"G: release on blame on L0: L0 spi_tgt early CS rob, L1 uart_tx (L0 faults, L1 unaffected)"
     [ rob (spi_tgt ~defect:(Peers.Early_rise (2, 9)) ()) @> 0; uart_tx () @> 1 ] ~cycles:6000;
+  (* mid-run reset: the prefix records a fail (L0 13@81) and a blame (L1 91@113, L1 faulted by
+     release on blame); reset lands 2,000 + x cycles after RUN, x chosen so that it falls inside a
+     step's slot window on L1 (P = 7) and mid-bit on L0 *)
+  let prefix = [ uart_tx ~bad:true (); rob (spi_ctl ~tco:14 ()) ] in
+  run ~prefix:(prefix, 2003, 3) ~k ~name:"H: after mid-run reset (prefix B+rob): L0 uart_tx, L1 spi_ctl tco 3 (expect no firings)"
+    [ uart_tx (); spi_ctl ~tco:3 () ] ~cycles:6000;
+  run ~prefix:(prefix, 157, 1) ~k ~name:"I: after reset 1 cycle long, 157 cycles into the prefix: C"
+    [ uart_rx ~rate:1.08 (); spi_tgt ~defect:(Peers.Early_rise (2, 9)) () ] ~cycles:30_000;
   [%expect {|
     A: L0 uart_tx, L1 spi_ctl tco 3 (no firings)
       lane 0 uart_tx                    mon-in =      pins =      pushes = (0) | psim fail - blame -
@@ -206,5 +236,17 @@ let%expect_test "C3: two lanes at once" =
       lane 1 uart_tx                    mon-in =      pins =      pushes = (0) | psim fail - blame -
       first fail  predicted -            chip -            =
       first blame predicted L0 52@2345   chip L0 52@2345   =
+      prefix at reset: verdict pins fail 1 blame 1
+    H: after mid-run reset (prefix B+rob): L0 uart_tx, L1 spi_ctl tco 3 (expect no firings)
+      lane 0 uart_tx                    mon-in =      pins =      pushes = (0) | psim fail - blame -
+      lane 1 spi_ctl tco 3              mon-in =      pins =      pushes = (8) | psim fail - blame -
+      first fail  predicted -            chip -            =
+      first blame predicted -            chip -            =
+      prefix at reset: verdict pins fail 1 blame 1
+    I: after reset 1 cycle long, 157 cycles into the prefix: C
+      lane 0 uart_rx rate x1.08         mon-in =      pins =      pushes = (4) | psim fail - blame 32@4421
+      lane 1 spi_tgt early CS           mon-in =      pins =      pushes = (7) | psim fail - blame 52@2345
+      first fail  predicted -            chip -            =
+      first blame predicted L1 52@2345   chip L1 52@2345   =
     |}]
 ;;

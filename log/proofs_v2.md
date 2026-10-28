@@ -228,6 +228,49 @@ would therefore be vacuous. The residual risks are:
   re-run on the green v2 run.
 Item 1 is closed on this basis (agent decision; a reviewer may still ask for a formal statement).
 
+### 7.4 Reset during a run (2026-10-27)
+
+`test_c3_two.ml` scenarios H and I use a prefix on the same chip instance. It runs B with release on blame
+on L1 (fail L0 13@81, blame L1 91@113, L1 faulted); at the moment of reset the verdict pins show
+fail 1 and blame 1. Reset is then asserted mid-run: H after 2,003 cycles for 3 cycles, I after 157 cycles
+for 1 cycle. Both lanes are then reconfigured from scratch and a fresh scenario runs: H = A (no firings), I = C.
+Both match a fresh Psim in every compared quantity; H's verdict is empty, as predicted. So no verdict,
+unit, history, FIFO or fault state survives reset into the next run, including a 1-cycle reset.
+Not covered: reset without reconfiguration. Registers are cleared by reset, so the lanes stay halted
+until the host writes RUN, which top_props `run_after_reset_k33` proves.
+
+### 7.5 C3 item 2: stamp-order lemma (argument, not machine-checked)
+
+**Lemma S.** Per lane L and role r: if the verdict records a first firing of role r for L with stamp s, then
+s is the least stamp among L's role-r firings since the last reset or verdict clear. Apart from the
+documented in-flight-at-clear case (monitor_isa_v1.md section 6), the global first is the least
+stamp over both lanes, lane 0 on ties.
+
+**Argument.**
+1. Firings are recorded in nondecreasing stamp order.
+   - R1 (r1v2_s5_u0..u4, PASS): unit j's firing of step t appears at cycle t + j, and its stamp is t
+     (`stamp = mux2 step now_q stamp_l`, with stamp_l latched at the step).
+   - Admission (P >= slots - 1, `Rom_lib.admissibility_violations` and the engine's min_p) puts steps
+     at least `slots` cycles apart, so every firing of step t is recorded before any firing of a
+     later step.
+   - A lane's serial engine fires at most one unit per cycle.
+2. The record takes the first firing (`take = rec & ~seen`), so by step 1 it holds the least stamp.
+3. Cross-lane rule (`precedes`): the other lane's stamp being 1-7 later, or absent, means this lane is first; equal stamps
+   go to lane 0. Stamps of competing first records differ by at most 7, so the comparison is exact
+   modulo 2^32.
+
+**Chip theorem (assembled).** The pieces are:
+- A2 U (harness): no fail in a step before the first blame step.
+- C3 composition: chip and harness agree up to the first blame. Evidence: the 7.1-7.4 differential
+  runs, plus the 7.2 window result that divergence starts only after a recorded blame.
+- Lemma S.
+
+Together they give: if the chip records a fail with stamp s_f, it records a blame with stamp s_b <= s_f.
+
+Status: Lemma S is a paper argument over proven R1 and the verdict RTL. The differential runs back it
+(identical stamps in every scenario). A formal harness for the verdict block is possible, but the block
+is not separable in `Mon_engine` today. It is left as an option for the step-12 sign-off.
+
 ## 8. Open in step 4
 
 - Done 2026-10-27: COMBDLY post-process of the 5-slot netlist (7,033 assignments, no X literals). It
@@ -235,6 +278,8 @@ Item 1 is closed on this basis (agent decision; a reviewer may still ask for a f
   -seq 2 + equiv_induct, 830 s). RTL replay of the v2 vectors on it: 3/3. Floorplan tests 6/6.
   It is in the TT build at `src/pemu_core_v1m.v` (commit ada5d7d). CI variants: v2-6x4-pgrt
   (post-GRT timing repair on), v2-6x4-40mhz (25 ns).
-- `top_props` (load gate, OWN, pin gating, RUN after reset) on the v2 top; composition lemma C3.
-- Lane A1: lanes are unchanged, so the v1 lane A1 (log/proofs_v1.md) applies. To confirm by
-  checking that `Lane_rtl` is byte-identical in the emitted v2 netlist.
+- Done: `top_props` on the v2 top; C3 sections 7.1-7.5 (items 1-3 closed as stated there).
+- Lane A1: confirmed carried over. `git diff v1-tt v2-6x4` is empty for rtl_v1/src/lane_rtl.ml,
+  prescaler16.ml, sram256.ml, spec_v1/src/ and formal/src/a1_lane.ml. The core netlist is flattened,
+  so a per-module byte comparison of the emitted Verilog is not possible; the source identity is the evidence.
+- Remaining for sign-off (step 5): E4/E5 netlist equivalence on the green v2 GDS run.
