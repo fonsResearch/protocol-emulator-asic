@@ -263,5 +263,20 @@ let%expect_test "C3: two lanes at once" =
       lane 1 spi_tgt early CS           mon-in =      pins =      pushes = (7) | psim fail - blame 52@2345
       first fail  predicted -            chip -            =
       first blame predicted L1 52@2345   chip L1 52@2345   =
+    J: documented P: L0 uart_rx P=35, L1 spi_ctl P=7 tco 3
+      lane 0 uart_rx P35 115200@33MHz   mon-in =      pins =      pushes = (6) | psim fail - blame -
+      lane 1 spi_ctl tco 3              mon-in =      pins =      pushes = (8) | psim fail - blame -
+      first fail  predicted -            chip -            =
+      first blame predicted -            chip -            =
+    K: documented P: L0 uart_tx P=71, L1 spi_tgt P=7
+      lane 0 uart_tx P71                mon-in =      pins =      pushes = (0) | psim fail - blame -
+      lane 1 spi_tgt                    mon-in =      pins =      pushes = (8) | psim fail - blame -
+      first fail  predicted -            chip -            =
+      first blame predicted -            chip -            =
+    L: documented P: L0 uart_rx P=35 short stop (frame 2), L1 spi_ctl P=7 tco 14
+      lane 0 uart_rx P35 115200@33MHz   mon-in =      pins =      pushes = (6) | psim fail - blame 33@9217
+      lane 1 spi_ctl tco 14             mon-in =      pins =      pushes = (8) | psim fail - blame 91@113
+      first fail  predicted -            chip -            =
+      first blame predicted L1 91@113    chip L1 91@113    =
     |}]
 ;;
