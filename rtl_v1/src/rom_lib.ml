@@ -39,6 +39,18 @@ let minimum_v2_with_p () =
 
 let minimum_v2 () = List.map (minimum_v2_with_p ()) ~f:fst
 
+(* Increment 1 (log/increments_v2.md): v2 minimum plus the I2C controller, Fm and Sm, as ROM
+   packages 4 and 5. Divisors at 33 MHz: Fm P = 8 (step 0.273 us, SCL 10 steps = 367 kHz; the v1
+   step was 0.25 us at P = 14 / 60 MHz, P = 7 would give 412 kHz > 400 kHz); Sm P = 32 (step 1 us,
+   as in v1). The controller contract encodes only UM10204 minimum times, so a longer step keeps it
+   valid. *)
+let v2_inc1_with_p () =
+  minimum_v2_with_p ()
+  @ [ Library_v1.i2c_ctl ~l:6 ~h:4 ~tsu:3 ~thold:6, 8; Library_v1.i2c_ctl ~l:5 ~h:5 ~tsu:5 ~thold:5, 32 ]
+;;
+
+let v2_inc1 () = List.map (v2_inc1_with_p ()) ~f:fst
+
 (* Static admissibility (D13 recurrence check, log/harness_audit_v2.md C4): a serial monitor with
    [slots] slots admits RUN only for P >= slots - 1, and a package must fit in the slots.
    Returns the violations; [] means every shipped package runs monitored at its documented P. *)

@@ -130,6 +130,7 @@ let lib =
      | "uart2" -> [ Library_v1.uart_tx ~d:3 ~pin:0; Library_v1.uart_tx ~d:4 ~pin:1 ]
      | "lib10" -> Rom_lib.protocol10 ()
      | "v2min" -> Rom_lib.minimum_v2 ()
+     | "v2inc1" -> Rom_lib.v2_inc1 ()
      | _ -> Rom_lib.all15 ())
 ;;
 

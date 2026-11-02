@@ -155,7 +155,7 @@ let write h a d = ignore (transaction h ((a land 0x7F) :: d) : int list)
 let read h a k = List.tl_exn (transaction h ((0x80 lor a) :: List.init k ~f:(fun _ -> 0)))
 let le32 l = List.foldi l ~init:0 ~f:(fun i acc b -> acc lor (b lsl (8 * i)))
 
-let create () =
+let create ?(lib = lib) () =
   let sim =
     Sim.create
       (fun i ->
@@ -197,8 +197,8 @@ type chip_result =
   }
 
 (* [ctrl_writes]: (Psim time at which the CTRL write transaction starts, value) *)
-let chip_run ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
-  let h = create () in
+let chip_run ?(lib = lib) ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
+  let h = create ~lib () in
   let b = 0x10 in
   write h b [ setup.own ]; write h (b + 1) [ setup.od ];
   write h (b + 2) [ setup.p land 0xFF; setup.p lsr 8 ];
