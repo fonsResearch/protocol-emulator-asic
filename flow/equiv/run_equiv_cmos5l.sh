@@ -17,7 +17,7 @@
 # instance, so the check covers all standard-cell logic around the SRAM; E1 relates that model to the
 # behavioural memory of pemu_core. SRAM-model registers start at zero like every other flop.
 #
-# usage: [VARIANT=flop|macro] flow/equiv/run_equiv_cmos5l.sh <ci-artifacts-dir> [timeout_s]
+# usage: [VARIANT=flop|macro|v1m] flow/equiv/run_equiv_cmos5l.sh <ci-artifacts-dir> [timeout_s]
 #   CI dir layout: GDS_logs*/ and tt_submission*/ (a trailing '-' from the browser download is accepted)
 set -u
 CI=${1:?ci artifacts dir}; TMO=${2:-900}
@@ -30,7 +30,13 @@ GD=$(ls -d "$CI"/GDS_logs* | head -1); TS=$(ls -d "$CI"/tt_submission* | head -1
 SRC="$GD/src"   # the RTL exactly as hardened
 N_SYN="$GD/runs/wokwi/06-yosys-synthesis/$TOP.nl.v"
 N_FIN="$TS/tt_submission/$TOP.v"
-if [ "$VARIANT" = macro ]; then
+if [ "$VARIANT" = v1m ]; then
+  # v2 builds (pemu_core_v1m with two RM_IHPSG13_1P_256x16_c2_bm_bist): the unmodified IHP functional
+  # model of the 256x16 macro on BOTH sides, as in the macro variant
+  M=rtl/macros/RM_IHPSG13_1P_256x16_c2_bm_bist
+  RTL_SRC="$SRC/$TOP.v $SRC/pemu_core_v1m.v"
+  EXTRA="read_verilog -DFUNCTIONAL $M/RM_IHPSG13_1P_256x16_c2_bm_bist.v $M/RM_IHPSG13_1P_core_behavioral_bm_bist.v;"
+elif [ "$VARIANT" = macro ]; then
   M=rtl/macros/RM_IHPSG13_1P_64x16_c2
   RTL_SRC="$SRC/$TOP.v $SRC/pemu_core_macro.v"
   EXTRA="read_verilog -DFUNCTIONAL $M/RM_IHPSG13_1P_64x16_c2.v $M/RM_IHPSG13_1P_core_behavioral.v;"

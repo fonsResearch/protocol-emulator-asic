@@ -91,3 +91,56 @@ Estimates (not measured):
 
 The netlist is unchanged by this decision: re-emitting at 33 MHz gives byte-identical Verilog,
 sha1 prefix c89129a596831b5c. P is not in the RTL.
+
+## 4. Round 2 (2026-11-02, after the Actions billing block was lifted)
+
+| run | branch, commit | CLOCK_PERIOD | gds | precheck | gl_test |
+|---|---|---|---|---|---|
+| 41442167676 | v2-6x4 e218611 | 30.30 ns (33 MHz) | pass, 125 min | pass | pass, 5/5 incl. v2_spi_ctl_uart_rx and v2_spi_tgt_uart_tx |
+| 40597068304 (attempt 3) | v2-6x4-30mhz afbfff9 | 33.33 ns (30 MHz) | pass, 87 min | pass | pass |
+
+e218611 differs from 9beb28d only in tests, logs and the two v2 gate-level vectors (no RTL or config
+change). The docs and test workflows on e218611 pass (the docs fix 86c46e2 is included).
+
+| metric | 33 MHz | 30 MHz |
+|---|---|---|
+| setup WNS slow / typ / fast (ns) | +2.987 / +13.261 / +19.068 | +6.017 / +16.291 / +22.098 |
+| slow setup violating endpoints | 0 | 0 |
+| hold WNS (fast), violations | +0.112, 0 | +0.112, 0 |
+| route DRC / KLayout DRC / LVS / antenna nets | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| max slew / max cap violations | 24 / 5 | 24 / 5 |
+| Magic illegal overlaps | 10 | 10 |
+| std-cell area (um2), instances | 294,503; 75,273 | 294,503; 75,273 |
+
+The two final netlists (final/nl) are byte-identical (sha1 prefix 19c7af9bb6f65906). With
+`AREA 0` synthesis, and with no setup repair triggered at either period, the period changes only the STA
+target. The slow-corner critical path is 30.30 - 2.99 = 27.31 ns (round 1: 27.6 ns).
+
+**Clock decision confirmed: 33 MHz.** Slow-corner margin +2.99 ns, above the 1 ns acceptance threshold of
+section 3. The 30 MHz branch stays as a reference only.
+
+Open items:
+- max slew (24) and max cap (5) violations, slow corner only, unchanged since round 1; not yet traced.
+- Magic illegal overlaps (10), unchanged; not yet attributed.
+- E4/E5 netlist equivalence (section 5): not yet proven.
+
+## 5. E4/E5 netlist equivalence, 33 MHz netlist (in progress)
+
+Inputs: GDS_logs/src (RTL as hardened), runs/wokwi/06-yosys-synthesis (E4) and tt_submission (E5) of run
+41442167676, commit e218611. The 30 MHz netlist is byte-identical, so a result covers both.
+
+| attempt | method | result |
+|---|---|---|
+| 1 | v0.1 script, VARIANT=v1m (full IHP SRAM functional models on both sides), ABC dprove | E4 UNDECIDED at the 3,000 s cap (20,320 latches; the BMC stage found no difference in 20 frames). Stopped before E5 |
+| 2 | Yosys equiv_make/simple/induct, SRAM as black-box cutpoints | not usable: independent free SRAM outputs per side make all fetch-dependent state unprovable (80 of 2,054 pairs proven) |
+| 3 | `flow/equiv/run_equiv_v1m.sh`: SRAMs removed, outputs from one SHARED free input, all 2 x 89 macro input bits compared (`flow/equiv/macro_cut.py`) | E5 UNDECIDED (dprove 1,800 s; 3,872 latches); PDR UNDECIDED (1,400 s, frame 85, no counterexample). E4 cut netlist hit an escaped-identifier bug, since fixed and not yet re-run. Negative controls all FAIL as required: N1 output inverted (frame 0), N2 uio_in[5] buffer inverted (frame 116), N3 SRAM-0 address bit inverted (frame 0) |
+
+Diagnosis so far: ABC signal correspondence (&scorr, also -F 2/4) merges only about 250 of 3,872 latches.
+On an RTL-vs-netlist miter nearly all pairs should merge, so something systematic breaks pairwise register
+correspondence. Ruled out: tie cells (modelled correctly, L_HI = 1) and asynchronous clear in the core
+(Hardcaml emits `always @(posedge clk)`; the core flops' RESET_B pins are on per-flop tiehi cells). Next: a name-based
+per-signal diagnosis on the cut sources (running).
+
+Evidence available meanwhile (simulation, not a proof): CI gl_test 5/5 on this netlist (four vector
+replays with 0 mismatches and the comparator negative control), and the local replay of the same vectors on the round-1
+netlist.
