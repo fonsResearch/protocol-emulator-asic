@@ -139,7 +139,21 @@ Diagnosis so far: ABC signal correspondence (&scorr, also -F 2/4) merges only ab
 On an RTL-vs-netlist miter nearly all pairs should merge, so something systematic breaks pairwise register
 correspondence. Ruled out: tie cells (modelled correctly, L_HI = 1) and asynchronous clear in the core
 (Hardcaml emits `always @(posedge clk)`; the core flops' RESET_B pins are on per-flop tiehi cells). Next: a name-based
-per-signal diagnosis on the cut sources (running).
+per-signal diagnosis on the cut sources: Yosys equiv_make/simple/induct
+on the SRAM-cut RTL vs the cut final netlist (splitnets on the RTL side), 1,987 s. 2,268 pairs, 258 proven,
+2,010 unproven. The unproven set includes trivial registers: the free-running 32-bit stamp counter
+mon_now, the prescaler counters presc_cnt, and the per-unit state mon_u*_reg/_k. A free-running counter can fail
+induction only if its controlling inputs are not paired or proven, which points at the miter construction
+(clock-tree or reset-synchroniser modelling on the netlist side, or `async2sync` on the liberty
+flops) rather than at the netlist. This is an inference; the root cause has not been found.
+
+Next steps (not run):
+1. Prove one counter pair (mon_now[0]) in a minimal two-signal miter, to localise the modelling issue.
+2. Compare the liberty functional model of sg13cmos5l_dfrbpq_1 after `async2sync` with the RTL flop
+   on a 3-flop example.
+3. Re-run E4 with the fixed cut transform.
+4. If the issue is in the method, fix it, re-run E4/E5 and record the result. If it is in the netlist,
+   it is a sign-off blocker.
 
 Evidence available meanwhile (simulation, not a proof): CI gl_test 5/5 on this netlist (four vector
 replays with 0 mismatches and the comparator negative control), and the local replay of the same vectors on the round-1
