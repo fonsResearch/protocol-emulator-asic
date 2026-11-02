@@ -69,7 +69,7 @@ let () =
         eprintf "lib %s units %d words %d\n" p.name (Array.length p.units) w);
     let circ =
       CT.create_exn ~name:"pemu_core_v1m"
-        (Top_v1.create ~loadable ?mon_slots:(Option.map (Sys.getenv "PEMU_SLOTS") ~f:Int.of_string) ~lib ~sram:(fun l ->
+        (Top_v1.create ~loadable ?mon_slots:(Option.map (Sys.getenv "PEMU_SLOTS") ~f:Int.of_string) ?verdict_pipe:(Option.some_if (String.equal (Option.value (Sys.getenv "PEMU_VPIPE") ~default:"0") "1") true) ~lib ~sram:(fun l ->
            Sram256.blackbox
              ~instance:(if l < 2 then sprintf "u_imem_l%d" l else sprintf "u_lstore_l%d" (l - 2))))
     in

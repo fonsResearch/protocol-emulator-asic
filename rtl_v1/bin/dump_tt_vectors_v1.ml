@@ -147,7 +147,8 @@ let uart_d = if String.is_substring (List.hd_exn lib).Mprog.name ~substring:"_d3
 let create () =
   let sim =
     Sim.create
-      (Top_v1.create ~loadable ?mon_slots:(Option.map (Sys.getenv "PEMU_SLOTS") ~f:Int.of_string) ~lib
+      (Top_v1.create ~loadable ?mon_slots:(Option.map (Sys.getenv "PEMU_SLOTS") ~f:Int.of_string)
+         ?verdict_pipe:(Option.some_if (String.equal (Option.value (Sys.getenv "PEMU_VPIPE") ~default:"0") "1") true) ~lib
          ~sram:(fun _ i -> fst (Sram256.behavioural i)))
   in
   let h =

@@ -49,8 +49,8 @@ let configure h (lanes : lane_cfg list) =
 
 (* [prefix]: lanes run for [run_for] cycles after RUN, then reset is asserted for [rst_len]
    cycles; the measured scenario is then configured from scratch on the same chip instance *)
-let chip_run2 ?prefix ~k ~(lanes : lane_cfg list) ~cycles () =
-  let h = D.create () in
+let chip_run2 ?verdict_pipe ?prefix ~k ~(lanes : lane_cfg list) ~cycles () =
+  let h = D.create ?verdict_pipe () in
   (match prefix with
    | None -> ()
    | Some (pl, run_for, rst_len) ->
@@ -85,8 +85,8 @@ let chip_run2 ?prefix ~k ~(lanes : lane_cfg list) ~cycles () =
   h, v, rx
 ;;
 
-let run ?prefix ~k ~name (lanes : lane_cfg list) ~cycles =
-  let h, v, chip_rx = chip_run2 ?prefix ~k ~lanes ~cycles () in
+let run ?verdict_pipe ?prefix ~k ~name (lanes : lane_cfg list) ~cycles =
+  let h, v, chip_rx = chip_run2 ?verdict_pipe ?prefix ~k ~lanes ~cycles () in
   printf "%s\n" name;
   let firsts =
     List.map2_exn lanes chip_rx ~f:(fun c crx ->
@@ -192,6 +192,12 @@ let%expect_test "C3: two lanes at once" =
     [ uart_tx (); rob (spi_ctl ~tco:14 ()) ] ~cycles:6000;
   run ~k ~name:"G: release on blame on L0: L0 spi_tgt early CS rob, L1 uart_tx (L0 faults, L1 unaffected)"
     [ rob (spi_tgt ~defect:(Peers.Early_rise (2, 9)) ()) @> 0; uart_tx () @> 1 ] ~cycles:6000;
+  (* timing increment (log/increments_v2.md): the cross-lane verdict scenarios again with the
+     registered firing record (Mon_engine ~verdict_pipe:true); only the recording cycle moves *)
+  run ~verdict_pipe:true ~k ~name:"B+vpipe" [ uart_tx ~bad:true (); spi_ctl ~tco:14 () ] ~cycles:6000;
+  run ~verdict_pipe:true ~k ~name:"C+vpipe" [ uart_rx ~rate:1.08 (); spi_tgt ~defect:(Peers.Early_rise (2, 9)) () ] ~cycles:30_000;
+  run ~verdict_pipe:true ~k ~name:"D+vpipe" [ spi_ctl ~tco:14 () @> 0; uart_tx ~bad:true () @> 1 ] ~cycles:6000;
+  run ~verdict_pipe:true ~k ~name:"G+vpipe" [ rob (spi_tgt ~defect:(Peers.Early_rise (2, 9)) ()) @> 0; uart_tx () @> 1 ] ~cycles:6000;
   (* mid-run reset: the prefix records a fail (L0 13@81) and a blame (L1 91@113, L1 faulted by
      release on blame); reset lands 2,000 + x cycles after RUN, x chosen so that it falls inside a
      step's slot window on L1 (P = 7) and mid-bit on L0 *)
@@ -247,6 +253,26 @@ let%expect_test "C3: two lanes at once" =
       first fail  predicted -            chip -            =
       first blame predicted L1 91@113    chip L1 91@113    =
     G: release on blame on L0: L0 spi_tgt early CS rob, L1 uart_tx (L0 faults, L1 unaffected)
+      lane 0 spi_tgt early CS rob       mon-in =      pins =      pushes = (2) | psim fail - blame 52@2345
+      lane 1 uart_tx                    mon-in =      pins =      pushes = (0) | psim fail - blame -
+      first fail  predicted -            chip -            =
+      first blame predicted L0 52@2345   chip L0 52@2345   =
+    B+vpipe
+      lane 0 uart_tx bad start          mon-in =      pins =      pushes = (0) | psim fail 13@81 blame -
+      lane 1 spi_ctl tco 14             mon-in =      pins =      pushes = (8) | psim fail - blame 91@113
+      first fail  predicted L0 13@81     chip L0 13@81     =
+      first blame predicted L1 91@113    chip L1 91@113    =
+    C+vpipe
+      lane 0 uart_rx rate x1.08         mon-in =      pins =      pushes = (4) | psim fail - blame 32@4421
+      lane 1 spi_tgt early CS           mon-in =      pins =      pushes = (7) | psim fail - blame 52@2345
+      first fail  predicted -            chip -            =
+      first blame predicted L1 52@2345   chip L1 52@2345   =
+    D+vpipe
+      lane 0 spi_ctl tco 14             mon-in =      pins =      pushes = (8) | psim fail - blame 91@113
+      lane 1 uart_tx bad start          mon-in =      pins =      pushes = (0) | psim fail 13@81 blame -
+      first fail  predicted L1 13@81     chip L1 13@81     =
+      first blame predicted L0 91@113    chip L0 91@113    =
+    G+vpipe
       lane 0 spi_tgt early CS rob       mon-in =      pins =      pushes = (2) | psim fail - blame 52@2345
       lane 1 uart_tx                    mon-in =      pins =      pushes = (0) | psim fail - blame -
       first fail  predicted -            chip -            =

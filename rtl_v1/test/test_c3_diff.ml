@@ -155,12 +155,12 @@ let write h a d = ignore (transaction h ((a land 0x7F) :: d) : int list)
 let read h a k = List.tl_exn (transaction h ((0x80 lor a) :: List.init k ~f:(fun _ -> 0)))
 let le32 l = List.foldi l ~init:0 ~f:(fun i acc b -> acc lor (b lsl (8 * i)))
 
-let create ?(lib = lib) () =
+let create ?(lib = lib) ?verdict_pipe () =
   let sim =
     Sim.create
       (fun i ->
         let o, (d : Top_v1.debug) =
-          Top_v1.create_with_debug ~loadable:[| false; false |] ~mon_slots:5 ~lib
+          Top_v1.create_with_debug ~loadable:[| false; false |] ~mon_slots:5 ?verdict_pipe ~lib
             ~sram:(fun _ i -> fst (Sram256.behavioural i)) i
         in
         let lo = d.lane_outputs.(0) and l1 = d.lane_outputs.(1) in
@@ -197,8 +197,8 @@ type chip_result =
   }
 
 (* [ctrl_writes]: (Psim time at which the CTRL write transaction starts, value) *)
-let chip_run ?(lib = lib) ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
-  let h = create ~lib () in
+let chip_run ?(lib = lib) ?verdict_pipe ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
+  let h = create ~lib ?verdict_pipe () in
   let b = 0x10 in
   write h b [ setup.own ]; write h (b + 1) [ setup.od ];
   write h (b + 2) [ setup.p land 0xFF; setup.p lsr 8 ];

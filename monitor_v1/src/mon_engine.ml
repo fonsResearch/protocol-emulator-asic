@@ -275,6 +275,7 @@ type loader_probe =
 
 let create
   ?(slots = S.n_units)
+  ?(verdict_pipe = false)
   ?probe_ctx
   ?(bug : [ `Fetch_running_only | `Ld_no_delay ] option)
   ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> Signal.t)
@@ -496,12 +497,30 @@ let create
   let late_now = Array.map built ~f:(fun (_, b, _, _) -> b) in
   let lregs = Array.map built ~f:(fun (_, _, (r, m), _) -> (), r, m) in
   let fir l = let _, _, f = lane_out.(l) in f in
+  (* [verdict_pipe] (v2 timing increment, log/increments_v2.md): the verdict block records a
+     registered copy of each lane's firing, one cycle later, which cuts the unit-step cone off the
+     verdict registers (the worst slow-corner endpoints of round-1 CI). Stamps are unchanged;
+     verdict pins and registers see a firing one cycle later. blame_to_lane stays on the
+     unregistered firing, so the blame still reaches the lane at t + j + 1. *)
+  let fir_v =
+    if not verdict_pipe
+    then fir
+    else (
+      let q =
+        Array.init 2 ~f:(fun l ->
+          let f = fir l in
+          let r x n = reg spec x -- sprintf "mon_vp_%s%d" n l in
+          { fire = r f.fire "fire"; unit_ = r f.unit_ "unit"; role = r f.role "role"; code = r f.code "code"
+          ; stamp = r f.stamp "stamp" })
+      in
+      fun l -> q.(l))
+  in
   (* ---- verdict ---- *)
   let clr = host.clr_verdict in
   let record ~is_blame =
     let name = if is_blame then "blame" else "fail" in
     let rec_now l =
-      let f = fir l in
+      let f = fir_v l in
       f.fire &: (if is_blame then f.role else ~:(f.role))
     in
     let per_lane =
@@ -510,7 +529,7 @@ let create
         let seen_q = reg spec seen -- sprintf "mon_%s_seen%d" name l in
         let take = rec_now l &: ~:seen_q in
         seen <== (take |: (seen_q &: ~:clr));
-        let f = fir l in
+        let f = fir_v l in
         let code = reg spec ~enable:take f.code -- sprintf "mon_%s_code%d" name l
         and unit_ = reg spec ~enable:take f.unit_ -- sprintf "mon_%s_unit%d" name l
         and time = reg spec ~enable:take f.stamp -- sprintf "mon_%s_time%d" name l in
@@ -522,9 +541,9 @@ let create
     let first_q = reg spec first -- sprintf "mon_%s_first" name in
     let precedes l =
       let seen_o, take_o, _, _, time_o = per_lane.(1 - l) in
-      let s_self = (fir l).stamp in
+      let s_self = (fir_v l).stamp in
       let has_o = seen_o |: take_o in
-      let t_o = mux2 seen_o time_o (fir (1 - l)).stamp in
+      let t_o = mux2 seen_o time_o (fir_v (1 - l)).stamp in
       let d = t_o -: s_self in
       ~:has_o
       |: ((d <>:. 0) &: (d <:. 8))
