@@ -56,3 +56,23 @@ Findings:
    calibrates this ratio. Then decide between (a) a lower clock for increments, (b) shortening the
    ROM fetch path (a pipelined fetch changes Mon_lane slot timing and needs a new R1), or
    (c) a CI probe of v2inc1 + T to measure directly.
+
+### 1.x CI probe of v2inc1 + T (option (c), agent decision; pushed 2026-11-04)
+
+Round-2 CI calibrates the ratio of finding 3: routed slow-corner critical path 27.31 ns (30.30 - 2.99)
+over the reduced-script depth 18.24 ns gives 1.50, so the estimate for v2inc1 + T is 21.14 x 1.50 = 31.7 ns,
+about 1.4 ns over 30.30 ns. This is an estimate; the probe measures it.
+
+Branch v2-inc1-i2c (rebased on v2-6x4 131940e) commits the emitted core for the probe:
+- `src/pemu_core_v1m.v`: `PEMU_LOADABLE=rom PEMU_LIB=v2inc1 PEMU_SLOTS=5 PEMU_VPIPE=1 emit_lane_rtl.exe
+  top_macro_mon_sweep`, then `tools/fix_combdly.py` (8,033 assignments); `tools/check_combdly_equiv.sh`
+  raw == fixed EQUIVALENT (379 s). The same recipe with PEMU_LIB=v2min reproduces the v2-6x4
+  `src/pemu_core_v1m.v` byte for byte.
+- `test/vectors/v1_rom_uart, v1_reset_mid, v2_spi_ctl_uart_rx, v2_spi_tgt_uart_tx`: regenerated with
+  the same environment (`dump_tt_vectors_v1.exe` now emits the v2 scenarios for v2inc1 too: packages
+  0-3 are unchanged). Each differs from v2min in exactly one row: the fail (uo_out bit 1) or blame
+  (bit 2) pin rises one cycle later, the documented T pin latency. RTL replay 5/5 (4 scenarios +
+  comparator negative control).
+- Not covered by gate-level vectors yet: the I2C packages 4/5 (chip-level cyclesim tests only,
+  test_inc1.ml 8/8). E4/E5 for this netlist need their own correspondence map (flow/equiv/maps/).
+- info.yaml unchanged (33 MHz, 6x4).

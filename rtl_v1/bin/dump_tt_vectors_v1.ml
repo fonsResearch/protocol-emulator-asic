@@ -338,7 +338,8 @@ let () =
      @ (if loadable.(1) then [ "v1_loadable_l1", loadable_l1 ] else [])
      @ [ "v1_reset_mid", reset_mid ]
      @
-     if String.equal (env_or "PEMU_LIB" "all") "v2min"
+     (* v2inc1 = v2min packages 0-3 unchanged + I2C controller as 4/5, so the v2 scenarios apply *)
+     if List.mem [ "v2min"; "v2inc1" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
      then [ "v2_spi_ctl_uart_rx", v2_spi_ctl_uart_rx; "v2_spi_tgt_uart_tx", v2_spi_tgt_uart_tx ]
      else [])
     ~f:(fun (name, f) ->
