@@ -124,37 +124,82 @@ Open items:
 - Magic illegal overlaps (10), unchanged; not yet attributed.
 - E4/E5 netlist equivalence (section 5): not yet proven.
 
-## 5. E4/E5 netlist equivalence, 33 MHz netlist (in progress)
+## 5. E4/E5 netlist equivalence, 33 MHz netlist: PROVEN (2026-11-04)
 
-Inputs: GDS_logs/src (RTL as hardened), runs/wokwi/06-yosys-synthesis (E4) and tt_submission (E5) of run
-41442167676, commit e218611. The 30 MHz netlist is byte-identical, so a result covers both.
+Inputs: GDS_logs/src (RTL as hardened, byte-identical to `src/pemu_core_v1m.v`),
+runs/wokwi/06-yosys-synthesis (E4) and tt_submission (E5) of run 41442167676, commit e218611. The
+30 MHz netlist is byte-identical, so the result covers both builds.
 
-| attempt | method | result |
+### 5.1 Result
+
+| check | method | result |
 |---|---|---|
-| 1 | v0.1 script, VARIANT=v1m (full IHP SRAM functional models on both sides), ABC dprove | E4 UNDECIDED at the 3,000 s cap (20,320 latches; the BMC stage found no difference in 20 frames). Stopped before E5 |
-| 2 | Yosys equiv_make/simple/induct, SRAM as black-box cutpoints | not usable: independent free SRAM outputs per side make all fetch-dependent state unprovable (80 of 2,054 pairs proven) |
-| 3 | `flow/equiv/run_equiv_v1m.sh`: SRAMs removed, outputs from one SHARED free input, all 2 x 89 macro input bits compared (`flow/equiv/macro_cut.py`) | E5 UNDECIDED (dprove 1,800 s; 3,872 latches); PDR UNDECIDED (1,400 s, frame 85, no counterexample). E4 cut netlist hit an escaped-identifier bug, since fixed and not yet re-run. Negative controls all FAIL as required: N1 output inverted (frame 0), N2 uio_in[5] buffer inverted (frame 116), N3 SRAM-0 address bit inverted (frame 0) |
+| E5 RTL == final netlist | register correspondence + induction, `flow/equiv/run_e5_induct.sh` with `flow/equiv/maps/v2min_e218611.json` | **proven**: 2,285 of 2,285 pairs, `equiv_status`: "Equivalence successfully proven!", 109 s |
+| E4 RTL == post-synthesis netlist | same script and map on `syn_cut.v` | **proven**: 2,285 of 2,285 pairs, 116 s |
+| N1 `uo_out[0]` output buffer -> inverter (E5) | same | FAIL as required (base case inconsistent, 0 proven) |
+| N2 `uio_in[5]` input buffer -> inverter (E5) | same | FAIL as required (`_2110[5]`, the first synchroniser flop, unproven) |
+| N3 SRAM-0 address bit inverted at the macro (E5) | same | FAIL as required (base case inconsistent, 0 proven) |
+| N4 wrong invariant `_955 != 2'b00` (E5) | same | FAIL as required (51 unproven, including the invariant) |
+| N5 one `xnor2` -> `xor2` in the mon_now counter (E5) | same | FAIL as required (`mon_now[5]` unproven) |
+| N1s `uo_out[0]` driver -> inverter (E4) | same | FAIL as required (0 proven) |
 
-Diagnosis so far: ABC signal correspondence (&scorr, also -F 2/4) merges only about 250 of 3,872 latches.
-On an RTL-vs-netlist miter nearly all pairs should merge, so something systematic breaks pairwise register
-correspondence. Ruled out: tie cells (modelled correctly, L_HI = 1) and asynchronous clear in the core
-(Hardcaml emits `always @(posedge clk)`; the core flops' RESET_B pins are on per-flop tiehi cells). Next: a name-based
-per-signal diagnosis on the cut sources: Yosys equiv_make/simple/induct
-on the SRAM-cut RTL vs the cut final netlist (splitnets on the RTL side), 1,987 s. 2,268 pairs, 258 proven,
-2,010 unproven. The unproven set includes trivial registers: the free-running 32-bit stamp counter
-mon_now, the prescaler counters presc_cnt, and the per-unit state mon_u*_reg/_k. A free-running counter can fail
-induction only if its controlling inputs are not paired or proven, which points at the miter construction
-(clock-tree or reset-synchroniser modelling on the netlist side, or `async2sync` on the liberty
-flops) rather than at the netlist. This is an inference; the root cause has not been found.
+Coverage: every one of the 1,933 flops of each netlist is in a pair (1,927 by name, 6 through the helper
+pairs of the map); uo_out, uio_out, uio_oe and both 89-bit macro input buses are pairs. Reproduced from a
+clean work directory with `flow/equiv/prep_cut_v1m.sh` + `run_e5_induct.sh`.
 
-Next steps (not run):
-1. Prove one counter pair (mon_now[0]) in a minimal two-signal miter, to localise the modelling issue.
-2. Compare the liberty functional model of sg13cmos5l_dfrbpq_1 after `async2sync` with the RTL flop
-   on a 3-flop example.
-3. Re-run E4 with the fixed cut transform.
-4. If the issue is in the method, fix it, re-run E4/E5 and record the result. If it is in the netlist,
-   it is a sign-off blocker.
+### 5.2 What is proven, and the premise
 
-Evidence available meanwhile (simulation, not a proof): CI gl_test 5/5 on this netlist (four vector
-replays with 0 mismatches and the comparator negative control), and the local replay of the same vectors on the round-1
-netlist.
+Pairs are signals matched by name (or by the map) between the RTL (gold) and the netlist (gate), SRAM
+macros cut out on both sides: their outputs are one shared free input per macro, their 89 input bits are
+compared. Cell semantics are the typ-liberty functional models (`read_liberty`), the asynchronous reset
+of the wrapper synchroniser is modelled by `async2sync` on both sides.
+
+`equiv_induct -seq 2` assumes every pair equal for 2 cycles and checks every pair in the next cycle, for
+all inputs (clk-domain inputs and SRAM outputs). With all 2,285 pairs proven this shows: the set S of
+state pairs in which all pairs agree (including the 16 invariants) is closed under every input, and in S
+the chip outputs and macro inputs agree. Note that a partial result is not meaningful: with unproven
+pairs left, the proven ones depend on assumptions that were not discharged (the earlier "258 proven"
+and the intermediate counts below are conditional numbers, not partial proofs).
+
+Premise not mechanised here: that after reset the two designs are in S. Argument: every netlist flop is
+paired with an RTL register bit or (6 cases) with an RTL expression; the paired FSMs (_955, _1039) reset
+to their reset state on both sides, mon_mask/mon_mask_0 are forced to 8'hFF while rst_sync_n is low (so
+the mask invariants hold), and registers without reset are paired one-to-one, so any power-up value of
+the netlist flop is matched by the same value of the RTL register.
+
+### 5.3 Why attempts 1-3 were undecided, and the method fixes
+
+Attempts 1-3 (full SRAM models + ABC dprove; Yosys equiv with black-box SRAMs; SRAM-cut miter with
+ABC dprove/PDR, 1,800 s) were UNDECIDED; negative controls failed as required throughout. The per-signal
+Yosys run (2,268 pairs, 258 "proven") was diagnosed step by step on reduced cases:
+
+1. Pass order. `equiv_simple` before `equiv_induct` defeats the induction: on the extracted 34-flop
+   mon_now sub-circuit (32 counter bits + 2 reset synchroniser flops) induct alone proves 66/66,
+   simple-then-induct proves 0/64 (likely because the reset-synchroniser pairs marked proven are no longer
+   used as constraints; inference). Fixed: induct only. Full design: 1,350 pairs.
+2. Duplicate flops. Synthesis merged bit-identical duplicate synchronisers (`s2_ui` and `_2099`, both
+   two-stage ui_in synchronisers), so the dropped RTL duplicate had no partner and was free. Fixed: the
+   gold side is bit-blasted (`simplemap`) and `opt_merge`d. 2,158 pairs (together with the first FSM map of item 3).
+3. FSM re-encoding. Yosys `fsm_recode` (CI synthesis log, step 50) re-encodes _955, _1039 (3 states) and
+   _9800, _10263 (4 states) one-hot. Some one-hot bits keep the name of a binary state bit
+   (`core._955[1]` carries `_955 == 2'b10`), giving false pairs. Fixed by the map's `rename` entries,
+   and the 3-state FSMs need the reachable-state invariant `state != 2'b11` (the RTL state may otherwise
+   start in the unused code, which no one-hot netlist state represents).
+4. Misnamed nets. Two netlist flops carry the name of a different RTL wire than the value they hold:
+   `core._13013` holds `s2_ui[0]` (co-simulation: equal to `s2_ui[0]` in all 7,988 cycles, different from
+   RTL `_13013` in 9,834 of 19,988) and `core._12244` holds `_348[2]` (identified by structure, then
+   proven; the candidates `_348[4]`, `_348[5]`, `_9838`, `_9800 == 2'b10` were each refuted).
+5. Bit-merged register. Synthesis kept only bit 0 of mon_mask_0 / mon_mask: every bit has the same next
+   state (`~_1811 ? 8'hFF : (_1812 ? 0 : mask)`) and is set during reset, so all bits are equal. The map
+   adds `mask[k] == mask[0]` invariants, k = 1..7, for both lanes.
+
+All map entries are proof obligations proven with everything else (a wrong entry is reported unproven,
+see N4); the map holds no unchecked assumption. Lesson for later builds: netlist names are hints, and a
+new build needs its own map (`equiv_aug.py` exits if a renamed net is missing).
+
+### 5.4 Correction of earlier evidence
+
+A 20,000-cycle random co-simulation of RTL vs this netlist (0 mismatches on outputs and macro pins) was
+cited during the diagnosis as support for equivalence. Random stimulus never takes any of the four FSMs
+out of state 00 (checked over 5,988 cycles), so that run did not exercise the FSM logic and was weaker
+evidence than stated. The formal result above supersedes it.

@@ -1,0 +1,34 @@
+{
+ "_comment": [
+  "Correspondence map for E4/E5 of the v2-min build (pemu_core_v1m, PEMU_LIB=v2min, 5 slots), CI run 41442167676 (e218611), 33 MHz; the 30 MHz netlist is byte-identical.",
+  "rename: gate nets whose name hint is a false pair -> gold expression they carry (proven, not assumed).",
+  "invariant: gold-only reachable-state invariants, each paired with gate 1'b1 (proven inductively, established by reset).",
+  "See flow/equiv/equiv_aug.py and log/ci_results_v2.md section 5."
+ ],
+ "rename": {
+  "_955[1]": "(_955 == 2'b10)",
+  "_955[2]": "(_955 == 2'b01)",
+  "_1039[0]": "(_1039 == 2'b00)",
+  "_1039[1]": "(_1039 == 2'b10)",
+  "_13013": "s2_ui[0]",
+  "_12244": "_348[2]"
+ },
+ "invariant": {
+  "inv_955": "(_955 != 2'b11)",
+  "inv_1039": "(_1039 != 2'b11)",
+  "inv_m0_1": "(mon_mask_0[1] == mon_mask_0[0])",
+  "inv_m0_2": "(mon_mask_0[2] == mon_mask_0[0])",
+  "inv_m0_3": "(mon_mask_0[3] == mon_mask_0[0])",
+  "inv_m0_4": "(mon_mask_0[4] == mon_mask_0[0])",
+  "inv_m0_5": "(mon_mask_0[5] == mon_mask_0[0])",
+  "inv_m0_6": "(mon_mask_0[6] == mon_mask_0[0])",
+  "inv_m0_7": "(mon_mask_0[7] == mon_mask_0[0])",
+  "inv_m1_1": "(mon_mask[1] == mon_mask[0])",
+  "inv_m1_2": "(mon_mask[2] == mon_mask[0])",
+  "inv_m1_3": "(mon_mask[3] == mon_mask[0])",
+  "inv_m1_4": "(mon_mask[4] == mon_mask[0])",
+  "inv_m1_5": "(mon_mask[5] == mon_mask[0])",
+  "inv_m1_6": "(mon_mask[6] == mon_mask[0])",
+  "inv_m1_7": "(mon_mask[7] == mon_mask[0])"
+ }
+}

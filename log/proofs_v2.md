@@ -224,8 +224,8 @@ tick, uio_out & OWN, uio_oe & OWN, xo in its uo_out position, FIFO events, raw u
 lane's blame_in is the engine's registered `mon_blame_to_lane<L>`. A formal lemma at RTL level
 would therefore be vacuous. The residual risks are:
 - lane-index mapping inside the engine, covered by 7.3 (both orders, release on blame on each lane);
-- netlist-level wiring, covered by E4/E5 equivalence of the final GDS netlist against the RTL, to be
-  re-run on the green v2 run.
+- netlist-level wiring, covered by E4/E5 equivalence of the final GDS netlist against the RTL:
+  proven on the green v2 run 41442167676 (log/ci_results_v2.md section 5).
 Item 1 is closed on this basis (agent decision; a reviewer may still ask for a formal statement).
 
 ### 7.4 Reset during a run (2026-10-27)
@@ -282,4 +282,5 @@ is not separable in `Mon_engine` today. It is left as an option for the step-12 
 - Lane A1: confirmed carried over. `git diff v1-tt v2-6x4` is empty for rtl_v1/src/lane_rtl.ml,
   prescaler16.ml, sram256.ml, spec_v1/src/ and formal/src/a1_lane.ml. The core netlist is flattened,
   so a per-module byte comparison of the emitted Verilog is not possible; the source identity is the evidence.
-- Remaining for sign-off (step 5): E4/E5 netlist equivalence on the green v2 GDS run.
+- E4/E5 netlist equivalence on the green v2 GDS run (41442167676, e218611): proven, 2,285 of 2,285
+  pairs each, negative controls N1-N5 fail as required (log/ci_results_v2.md section 5). Step 5 closed.

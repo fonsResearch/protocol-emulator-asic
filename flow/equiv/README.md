@@ -20,3 +20,24 @@ Not covered here:
   formal check of that netlist against src/*.v needs the IHP cell models;
 - the TT wrapper tt_um_dean_protocol_emulator, which does not instantiate a core yet;
 - the IHP model's timing (`specify`) and A_DLY checks, which are ignored under -DFUNCTIONAL.
+
+## v2 builds (pemu_core_v1m + two SRAM macros): E4/E5 by induction
+
+```
+flow/equiv/prep_cut_v1m.sh <ci-artifacts-dir> <work>          # SRAM-cut sources + liberty cell models
+flow/equiv/run_e5_induct.sh <work> flow/equiv/maps/<map>.json e5 fin_cut.v   # E5, about 2 min
+flow/equiv/run_e5_induct.sh <work> flow/equiv/maps/<map>.json e4 syn_cut.v   # E4
+```
+
+`<ci-artifacts-dir>` holds GDS_logs (src/, runs/wokwi/06-yosys-synthesis/) and tt_submission of a TT
+CI run. Method: Yosys `equiv_make` + `equiv_induct -seq 2` (no `equiv_simple` before it), gold
+bit-blasted and `opt_merge`d. A per-build map (`equiv_aug.py`) renames netlist nets whose name hint is
+a false pair and adds reachable-state invariants; every map entry is a proof obligation. The result is a
+proof only when `equiv_status` reports all pairs proven. `run_equiv_v1m.sh` (ABC dprove/PDR on the
+same cut) stays for its negative-control recipes; it was UNDECIDED on these netlists.
+
+| build | map | E4 | E5 |
+|---|---|---|---|
+| v2-min, e218611, 33 MHz (run 41442167676; 30 MHz netlist identical) | `maps/v2min_e218611.json` | proven, 2,285/2,285 | proven, 2,285/2,285 |
+
+Details, controls and the premise of the claim: log/ci_results_v2.md section 5.
