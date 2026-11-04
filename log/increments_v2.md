@@ -76,3 +76,21 @@ Branch v2-inc1-i2c (rebased on v2-6x4 131940e) commits the emitted core for the 
 - Not covered by gate-level vectors yet: the I2C packages 4/5 (chip-level cyclesim tests only,
   test_inc1.ml 8/8). E4/E5 for this netlist need their own correspondence map (flow/equiv/maps/).
 - info.yaml unchanged (33 MHz, 6x4).
+
+Probe result, CI run 41887577418 (82dd594, 33 MHz, CLOCK_PERIOD 30.30): gds and gl_test PASS (gate-level
+replay of the 4 regenerated vectors + comparator control); precheck still running at the time of writing;
+the `viewer` render job failed after 11 s (not examined). Post-PnR STA:
+
+| corner | setup WNS | setup violations | hold WNS |
+|---|---|---|---|
+| slow 1.08 V 125 C | -1.986 ns (TNS -255.1 ns) | 218 | +0.605 ns |
+| typ | +10.273 ns | 0 | +0.286 ns |
+| fast | +17.281 ns | 0 | +0.108 ns |
+
+Route DRC 0, antenna 0, std-cell area 335,900 um^2 (utilisation 43.5 %), 2,197 flops, max-slew 45,
+max-cap 7. Measured slow path 32.3 ns against the 31.7 ns estimate. All 218 violators start at
+core._325 (rst_sync_n, a synchronous-clear data input of the step gating) and end in the monitor unit
+state (mon_u*_reg/_m0/_k/_pc, mon_vp_code0). Worst path: 1.8 ns to the flop output, about 2.2 ns of
+reset fanout buffers (buf_1), then about 29 ns of unit-step logic in _1-drive cells; the six stages with
+output slew above 0.9 ns (nor4_1 3.33 ns, nor3_1 2.33, a221oi_1 1.63, o21ai_1 1.56, nand4_1 1.50,
+a21oi_1 1.41) sum to about 11.8 ns. Flow settings: ABC strategy AREA 0, post-GRT resizer timing off.
