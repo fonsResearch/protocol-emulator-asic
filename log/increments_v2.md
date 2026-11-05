@@ -94,3 +94,8 @@ state (mon_u*_reg/_m0/_k/_pc, mon_vp_code0). Worst path: 1.8 ns to the flop outp
 reset fanout buffers (buf_1), then about 29 ns of unit-step logic in _1-drive cells; the six stages with
 output slew above 0.9 ns (nor4_1 3.33 ns, nor3_1 2.33, a221oi_1 1.63, o21ai_1 1.56, nand4_1 1.50,
 a21oi_1 1.41) sum to about 11.8 ns. Flow settings: ABC strategy AREA 0, post-GRT resizer timing off.
+
+Flow-only probe (user choice 2026-11-04), branch v2-inc1-delay: same RTL and vectors as 82dd594, 33 MHz;
+src/config.json `SYNTH_STRATEGY` "DELAY 0" (default was AREA 0) and `RUN_POST_GRT_RESIZER_TIMING` true.
+Aim: the high-slew _1-drive stages of the unit-step cone. Expected costs: area, possibly routing; the new
+netlist needs its own E4/E5 map.
