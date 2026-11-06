@@ -40,5 +40,6 @@ same cut) stays for its negative-control recipes; it was UNDECIDED on these netl
 |---|---|---|---|
 | v2-min, e218611, 33 MHz (run 41442167676; 30 MHz netlist identical) | `maps/v2min_e218611.json` | proven, 2,285/2,285 | proven, 2,285/2,285 |
 | v2inc1 + T, 82dd594, 33 MHz (run 41887577418; timing fails, slow WNS -1.99 ns) | `maps/v2inc1T_82dd594.json` | proven, 2,549/2,549 | proven, 2,549/2,549 |
+| v2inc1 + T, d9d2c64, 30 MHz (run 42160150374; slow WNS +1.32 ns; synthesis netlist identical to 82dd594) | `maps/v2inc1T_82dd594.json` | covered by the 82dd594 E4 (same netlist) | proven, 2,549/2,549 |
 
 Details, controls and the premise of the claim: log/ci_results_v2.md section 5.
