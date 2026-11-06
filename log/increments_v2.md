@@ -94,3 +94,13 @@ state (mon_u*_reg/_m0/_k/_pc, mon_vp_code0). Worst path: 1.8 ns to the flop outp
 reset fanout buffers (buf_1), then about 29 ns of unit-step logic in _1-drive cells; the six stages with
 output slew above 0.9 ns (nor4_1 3.33 ns, nor3_1 2.33, a221oi_1 1.63, o21ai_1 1.56, nand4_1 1.50,
 a21oi_1 1.41) sum to about 11.8 ns. Flow settings: ABC strategy AREA 0, post-GRT resizer timing off.
+
+Flow-only probe (branch v2-inc1-delay, run 41946726172, SYNTH_STRATEGY DELAY 0 + post-GRT resizer
+timing): slow WNS -6.11 ns, area +12.8 %, rejected. The sg13cmos5l library has the critical complex gates
+(nand3, nand4, o21ai, a221oi, a22oi) only in drive 1, so the resizer can only buffer.
+
+30 MHz probe (user choice 2026-11-05), branch v2-inc1-30mhz: the AREA 0 netlist configuration of 82dd594
+(same RTL, vectors, src/config.json except CLOCK_PERIOD 33.33; info.yaml clock_hz 30000000). Estimate
+before the run: slow setup WNS about +1.0 ns (-1.99 + 3.03), assuming placement and repair stay similar.
+The documented protocol divisors (Rom_lib.*_with_p, docs/info.md) are for 33 MHz and are re-derived only
+if this probe closes timing; the netlist does not depend on them (P is host-set).
