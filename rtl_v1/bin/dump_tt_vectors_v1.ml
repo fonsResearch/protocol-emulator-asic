@@ -207,9 +207,7 @@ let loadable_l1 h =
   let slots = Option.value_map (Sys.getenv "PEMU_SLOTS") ~default:8 ~f:Int.of_string in
   let image =
     if slots < 8
-    then (
-      let h = Mprog.ctx_words_serial ~slots in
-      Mprog.store_image ~slots ld1 ~ctx_base:0 ~bases:[ h; h + (6 * n6) ])
+    then Mprog.store_image ~slots ld1 ~ctx_base:0 ~bases:(snd (Mprog.serial_layout ld1))
     else Mprog.store_image ld1 ~ctx_base:0 ~bases:[ 56; 56 + (6 * n6) ]
   in
   write_store h ~lane:1 image;

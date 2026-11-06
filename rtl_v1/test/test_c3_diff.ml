@@ -155,12 +155,12 @@ let write h a d = ignore (transaction h ((a land 0x7F) :: d) : int list)
 let read h a k = List.tl_exn (transaction h ((0x80 lor a) :: List.init k ~f:(fun _ -> 0)))
 let le32 l = List.foldi l ~init:0 ~f:(fun i acc b -> acc lor (b lsl (8 * i)))
 
-let create ?(lib = lib) ?verdict_pipe () =
+let create ?(lib = lib) ?verdict_pipe ?(loadable = [| false; false |]) () =
   let sim =
     Sim.create
       (fun i ->
         let o, (d : Top_v1.debug) =
-          Top_v1.create_with_debug ~loadable:[| false; false |] ~mon_slots:5 ?verdict_pipe ~lib
+          Top_v1.create_with_debug ~loadable ~mon_slots:5 ?verdict_pipe ~lib
             ~sram:(fun _ i -> fst (Sram256.behavioural i)) i
         in
         let lo = d.lane_outputs.(0) and l1 = d.lane_outputs.(1) in

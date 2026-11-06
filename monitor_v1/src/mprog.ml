@@ -209,12 +209,26 @@ let ctx_words = 56
    unit u at 50 + 3u, so [ctx_words_serial ~slots] = 50 + 3 slots (65 for 5 slots). *)
 let ctx_words_serial ~slots = 50 + (3 * slots)
 
+(* Store layout of a package on a serial loadable lane: header words 0-49, unit headers of the
+   package's own units at 50 + 3u, programs packed from 50 + 3 nu. The loader still reads
+   [ctx_words_serial] words; header words of units beyond nu may then hold program words, which is
+   harmless because those units are disabled (LOAD_UNITS bit 0): no slot acts, no fetch starts.
+   Capacity: (256 - 50 - 3 nu) / 6 instructions (33 for 2 units, 31 for 5). *)
+let serial_layout (p : t) =
+  let nu = Array.length p.units in
+  let hdr = 50 + (3 * nu) in
+  let bases =
+    List.folding_map (Array.to_list p.units) ~init:hdr ~f:(fun b (u : unit_prog) -> b + (6 * Array.length u.code), b)
+  in
+  hdr, bases
+;;
+
 let bits_to_int bs = List.foldi bs ~init:0 ~f:(fun k a b -> if b then a lor (1 lsl k) else a)
 
 let store_image ?slots (p : t) ~ctx_base ~bases =
   let nu = Array.length p.units in
   let ctx_words, max_units =
-    match slots with None -> ctx_words, 2 | Some s -> ctx_words_serial ~slots:s, s
+    match slots with None -> ctx_words, 2 | Some s -> 50 + (3 * nu), s
   in
   if nu > max_units
   then raise_s [%message "loadable package has too many units" p.name (nu : int) (max_units : int)];

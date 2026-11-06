@@ -28,7 +28,34 @@ let compose peers (v : Psim.chip_view) =
     { Psim.drive_oe = acc.drive_oe lor d.drive_oe; drive_val = acc.drive_val lor (d.drive_val land d.drive_oe) })
 ;;
 
-let configure h (lanes : lane_cfg list) =
+(* store writes: LSTORE_ADDR at each discontinuity, then LSTORE_DATA low, high (auto-increment) *)
+let write_store h ~lane (img : (int * int) list) =
+  let b = 0x50 + (8 * lane) in
+  let sorted = List.sort img ~compare:(fun (a, _) (b, _) -> Int.compare a b) in
+  ignore
+    (List.fold sorted ~init:(-2) ~f:(fun prev (a, w) ->
+       if a <> prev + 1 then D.write h (b + 4) [ a ];
+       D.write h (b + 5) [ w land 0xFF; w lsr 8 ];
+       a)
+      : int)
+;;
+
+(* [load_l1]: lane 1 is a v2 serial loadable lane; its package (D.lib, index c.pkg) is written to
+   the store as an image (65-word header at 0, programs after it) and loaded, instead of being
+   selected from a ROM *)
+let load_package h ~lane (p : Pemu_monitor_v1.Mprog.t) =
+  let module Mp = Pemu_monitor_v1.Mprog in
+  let _, bases = Mp.serial_layout p in
+  write_store h ~lane (Mp.store_image ~slots:5 p ~ctx_base:0 ~bases);
+  let b = 0x50 + (8 * lane) in
+  D.write h (b + 2) [ 0 ];
+  D.write h b [ 0x80 ];
+  D.write h (0x60 + (16 * lane)) (Array.to_list p.remap);
+  D.write h (b + 1) [ 0x80 lor ((1 lsl Array.length p.units) - 1) ];
+  D.wait h 80
+;;
+
+let configure ?(load_l1 = false) h (lanes : lane_cfg list) =
   List.iter lanes ~f:(fun c ->
     let b = 0x10 + (16 * c.lane) and s = c.setup in
     D.write h b [ s.own ];
@@ -42,15 +69,18 @@ let configure h (lanes : lane_cfg list) =
     D.write h (b + 8)
       (List.concat_map (List.init (List.length s.prog) ~f:Fn.id) ~f:(fun a -> [ words.(a) land 0xFF; words.(a) lsr 8 ]));
     let p = List.nth_exn D.lib c.pkg in
-    D.write h (0x50 + (8 * c.lane)) [ 0x80 lor c.pkg ];
-    D.write h (0x60 + (16 * c.lane)) (Array.to_list p.remap);
+    if load_l1 && c.lane = 1
+    then load_package h ~lane:1 p
+    else (
+      D.write h (0x50 + (8 * c.lane)) [ 0x80 lor c.pkg ];
+      D.write h (0x60 + (16 * c.lane)) (Array.to_list p.remap));
     if not (List.is_empty c.tx_bytes) then D.write h (b + 9) c.tx_bytes)
 ;;
 
 (* [prefix]: lanes run for [run_for] cycles after RUN, then reset is asserted for [rst_len]
    cycles; the measured scenario is then configured from scratch on the same chip instance *)
-let chip_run2 ?verdict_pipe ?prefix ~k ~(lanes : lane_cfg list) ~cycles () =
-  let h = D.create ?verdict_pipe () in
+let chip_run2 ?verdict_pipe ?prefix ?(loadable_l1 = false) ~k ~(lanes : lane_cfg list) ~cycles () =
+  let h = D.create ?verdict_pipe ~loadable:[| false; loadable_l1 |] () in
   (match prefix with
    | None -> ()
    | Some (pl, run_for, rst_len) ->
@@ -67,7 +97,7 @@ let chip_run2 ?verdict_pipe ?prefix ~k ~(lanes : lane_cfg list) ~cycles () =
      h.rst_n <- true;
      h.c_rst <- -1;
      D.wait h 6);
-  configure h lanes;
+  configure ~load_l1:loadable_l1 h lanes;
   h.wired <- List.fold lanes ~init:0 ~f:(fun a c -> a lor c.setup.open_drain_wired_and);
   h.off <- h.n + D.ctrl_write_len - k;
   h.peer <- compose (List.map lanes ~f:(fun c -> c.peer ()));
@@ -85,8 +115,8 @@ let chip_run2 ?verdict_pipe ?prefix ~k ~(lanes : lane_cfg list) ~cycles () =
   h, v, rx
 ;;
 
-let run ?verdict_pipe ?prefix ~k ~name (lanes : lane_cfg list) ~cycles =
-  let h, v, chip_rx = chip_run2 ?verdict_pipe ?prefix ~k ~lanes ~cycles () in
+let run ?verdict_pipe ?prefix ?loadable_l1 ~k ~name (lanes : lane_cfg list) ~cycles =
+  let h, v, chip_rx = chip_run2 ?verdict_pipe ?prefix ?loadable_l1 ~k ~lanes ~cycles () in
   printf "%s\n" name;
   let firsts =
     List.map2_exn lanes chip_rx ~f:(fun c crx ->
@@ -150,7 +180,8 @@ let run ?verdict_pipe ?prefix ~k ~name (lanes : lane_cfg list) ~cycles =
   let s = function None -> "-" | Some (t, l, c) -> sprintf "L%d %02X@%d" l c t in
   let ok = [%equal: (int * int * int) option] in
   printf "  first fail  predicted %-12s chip %-12s %s\n" (s pfail) (s cfail) (if ok pfail cfail then "=" else "DIFF");
-  printf "  first blame predicted %-12s chip %-12s %s\n" (s pblame) (s cblame) (if ok pblame cblame then "=" else "DIFF")
+  printf "  first blame predicted %-12s chip %-12s %s\n" (s pblame) (s cblame) (if ok pblame cblame then "=" else "DIFF");
+  if code 0 land 0xF0 <> 0 then printf "  VERDICT flags 0x%02X (overrun L0/L1 bits 4/5, fetch late bits 6/7)\n" (code 0 land 0xF0)
 ;;
 
 let%expect_test "C3: two lanes at once" =
