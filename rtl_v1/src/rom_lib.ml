@@ -51,6 +51,28 @@ let v2_inc1_with_p () =
 
 let v2_inc1 () = List.map (v2_inc1_with_p ()) ~f:fst
 
+(* Divisor rules behind the documented values, for any clock (integer arithmetic, so no float
+   rounding can move a ceiling). A lane step is P + 1 cycles.
+   - UART TX (4 steps/bit) and RX (8 steps/bit) at 115200 baud: P + 1 = round (f / (115200 * steps)).
+   - SPI controller/target: P = 7 (fixed; the SCLK rate scales with the clock).
+   - I2C Fm: the shortest step of at least 0.25 us (the v1 step; SCL = 10 steps <= 400 kHz).
+   - I2C Sm: the shortest step of at least 1 us.
+   At 33 MHz these give 71, 35, 7, 7, 8, 32, the values of [v2_inc1_with_p] (checked in
+   test_rom_lib_v2.ml); at 30 MHz 64, 32, 7, 7, 7, 29. *)
+let divisors_at ~clock_hz =
+  let round_div a b = ((2 * a) + b) / (2 * b) in
+  let ceil_div a b = (a + b - 1) / b in
+  let uart steps = round_div clock_hz (115_200 * steps) - 1 in
+  let min_step ~ns = ceil_div (clock_hz * ns) 1_000_000_000 - 1 in
+  [ uart 4; uart 8; 7; 7; min_step ~ns:250; min_step ~ns:1000 ]
+;;
+
+let v2_inc1_with_p_at ~clock_hz =
+  List.map2_exn (v2_inc1 ()) (divisors_at ~clock_hz) ~f:(fun c p -> c, p)
+;;
+
+let minimum_v2_with_p_at ~clock_hz = List.take (v2_inc1_with_p_at ~clock_hz) 4
+
 (* Static admissibility (D13 recurrence check, log/harness_audit_v2.md C4): a serial monitor with
    [slots] slots admits RUN only for P >= slots - 1, and a package must fit in the slots.
    Returns the violations; [] means every shipped package runs monitored at its documented P. *)

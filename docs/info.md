@@ -28,12 +28,12 @@ A programmable protocol emulator with an on-chip assumption monitor.
   earlier, under stated physical assumptions (doc/concept/assume_guarantee.md). This is proved on
   the specification; the link to the chip is being completed (log/proofs_v2.md).
 
-Clock: 33 MHz (timing signed off at the slow corner, 1.08 V / 125 C; see log/ci_results_v2.md). The lane divisors are host registers, so a different clock only changes the divisor values.
+Clock: 30 MHz for this build (v2 minimum + I2C controller increment; timing signed off at the slow corner, 1.08 V / 125 C, setup slack +1.32 ns; see log/increments_v2.md). The lane divisors are host registers, so a different clock only changes the divisor values. Divisors at 30 MHz (`Rom_lib.divisors_at`): UART TX P = 64 and UART RX P = 32 for 115200 baud, SPI controller/target P = 7, I2C controller Fm P = 7 (step 0.27 us, SCL 375 kHz), Sm P = 29 (step 1 us).
 
 ## How to test
 
 All access is through the host SPI port on `ui[0]` CS_n, `ui[1]` SCK, `ui[2]` MOSI and `uo[0]`
-MISO: mode 0, MSB first. SCK high and low at least 4 clock cycles each (up to about 4 MHz at 33 MHz).
+MISO: mode 0, MSB first. SCK high and low at least 4 clock cycles each (up to about 3.75 MHz at 30 MHz).
 The first byte is {R/W (1 = read), address[6:0]}; data bytes follow with an auto-incrementing
 address.
 

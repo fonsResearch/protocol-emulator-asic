@@ -73,3 +73,34 @@ let%expect_test "increment 1: I2C controller on the v2 top at its 33 MHz divisor
     Fm clean + vpipe                   mon-in =       pins =       verdict = pushes = [00 C3 5A 00] | psim [] U true
     |}]
 ;;
+
+let%expect_test "increment 1: I2C controller at the 30 MHz divisors (variant v2-inc1-30mhz)" =
+  let k = List.hd_exn (D.calibrate ()) in
+  let p30 i = snd (List.nth_exn (Rom_lib.v2_inc1_with_p_at ~clock_hz:30_000_000) i) in
+  let fm = ctl_setup ~p:(p30 4) ~l:6 ~h:4 ~tsu:3 ~thold:6
+  and sm = ctl_setup ~p:(p30 5) ~l:5 ~h:5 ~tsu:5 ~thold:5 in
+  printf "Fm P = %d, Sm P = %d\n" fm.p sm.p;
+  let tgt ?dd ?nack_write ?stretch () () =
+    (Peers.i2c_target ~addr:0x50 ~read_data:[ 0xC3; 0x5A ] ?dd ?nack_write ?stretch ()).drive
+  in
+  run ~k ~name:"Fm clean" ~pkg:4 ~setup:fm ~peer:(tgt ()) ~cycles:12_000 ();
+  run ~k ~name:"Fm clock stretch 200" ~pkg:4 ~setup:fm ~peer:(tgt ~stretch:200 ()) ~cycles:14_000 ();
+  run ~k ~name:"Fm target NACKs write byte 1" ~pkg:4 ~setup:fm ~peer:(tgt ~nack_write:1 ()) ~cycles:12_000 ();
+  List.iter [ 30; 50; 70 ] ~f:(fun dd ->
+    run ~k ~name:(sprintf "Fm target data delay %d" dd) ~pkg:4 ~setup:fm ~peer:(tgt ~dd ()) ~cycles:12_000 ());
+  run ~k ~name:"Sm clean" ~pkg:5 ~setup:sm ~peer:(tgt ()) ~cycles:40_000 ();
+  run ~k ~name:"Sm clock stretch 600" ~pkg:5 ~setup:sm ~peer:(tgt ~stretch:600 ()) ~cycles:44_000 ();
+  run ~verdict_pipe:true ~k ~name:"Fm clean + vpipe" ~pkg:4 ~setup:fm ~peer:(tgt ()) ~cycles:12_000 ();
+  [%expect {|
+    Fm P = 7, Sm P = 29
+    Fm clean                           mon-in =       pins =       verdict = pushes = [00 C3 5A 00] | psim [] U true
+    Fm clock stretch 200               mon-in =       pins =       verdict = pushes = [00 C3 5A 00] | psim [] U true
+    Fm target NACKs write byte 1       mon-in =       pins =       verdict = pushes = [02 C3 5A 00] | psim [] U true
+    Fm target data delay 30            mon-in =       pins =       verdict = pushes = [00 C3 5A 00] | psim [] U true
+    Fm target data delay 50            mon-in =       pins =       verdict = pushes = [00 C3 5A 00] | psim [] U true
+    Fm target data delay 70            mon-in =       pins =       verdict = pushes = [00 E1 AD 00] | psim [B77@1065] U true
+    Sm clean                           mon-in =       pins =       verdict = pushes = [00 C3 5A 00] | psim [] U true
+    Sm clock stretch 600               mon-in =       pins =       verdict = pushes = [00 C3 5A 00] | psim [] U true
+    Fm clean + vpipe                   mon-in =       pins =       verdict = pushes = [00 C3 5A 00] | psim [] U true
+    |}]
+;;

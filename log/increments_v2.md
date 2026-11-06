@@ -112,3 +112,21 @@ renames, one misnamed net (core._13995 holds s2_ui[0], as core._13013 did on v2m
 and mon_mask invariants. All 2,197 flops and all output ports paired. Controls on E5: N1 uo_out[0]
 driver inverted (0 proven), N4 wrong invariant (51 unproven), N5 xnor2 -> xor2 next to mon_now[5]
 (mon_now[5] unproven), all FAIL as required. The 30 MHz build needs its own E5 run on its final netlist.
+
+30 MHz probe result, CI run 42160150374 (d9d2c64): gds, gl_test, precheck PASS (viewer: GitHub Pages
+404 as before). Post-PnR slow setup WNS +1.318 ns, 0 violations (estimate +1.0 ns); typ +13.485 ns,
+fast +20.435 ns; hold +0.108 ns, 0 violations; area 335,982 um^2 (43.5 %); route DRC 0, antenna 0,
+max-slew 45, max-cap 6, Magic illegal overlaps 10. The synthesis netlist is byte-identical to the 33 MHz
+one (E4 above covers it); the final netlist differs (repair/placement): E5 on it PROVEN with the
+unchanged map maps/v2inc1T_82dd594.json, 2,549 of 2,549 pairs (203 s), all 2,197 flops and all outputs
+paired, N1 (uo_out[0] driver inverted) FAIL as required.
+
+Divisors at 30 MHz: `Rom_lib.divisors_at` states the rules behind the documented values (UART
+P + 1 = round(f / (115200 * steps)), SPI P = 7, I2C Fm shortest step >= 0.25 us, Sm >= 1 us) and
+reproduces the 33 MHz values exactly (test_rom_lib_v2). At 30 MHz: UART TX 64 (+0.16 %), UART RX 32
+(bit 264 cycles, -1.4 %), SPI 7, I2C Fm 7 (step 0.267 us, SCL 375 kHz), Sm 29; admissible at 5 slots.
+Chip RTL vs Psim at these divisors (cyclesim): J30/K30 (UART RX/TX with a 30 MHz 115200-baud peer, beside
+SPI) no firings, chip = Psim; L30 short stop blamed (33@8449), chip = Psim; I2C Fm/Sm set (clean,
+stretch, NACK, data delay 30/50/70, + vpipe) chip = Psim, U holds. Data delay 70 cycles (2.33 us, beyond
+the Fm 0.9 us data-valid maximum) is now blamed in the first byte (B77@1065; at 33 MHz B77@5950).
+The emitted core is unchanged by these edits (byte-identical re-emit). docs/info.md updated for 30 MHz.

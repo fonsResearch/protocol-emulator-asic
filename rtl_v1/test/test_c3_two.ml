@@ -221,6 +221,22 @@ let%expect_test "C3: two lanes at once" =
   run ~k ~name:"K: documented P: L0 uart_tx P=71, L1 spi_tgt P=7" [ tx33 (); spi_tgt () ] ~cycles:12_000;
   run ~k ~name:"L: documented P: L0 uart_rx P=35 short stop (frame 2), L1 spi_ctl P=7 tco 14"
     [ rx33 ~defect:(Peers.Short_stop 2) (); spi_ctl ~tco:14 () ] ~cycles:20_000;
+  (* the same at the 30 MHz divisors (variant v2-inc1-30mhz, Rom_lib.divisors_at): UART TX P = 64,
+     UART RX P = 32 with a 115200-baud sender at 30 MHz (30e6 / 115200 = 260.42 cycles per bit;
+     the RX bit is 8 * 33 = 264 cycles, -1.4 %), SPI P = 7 *)
+  let p30 i = snd (List.nth_exn (Pemu_rtl_v1.Rom_lib.minimum_v2_with_p_at ~clock_hz:30_000_000) i) in
+  let bp30 = 30e6 /. 115200. in
+  let rx30 ?(defect = Peers.No_defect) () =
+    let frames bp = Peers.frames_of ~bp ~st0:400 [ 0x55; 0xC3; 0x0F; 0xA5; 0x00; 0xFF ] ~gap:(fun b -> 50 + b) in
+    { (uart_rx ~rate:1.0 ()) with
+      name = sprintf "uart_rx P%d 115200@30MHz" (p30 1); setup = { (D.rx_setup ()) with p = p30 1 }
+    ; peer = (fun () -> Peers.sender ~pin:1 ~bp:bp30 ~frames:(frames bp30) ~defect) }
+  in
+  let tx30 () = let c = uart_tx () in { c with name = sprintf "uart_tx P%d" (p30 0); setup = { c.setup with p = p30 0 } } in
+  run ~k ~name:"J30: 30 MHz P: L0 uart_rx, L1 spi_ctl P=7 tco 3" [ rx30 (); spi_ctl ~tco:3 () ] ~cycles:20_000;
+  run ~k ~name:"K30: 30 MHz P: L0 uart_tx, L1 spi_tgt P=7" [ tx30 (); spi_tgt () ] ~cycles:12_000;
+  run ~k ~name:"L30: 30 MHz P: L0 uart_rx short stop (frame 2), L1 spi_ctl tco 14"
+    [ rx30 ~defect:(Peers.Short_stop 2) (); spi_ctl ~tco:14 () ] ~cycles:20_000;
   [%expect {|
     A: L0 uart_tx, L1 spi_ctl tco 3 (no firings)
       lane 0 uart_tx                    mon-in =      pins =      pushes = (0) | psim fail - blame -
@@ -301,6 +317,21 @@ let%expect_test "C3: two lanes at once" =
       first blame predicted -            chip -            =
     L: documented P: L0 uart_rx P=35 short stop (frame 2), L1 spi_ctl P=7 tco 14
       lane 0 uart_rx P35 115200@33MHz   mon-in =      pins =      pushes = (6) | psim fail - blame 33@9217
+      lane 1 spi_ctl tco 14             mon-in =      pins =      pushes = (8) | psim fail - blame 91@113
+      first fail  predicted -            chip -            =
+      first blame predicted L1 91@113    chip L1 91@113    =
+    J30: 30 MHz P: L0 uart_rx, L1 spi_ctl P=7 tco 3
+      lane 0 uart_rx P32 115200@30MHz   mon-in =      pins =      pushes = (6) | psim fail - blame -
+      lane 1 spi_ctl tco 3              mon-in =      pins =      pushes = (8) | psim fail - blame -
+      first fail  predicted -            chip -            =
+      first blame predicted -            chip -            =
+    K30: 30 MHz P: L0 uart_tx, L1 spi_tgt P=7
+      lane 0 uart_tx P64                mon-in =      pins =      pushes = (0) | psim fail - blame -
+      lane 1 spi_tgt                    mon-in =      pins =      pushes = (8) | psim fail - blame -
+      first fail  predicted -            chip -            =
+      first blame predicted -            chip -            =
+    L30: 30 MHz P: L0 uart_rx short stop (frame 2), L1 spi_ctl tco 14
+      lane 0 uart_rx P32 115200@30MHz   mon-in =      pins =      pushes = (6) | psim fail - blame 33@8449
       lane 1 spi_ctl tco 14             mon-in =      pins =      pushes = (8) | psim fail - blame 91@113
       first fail  predicted -            chip -            =
       first blame predicted L1 91@113    chip L1 91@113    =
