@@ -104,3 +104,11 @@ timing): slow WNS -6.11 ns, area +12.8 %, rejected. The sg13cmos5l library has t
 before the run: slow setup WNS about +1.0 ns (-1.99 + 3.03), assuming placement and repair stay similar.
 The documented protocol divisors (Rom_lib.*_with_p, docs/info.md) are for 33 MHz and are re-derived only
 if this probe closes timing; the netlist does not depend on them (P is host-set).
+
+E4/E5 for the 33 MHz v2inc1 + T netlists (82dd594, run 41887577418): both PROVEN, 2,549 of 2,549 pairs
+(flow/equiv/run_e5_induct.sh, maps/v2inc1T_82dd594.json, about 290 s each). Synthesis recoded the
+same four FSMs (_955, _1039 and two 4-state FSMs, here _10772 and _11245); map: _955[1], _1039[0..2]
+renames, one misnamed net (core._13995 holds s2_ui[0], as core._13013 did on v2min), the 3-state FSM
+and mon_mask invariants. All 2,197 flops and all output ports paired. Controls on E5: N1 uo_out[0]
+driver inverted (0 proven), N4 wrong invariant (51 unproven), N5 xnor2 -> xor2 next to mon_now[5]
+(mon_now[5] unproven), all FAIL as required. The 30 MHz build needs its own E5 run on its final netlist.
