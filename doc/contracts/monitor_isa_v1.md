@@ -176,6 +176,9 @@ As implemented in `monitor_v1/src/mon_engine.ml` and `rtl_v1/src/top_v1.ml` (`?l
 | 0x50 + 8L | PKG | R/W, context | bit7 monitor enable, [3:0] ROM library index (an index outside the library = no units) |
 | +1 | LOAD_UNITS | R/W, context | bit0/1: units 6/7 run from the store (loadable mode); write bit7 = 1: LOAD the context header. R: bit5 ctx_loaded, bit6 loading |
 | +2 | LOAD_CTX | R/W, context | word address of the 56-word context header |
+| +3 | WIN_CTL | R/W, context | (v2 build option `param_windows`, increment 2 option D) bit7: window override on (the lane uses the loaded window table instead of its ROM package's), [2:0] window index 1-7 for WIN_LO/WIN_HI. Reset: 0 |
+| +6 | WIN_LO | W: context; R | (param_windows) write: low byte of the next window value (staged). Read: bits 7:0 of window[WIN_CTL index] |
+| +7 | WIN_HI | W: context; R | (param_windows) write [3:0]: commits {WIN_HI[3:0], WIN_LO} to window[WIN_CTL index]. Read: bits 11:8 of window[index] |
 | +4 | LSTORE_ADDR | R/W, context | store word address (auto-increments after each word) |
 | +5 | LSTORE_DATA | W, P, context | low byte, then high byte; the word is written at LSTORE_ADDR |
 | 0x60 + 16L + i | REMAP | R/W, context | local observable i -> global source [5:0]; values 50-63 read constant 0 |

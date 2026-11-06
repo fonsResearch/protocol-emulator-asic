@@ -352,6 +352,7 @@ type loader_probe =
 let create
   ?(slots = S.n_units)
   ?(verdict_pipe = false)
+  ?(param_windows = false)
   ?probe_ctx
   ?(bug : [ `Fetch_running_only | `Ld_no_delay ] option)
   ~(loadable : bool array) ~clock ~rst_sync_n ~(lib : M.t list) ~(store : int -> store_port -> Signal.t)
@@ -500,10 +501,29 @@ let create
       else lib_tables lib ~idx ~remap
     in
     let lmux a b = if serial then b else mux2 ld_mode a b in
+    (* [param_windows] (increment 2, option D, doc/decisions/inc2_loadable_options.md): a host-loadable
+       window table on a ROM lane. WIN_CTL (+3): bit7 override, [2:0] window index 1-7; WIN_LO (+6):
+       low byte (staged); WIN_HI (+7): writing [3:0] commits {hi, lo} to window[index]. Context-write
+       rules as the other lane registers; reset clears the table and the override. *)
+    let pw = param_windows && not serial in
+    let win_ctl = if pw then r8 3 (sprintf "mon_win_ctl%d" l) else zero 8 in
+    let win_regs =
+      if not pw
+      then [||]
+      else (
+        let lo = r8 6 (sprintf "mon_win_lo%d" l) in
+        Array.init 8 ~f:(fun k ->
+          if k = 0
+          then zero 12
+          else
+            reg spec ~enable:(wr_ctx 7 &: (select win_ctl 2 0 ==:. k)) (select host.wdata 3 0 @: lo)
+            -- sprintf "mon_win%d_%d" l k))
+    in
+    let pwin k r = if pw && k > 0 then mux2 (bit win_ctl 7) win_regs.(k) r else r in
     let tables : S.tables =
       { remap
       ; preds = Array.mapi rom_tables.preds ~f:(fun k r -> lmux c_preds.(k) r)
-      ; windows = Array.mapi rom_tables.windows ~f:(fun k r -> lmux c_windows.(k) r)
+      ; windows = Array.mapi rom_tables.windows ~f:(fun k r -> pwin k (lmux c_windows.(k) r))
       ; code_role = Array.mapi rom_tables.code_role ~f:(fun k r -> lmux c_role.(k) r)
       ; code_val = Array.mapi rom_tables.code_val ~f:(fun k r -> lmux c_val.(k) r)
       ; starts =
@@ -603,8 +623,9 @@ let create
     in
     let ready = ~:ld_mode |: ctx_loaded in
     let regs8 =
-      [| pkg; (if serial then zero 1 @: loading_q @: ctx_loaded @: uresize lu 5 else zero 1 @: loading_q @: ctx_loaded @: zero 3 @: lu); ctx_base; zero 8; st_addr; zero 8
-       ; zero 8; zero 8 |]
+      let win_sel = if pw then mux (select win_ctl 2 0) (Array.to_list win_regs) else zero 12 in
+      [| pkg; (if serial then zero 1 @: loading_q @: ctx_loaded @: uresize lu 5 else zero 1 @: loading_q @: ctx_loaded @: zero 3 @: lu); ctx_base; win_ctl; st_addr; zero 8
+       ; select win_sel 7 0; zero 4 @: select win_sel 11 8 |]
     in
     ( (en, o, { fire = o.fire; unit_ = o.unit_; role = o.role; code = o.code; stamp })
     , late_now

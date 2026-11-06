@@ -79,8 +79,8 @@ let configure ?(load_l1 = false) h (lanes : lane_cfg list) =
 
 (* [prefix]: lanes run for [run_for] cycles after RUN, then reset is asserted for [rst_len]
    cycles; the measured scenario is then configured from scratch on the same chip instance *)
-let chip_run2 ?verdict_pipe ?prefix ?(loadable_l1 = false) ~k ~(lanes : lane_cfg list) ~cycles () =
-  let h = D.create ?verdict_pipe ~loadable:[| false; loadable_l1 |] () in
+let chip_run2 ?verdict_pipe ?prefix ?(loadable_l1 = false) ?(windows = []) ~k ~(lanes : lane_cfg list) ~cycles () =
+  let h = D.create ?verdict_pipe ~param_windows:(not (List.is_empty windows)) ~loadable:[| false; loadable_l1 |] () in
   (match prefix with
    | None -> ()
    | Some (pl, run_for, rst_len) ->
@@ -98,6 +98,7 @@ let chip_run2 ?verdict_pipe ?prefix ?(loadable_l1 = false) ~k ~(lanes : lane_cfg
      h.c_rst <- -1;
      D.wait h 6);
   configure ~load_l1:loadable_l1 h lanes;
+  List.iter windows ~f:(fun (lane, w) -> D.write_windows h ~lane w);
   h.wired <- List.fold lanes ~init:0 ~f:(fun a c -> a lor c.setup.open_drain_wired_and);
   h.off <- h.n + D.ctrl_write_len - k;
   h.peer <- compose (List.map lanes ~f:(fun c -> c.peer ()));
@@ -115,8 +116,8 @@ let chip_run2 ?verdict_pipe ?prefix ?(loadable_l1 = false) ~k ~(lanes : lane_cfg
   h, v, rx
 ;;
 
-let run ?verdict_pipe ?prefix ?loadable_l1 ~k ~name (lanes : lane_cfg list) ~cycles =
-  let h, v, chip_rx = chip_run2 ?verdict_pipe ?prefix ?loadable_l1 ~k ~lanes ~cycles () in
+let run ?verdict_pipe ?prefix ?loadable_l1 ?windows ~k ~name (lanes : lane_cfg list) ~cycles =
+  let h, v, chip_rx = chip_run2 ?verdict_pipe ?prefix ?loadable_l1 ?windows ~k ~lanes ~cycles () in
   printf "%s\n" name;
   let firsts =
     List.map2_exn lanes chip_rx ~f:(fun c crx ->

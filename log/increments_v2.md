@@ -158,3 +158,22 @@ Probe result, CI run 42242730817 (d7deed2): FAILED, not routable in the 6x4 floo
   [inference]. No artifacts were uploaded (artifact storage quota full at the time).
 - Conclusion: option A as built (local synthesis 398.8k um^2, projected about 68 %) exceeds what this
   floorplan routes; the highest measured routable point remains 43.5 % (increment-1 build).
+
+### 2.D Option D: host-loadable window tables on the ROM lanes (user choice 2026-11-06)
+
+`Mon_engine ~param_windows` (default off; shipped cores re-emit byte-identically): per lane WIN_CTL
+(+3, bit7 override, [2:0] index), WIN_LO (+6), WIN_HI (+7, commit); windows 1-7 of the lane's tables
+come from these registers when the override is on. Reach (doc/decisions/inc2_loadable_options.md
+section 6): uart_tx d 3-12, spi_tgt g 6-12, i2c_ctl one more class, i2c_tgt 12 classes.
+- Local synthesis: 275,239 um^2, 2,399 flops (+22.4k, +200 flops over the shipped 30 MHz core);
+  projected routed utilisation about 46.8 % [estimate].
+- Chip RTL vs Psim, exact differential (rtl_v1/test/test_inc2d.ml): ROM package + loaded windows of a
+  variant = Psim with the variant contract, and without the override = Psim with the shipped contract:
+  uart_tx d6 on ROM d4 (clean: fail 13@81 without override, accepted with; bad start fail 13@97),
+  spi_tgt g9 on ROM g6 (gap 64 cycles: accepted by g6, blamed 55@1049 by g9; gap 40 blamed by both
+  at 55@1025; gap 144 clean), i2c_ctl l7h5 firmware on the Fm package (F61@5392 without override,
+  clean with). Registers: readback 0x0234, writes refused while the lane runs.
+- Probe branch v2-inc2-pwin: src core PEMU_PWIN=1 PEMU_LOADABLE=rom PEMU_LIB=v2inc1 PEMU_SLOTS=5
+  PEMU_VPIPE=1 (fix_combdly applied), 30 MHz config of v2-inc1-30mhz (2 macros); vectors from this RTL
+  including v2_pwin_uart (override off: fail 13; windows(d6) loaded: clean; d6 bad start: fail 14);
+  RTL replay 6/6.

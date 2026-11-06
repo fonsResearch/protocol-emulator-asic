@@ -155,12 +155,12 @@ let write h a d = ignore (transaction h ((a land 0x7F) :: d) : int list)
 let read h a k = List.tl_exn (transaction h ((0x80 lor a) :: List.init k ~f:(fun _ -> 0)))
 let le32 l = List.foldi l ~init:0 ~f:(fun i acc b -> acc lor (b lsl (8 * i)))
 
-let create ?(lib = lib) ?verdict_pipe ?(loadable = [| false; false |]) () =
+let create ?(lib = lib) ?verdict_pipe ?param_windows ?(loadable = [| false; false |]) () =
   let sim =
     Sim.create
       (fun i ->
         let o, (d : Top_v1.debug) =
-          Top_v1.create_with_debug ~loadable ~mon_slots:5 ?verdict_pipe ~lib
+          Top_v1.create_with_debug ~loadable ~mon_slots:5 ?verdict_pipe ?param_windows ~lib
             ~sram:(fun _ i -> fst (Sram256.behavioural i)) i
         in
         let lo = d.lane_outputs.(0) and l1 = d.lane_outputs.(1) in
@@ -181,6 +181,18 @@ let create ?(lib = lib) ?verdict_pipe ?(loadable = [| false; false |]) () =
   wait h 3; h.rst_n <- true; wait h 6; h
 ;;
 
+(* option D window table of a ROM lane: WIN_CTL (+3) index, WIN_LO (+6), WIN_HI (+7) commit, for
+   windows 1-7; then WIN_CTL bit 7 enables the override *)
+let write_windows h ~lane (w : int array) =
+  let b = 0x50 + (8 * lane) in
+  for k = 1 to 7 do
+    write h (b + 3) [ k ];
+    write h (b + 6) [ w.(k) land 0xFF ];
+    write h (b + 7) [ w.(k) lsr 8 ]
+  done;
+  write h (b + 3) [ 0x80 ]
+;;
+
 (* length of a 2-byte write transaction in cycles: 6 + 2 * 8 * 12 + 6 + 8 *)
 let ctrl_write_len = 6 + (2 * 8 * 12) + 6 + 8
 
@@ -197,8 +209,8 @@ type chip_result =
   }
 
 (* [ctrl_writes]: (Psim time at which the CTRL write transaction starts, value) *)
-let chip_run ?(lib = lib) ?verdict_pipe ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
-  let h = create ~lib ?verdict_pipe () in
+let chip_run ?(lib = lib) ?verdict_pipe ?windows ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
+  let h = create ~lib ?verdict_pipe ~param_windows:(Option.is_some windows) () in
   let b = 0x10 in
   write h b [ setup.own ]; write h (b + 1) [ setup.od ];
   write h (b + 2) [ setup.p land 0xFF; setup.p lsr 8 ];
@@ -208,6 +220,7 @@ let chip_run ?(lib = lib) ?verdict_pipe ?(ctrl_writes = []) ~k ~(setup : Psim.se
   write h (b + 8) (List.concat_map (List.init (List.length setup.prog) ~f:Fn.id) ~f:(fun a -> [ words.(a) land 0xFF; words.(a) lsr 8 ]));
   let p = List.nth_exn lib pkg in
   write h 0x50 [ 0x80 lor pkg ]; write h 0x60 (Array.to_list p.remap);
+  Option.iter windows ~f:(fun w -> write_windows h ~lane:0 w);
   if not (List.is_empty tx_bytes) then write h (b + 9) tx_bytes;
   h.wired <- setup.open_drain_wired_and;
   h.off <- h.n + ctrl_write_len - k;

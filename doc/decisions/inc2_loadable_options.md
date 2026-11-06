@@ -93,3 +93,25 @@ shipped core is 1.33 x its local synthesis (335,982 / 252,834). On one basis the
 398,826 x 1.33 = 530k um^2 routed std cells + 3 macros (84.4k) = about 68 % of the core [estimate],
 not 59 %. The storage is also costlier than assumed: each context/IR bit is an enable flop
 (dfrbpq_1 + mux2, about 67 um^2, not 49).
+
+## 6. Option A probe result and switch to option D (user, 2026-11-06)
+
+CI run 42242730817: not routable (detailed routing 294 min without convergence; log/increments_v2.md).
+User decision: option D (parametric ROM). The serial loadable RTL stays in the repo behind its build
+option (PEMU_LOADABLE=l1 with PEMU_SLOTS < 8), tested in cyclesim (rtl_v1/test/test_inc2.ml).
+
+What a loadable window table reaches (`probe_loadable.exe variants`: contract-parameter variants that
+compile to the same structure as the shipped package, i.e. differ only in windows) [facts]:
+
+| package | reachable by loading windows |
+|---|---|
+| uart_tx d4 | d = 3..12 (bit length in steps) |
+| uart_rx d8 m2 | itself only (structure depends on d, m) |
+| spi_ctl h2 | itself only |
+| spi_tgt h3 g6 | g = 6..12 |
+| i2c_ctl l6 h4 | adds l7 h5 tsu4 thold7 |
+| i2c_tgt h8 l18 | 12 classes: h_min = hd in {4, 8, 59} x l_min in {9, 18, 36, 69} (includes Fm and Sm) |
+
+Rate (P) is host-set for every package already; option D adds these timing-class variants on silicon.
+Each reachable variant gives an exact differential test: ROM package + loaded windows vs Psim with
+the variant contract.

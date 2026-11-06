@@ -45,9 +45,72 @@ let stats () =
     printf "field %-8s width %d distinct values %d\n" name w (Set.length all_vals.(j)))
 ;;
 
+(* winpairs: package pairs of the all15 library that differ only in their window tables (same
+   units, instructions, predicates, codes, guards, remap) - the cases a loadable window table can
+   turn into each other exactly (option D, doc/decisions/inc2_loadable_options.md) *)
+let winpairs () =
+  let ps = List.map (Pemu_rtl_v1.Rom_lib.all15 ()) ~f:Pemu_monitor_v1.Compile.compile_exn in
+  let body (p : M.t) =
+    ( List.map (Array.to_list p.units) ~f:(fun (u : M.unit_prog) ->
+        u.start, u.guard, Array.to_list (Array.map u.code ~f:M.field_values))
+    , Array.to_list p.remap, Array.to_list p.preds, Array.to_list p.codes )
+  in
+  let wins (p : M.t) = Array.to_list p.windows in
+  List.iter ps ~f:(fun (p : M.t) ->
+    printf "windows %-22s %s | lo/hi fields used: %d\n" p.name
+      (String.concat ~sep:"," (List.map (Array.to_list p.windows) ~f:Int.to_string))
+      (List.count (Array.to_list p.units |> List.concat_map ~f:(fun (u : M.unit_prog) -> Array.to_list u.code))
+         ~f:(fun ins -> let v = M.field_values ins in List.nth_exn v 8 <> 0 || List.nth_exn v 9 <> 0)));
+  List.iteri ps ~f:(fun i a ->
+    List.iteri ps ~f:(fun j b ->
+      if i < j && Poly.equal (body a) (body b)
+      then printf "%-22s ~ %-22s windows %s | %s\n" a.name b.name
+             (String.concat ~sep:"," (List.map (wins a) ~f:Int.to_string))
+             (String.concat ~sep:"," (List.map (wins b) ~f:Int.to_string))))
+;;
+
+(* variants: for each shipped v2inc1 package, which contract-parameter variants compile to the same
+   structure (window-only difference), i.e. are reachable by loading a window table *)
+let variants () =
+  let module L = Pemu_monitor_v1.Library_v1 in
+  let module C = Pemu_monitor_v1.Compile in
+  let body (p : M.t) =
+    ( List.map (Array.to_list p.units) ~f:(fun (u : M.unit_prog) ->
+        u.start, u.guard, Array.to_list (Array.map u.code ~f:M.field_values))
+    , Array.to_list p.remap, Array.to_list p.preds, Array.to_list p.codes )
+  in
+  let try_ c = Or_error.try_with (fun () -> C.compile_exn (c ())) in
+  let report name base cands =
+    let b = C.compile_exn base in
+    let ok, other, bad =
+      List.fold cands ~init:([], 0, 0) ~f:(fun (ok, other, bad) (lbl, c) ->
+        match try_ c with
+        | Error _ -> ok, other, bad + 1
+        | Ok v -> if Poly.equal (body v) (body b) then lbl :: ok, other, bad else ok, other + 1, bad)
+    in
+    printf "%-10s reachable by windows: %s | structural change: %d | rejected: %d\n" name
+      (String.concat ~sep:" " (List.rev ok)) other bad
+  in
+  let r a b = List.range a (b + 1) in
+  report "uart_tx" (L.uart_tx ~d:4 ~pin:0) (List.map (r 2 12) ~f:(fun d -> sprintf "d%d" d, (fun () -> L.uart_tx ~d ~pin:0)));
+  report "uart_rx" (L.uart_rx ~d:8 ~m:2 ~pin:1)
+    (List.concat_map (r 4 16) ~f:(fun d -> List.map (r 1 4) ~f:(fun m -> sprintf "d%dm%d" d m, (fun () -> L.uart_rx ~d ~m ~pin:1))));
+  report "spi_ctl" (L.spi_ctl ~cpol:false ~cpha:false ~h:2) (List.map (r 1 12) ~f:(fun h -> sprintf "h%d" h, (fun () -> L.spi_ctl ~cpol:false ~cpha:false ~h)));
+  report "spi_tgt" (L.spi_tgt ~cpol:false ~cpha:false ~h_min:3 ~g:6)
+    (List.concat_map (r 1 8) ~f:(fun h_min -> List.map (r 2 12) ~f:(fun g -> sprintf "h%dg%d" h_min g, (fun () -> L.spi_tgt ~cpol:false ~cpha:false ~h_min ~g))));
+  report "i2c_ctl" (L.i2c_ctl ~l:6 ~h:4 ~tsu:3 ~thold:6)
+    (List.concat_map (r 3 9) ~f:(fun l -> List.concat_map (r 3 9) ~f:(fun h ->
+       List.map [ 2, 5; 3, 6; 4, 7; 5, 5 ] ~f:(fun (tsu, thold) -> sprintf "l%dh%dt%d/%d" l h tsu thold, (fun () -> L.i2c_ctl ~l ~h ~tsu ~thold)))));
+  report "i2c_tgt" (L.i2c_tgt ~h_min:8 ~l_min:18 ~hd:8)
+    (List.concat_map [ 4; 8; 16; 32; 59 ] ~f:(fun h_min -> List.concat_map [ 9; 18; 36; 69 ] ~f:(fun l_min ->
+       List.map [ 4; 8; 59 ] ~f:(fun hd -> sprintf "h%dl%dhd%d" h_min l_min hd, (fun () -> L.i2c_tgt ~h_min ~l_min ~hd)))))
+;;
+
 let () =
   let mode = (Sys.get_argv ()).(1) in
+  if String.equal mode "variants" then (variants (); exit 0);
   if String.equal mode "stats" then (stats (); exit 0);
+  if String.equal mode "winpairs" then (winpairs (); exit 0);
   let i = S.I.map S.I.port_names_and_widths ~f:(fun (n, w) -> input n w) in
   let tables, present, fetch =
     match mode with

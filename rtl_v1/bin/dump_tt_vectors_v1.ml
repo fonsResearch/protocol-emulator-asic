@@ -148,7 +148,7 @@ let create () =
   let sim =
     Sim.create
       (Top_v1.create ~loadable ?mon_slots:(Option.map (Sys.getenv "PEMU_SLOTS") ~f:Int.of_string)
-         ?verdict_pipe:(Option.some_if (String.equal (Option.value (Sys.getenv "PEMU_VPIPE") ~default:"0") "1") true) ~lib
+         ?param_windows:(Option.some_if (String.equal (Option.value (Sys.getenv "PEMU_PWIN") ~default:"0") "1") true) ?verdict_pipe:(Option.some_if (String.equal (Option.value (Sys.getenv "PEMU_VPIPE") ~default:"0") "1") true) ~lib
          ~sram:(fun _ i -> fst (Sram256.behavioural i)))
   in
   let h =
@@ -221,6 +221,44 @@ let loadable_l1 h =
   wait h 1500;
   note "loaded: STATUS 0x%02X VERDICT %s" (read1 h 0x02)
     (String.concat ~sep:" " (List.map (verdict h) ~f:(sprintf "%02X")));
+  List.rev !log
+;;
+
+(* option D (PEMU_PWIN=1): lane 0 UART TX d = 6 firmware on ROM package 0 (d = 4). Without the
+   window override the d4 contract fails it; with the windows of uart_tx d6 loaded (WIN_CTL/LO/HI)
+   it is accepted; the d6 bad-start mutant is then failed *)
+let pwin_uart h =
+  let log = ref [] in
+  let note fmt = ksprintf (fun s -> log := s :: !log) fmt in
+  let vs () = String.concat ~sep:" " (List.map (verdict h) ~f:(sprintf "%02X")) in
+  write h 0x10 [ 0x01 ];
+  write h 0x12 [ 7; 0 ];
+  load h ~lane:0 (Programs_v1.uart_tx ~d:6);
+  set_pkg h ~lane:0 ~idx:0 (List.nth_exn lib 0);
+  write h 0x19 [ 0xA5 ];
+  write h 0x01 [ 0x01 ];
+  wait h 800;
+  note "d6 on ROM d4, no override: VERDICT %s" (vs ());
+  write h 0x01 [ 0x10 ];
+  let w = (Compile.compile_exn (Library_v1.uart_tx ~d:6 ~pin:0)).windows in
+  for k = 1 to 7 do
+    write h 0x53 [ k ];
+    write h 0x56 [ w.(k) land 0xFF ];
+    write h 0x57 [ w.(k) lsr 8 ]
+  done;
+  write h 0x53 [ 0x80 ];
+  note "WIN_CTL 0x%02X" (read1 h 0x53);
+  write h 0x19 [ 0x3C ];
+  write h 0x01 [ 0x01 ];
+  wait h 800;
+  note "d6 on ROM d4 + windows(d6): VERDICT %s" (vs ());
+  write h 0x01 [ 0x00 ];
+  load h ~lane:0 (Programs_v1.uart_tx_bad_start ~d:6);
+  write h 0x01 [ 0x10 ];
+  write h 0x19 [ 0x5A ];
+  write h 0x01 [ 0x01 ];
+  wait h 600;
+  note "d6 bad start + windows(d6): VERDICT %s" (vs ());
   List.rev !log
 ;;
 
@@ -344,6 +382,7 @@ let () =
     ([ "v1_rom_uart", rom_uart ]
      @ (if loadable.(1) then [ "v1_loadable_l1", loadable_l1 ] else [])
      @ [ "v1_reset_mid", reset_mid ]
+     @ (if String.equal (env_or "PEMU_PWIN" "0") "1" then [ "v2_pwin_uart", pwin_uart ] else [])
      @
      (* v2inc1 = v2min packages 0-3 unchanged + I2C controller as 4/5, so the v2 scenarios apply *)
      if List.mem [ "v2min"; "v2inc1" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
