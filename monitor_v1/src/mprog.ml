@@ -204,11 +204,20 @@ let decode_pred bits : pred =
    82-bit encoding LSB first, 16 bits per word. Package watchers 0 and 1 map to units 6, 7. *)
 let ctx_words = 56
 
+(* v2 serial loadable lane (doc/decisions/inc2_loadable_options.md, option A): the header keeps
+   words 0-49 (predicates, windows, codes) and holds one 3-word unit header per slot from word 50,
+   unit u at 50 + 3u, so [ctx_words_serial ~slots] = 50 + 3 slots (65 for 5 slots). *)
+let ctx_words_serial ~slots = 50 + (3 * slots)
+
 let bits_to_int bs = List.foldi bs ~init:0 ~f:(fun k a b -> if b then a lor (1 lsl k) else a)
 
-let store_image (p : t) ~ctx_base ~bases =
+let store_image ?slots (p : t) ~ctx_base ~bases =
   let nu = Array.length p.units in
-  if nu > 2 then raise_s [%message "a loadable package has at most 2 watchers" (nu : int)];
+  let ctx_words, max_units =
+    match slots with None -> ctx_words, 2 | Some s -> ctx_words_serial ~slots:s, s
+  in
+  if nu > max_units
+  then raise_s [%message "loadable package has too many units" p.name (nu : int) (max_units : int)];
   let hdr = Array.create ~len:ctx_words 0 in
   for k = 1 to 14 do
     let pr = p.preds.(k) in

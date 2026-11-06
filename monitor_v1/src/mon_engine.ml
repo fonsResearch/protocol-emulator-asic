@@ -239,6 +239,82 @@ let fetcher ?bug ~spec ~nspec ~l ~en ~ld_mode ~lu ~pcs ~pbases ~dout () =
   }
 ;;
 
+(* IR fetcher of a v2 serial loadable lane (doc/decisions/inc2_loadable_options.md, option A):
+   [fetcher] generalised to n = Array.length pcs units (all slots of the lane). Same per-unit rules
+   as [fetcher] (IR_u = store[base_u + 6 pc_u .. + 5], fetch starts in the cycle the mismatch is
+   seen, one read per cycle, data captured one cycle later, valid cleared when a fetch for u starts
+   or the lane stops). When several units need a fetch, the lowest index goes first; one fetch is
+   in flight at a time. *)
+let fetcher_n ~spec ~nspec ~l ~en ~ld_mode ~lu ~pcs ~pbases ~dout () =
+  let n = Array.length pcs in
+  let uw = Int.max 1 (Int.ceil_log2 n) in
+  let running = en in
+  let ir = Array.init n ~f:(fun _ -> Array.init 6 ~f:(fun _ -> wire 16)) in
+  let irv = Array.init n ~f:(fun _ -> wire 1)
+  and ir_pc = Array.init n ~f:(fun _ -> wire 7) in
+  let f_busy_d = wire 1 in
+  let f_busy = reg spec f_busy_d -- sprintf "mon_f_busy%d" l in
+  let f_u_d = wire uw and f_pc_d = wire 7 and f_k_d = wire 3 in
+  let f_u = reg spec f_u_d -- sprintf "mon_f_u%d" l
+  and f_pc = reg spec f_pc_d -- sprintf "mon_f_pc%d" l
+  and f_k = reg spec f_k_d -- sprintf "mon_f_k%d" l in
+  let fcap = wire 1 and fcap_u = wire uw and fcap_pc = wire 7 and fcap_k = wire 3 in
+  let want u =
+    let completing = fcap &: (fcap_u ==:. u) &: (fcap_k ==:. 5) in
+    let valid = irv.(u) |: completing
+    and at = mux2 completing fcap_pc ir_pc.(u) in
+    running &: ld_mode &: bit lu u &: ~:(valid &: (at ==: pcs.(u)))
+  in
+  let wants = Array.init n ~f:want in
+  let any_want = Array.reduce_exn wants ~f:( |: ) in
+  let start_f = ~:f_busy &: any_want in
+  (* lowest-index wanting unit *)
+  let su =
+    List.fold_right (List.mapi (Array.to_list wants) ~f:(fun u w -> u, w)) ~init:(of_int ~width:uw (n - 1))
+      ~f:(fun (u, w) acc -> mux2 w (of_int ~width:uw u) acc)
+  in
+  let iss_u = mux2 f_busy f_u su
+  and iss_pc = mux2 f_busy f_pc (mux su (Array.to_list pcs))
+  and iss_k = mux2 f_busy f_k (zero 3) in
+  let issue = (f_busy |: start_f) &: running in
+  let last = iss_k ==:. 5 in
+  f_busy_d <== (issue &: ~:last);
+  f_u_d <== iss_u;
+  f_pc_d <== iss_pc;
+  f_k_d <== mux2 issue (iss_k +:. 1) f_k;
+  let six_pc = let x = uresize iss_pc 8 in sll x 2 +: sll x 1 in
+  let f_addr = mux iss_u (Array.to_list pbases) +: six_pc +: uresize iss_k 8 in
+  fcap <== reg spec issue -- sprintf "mon_f_cap%d" l;
+  fcap_u <== reg spec iss_u -- sprintf "mon_f_cap_u%d" l;
+  fcap_k <== reg spec iss_k -- sprintf "mon_f_cap_k%d" l;
+  fcap_pc <== reg spec iss_pc -- sprintf "mon_f_cap_pc%d" l;
+  Array.iteri ir ~f:(fun u words ->
+    let mine = fcap &: (fcap_u ==:. u) in
+    Array.iteri words ~f:(fun w d ->
+      d <== reg nspec ~enable:(mine &: (fcap_k ==:. w)) dout -- sprintf "mon_ir%d_u%d_w%d" l u w);
+    let starts_u = issue &: (iss_k ==:. 0) &: (iss_u ==:. u) in
+    let v_d = wire 1 in
+    let vq = reg spec v_d -- sprintf "mon_irv%d_u%d" l u in
+    v_d <== mux2 (~:(running) |: starts_u) gnd (mux2 (mine &: (fcap_k ==:. 5)) vdd vq);
+    irv.(u) <== vq;
+    ir_pc.(u) <== reg spec ~enable:(mine &: (fcap_k ==:. 5)) fcap_pc -- sprintf "mon_ir_pc%d_u%d" l u);
+  { irv
+  ; ir_pc
+  ; ir_word = (fun u -> select (concat_lsb (Array.to_list ir.(u))) (M.instr_width - 1) 0)
+  ; ir_words = ir
+  ; issue
+  ; f_addr
+  ; f_busy
+  ; f_u
+  ; f_pc
+  ; f_k
+  ; fcap
+  ; fcap_u
+  ; fcap_k
+  ; fcap_pc
+  }
+;;
+
 (* behavioural 256x16 store for engine-level simulation (single port, synchronous read,
    write has priority; DOUT holds otherwise; read-during-write returns the new word) *)
 let behavioural_store ~clock (p : store_port) =
@@ -282,8 +358,8 @@ let create
   ~(host : host) ~(lanes : lane_view array) ~ui_in ~uio_in () =
   (* v2 [slots] (default 8): unit slots per lane (Mon_lane). With fewer than 8 slots there are no
      loadable units 6/7, and every ROM package must fit in the slots (elaboration-time checks). *)
-  if slots < S.n_units && Array.exists loadable ~f:Fn.id
-  then raise_s [%message "Mon_engine: the loadable path needs 8 slots" (slots : int)];
+  (* slots < 8 with a loadable lane: v2 serial loadable lane (all slots from the store, no ROM on
+     that lane; doc/decisions/inc2_loadable_options.md option A) *)
   List.iter lib ~f:(fun (p : M.t) ->
     if Array.length p.units > slots
     then raise_s [%message "Mon_engine: package needs more units than slots" p.name (Array.length p.units : int) (slots : int)]);
@@ -309,7 +385,9 @@ let create
     let wr_ctx off = wr_at (base + off) &: ctx_ok in
     let r8 off name = reg spec ~enable:(wr_ctx off) host.wdata -- name in
     let pkg = r8 0 (sprintf "mon_pkg%d" l) in
-    let lu = reg spec ~enable:(wr_ctx 1) (select host.wdata 1 0) -- sprintf "mon_load_units%d" l in
+    let serial = loadable.(l) && slots < S.n_units in
+    let lu_w = if serial then slots else 2 in
+    let lu = reg spec ~enable:(wr_ctx 1) (select host.wdata (lu_w - 1) 0) -- sprintf "mon_load_units%d" l in
     let ctx_base = r8 2 (sprintf "mon_load_ctx%d" l) in
     let remap =
       Array.init 16 ~f:(fun k ->
@@ -331,17 +409,19 @@ let create
     st_phase_d <== mux2 (wr_ctx 4) gnd (mux2 st_wr_data ~:st_phase st_phase);
     (* ---- context loader: 56 reads from LOAD_CTX ---- *)
     let start_load = wr_ctx 1 &: bit host.wdata 7 in
-    let ld_k_d = wire 6 in
+    let ctxw = if serial then M.ctx_words_serial ~slots else M.ctx_words in
+    let ldw = if serial then 7 else 6 in
+    let ld_k_d = wire ldw in
     let ld_k = reg spec ld_k_d -- sprintf "mon_ld_k%d" l in
-    let ld_issue = loading_q &: (ld_k <:. M.ctx_words) in
-    ld_k_d <== mux2 start_load (zero 6) (mux2 ld_issue (ld_k +:. 1) ld_k);
+    let ld_issue = loading_q &: (ld_k <:. ctxw) in
+    ld_k_d <== mux2 start_load (zero ldw) (mux2 ld_issue (ld_k +:. 1) ld_k);
     let cap = reg spec ld_issue -- sprintf "mon_ld_cap%d" l
     and cap_k =
       match bug with
       | Some `Ld_no_delay -> ld_k
       | _ -> reg spec ld_k -- sprintf "mon_ld_cap_k%d" l
     in
-    let ld_done = cap &: (cap_k ==:. M.ctx_words - 1) in
+    let ld_done = cap &: (cap_k ==:. ctxw - 1) in
     loading <== (start_load |: (loading_q &: ~:ld_done));
     let any_ctx_write =
       List.reduce_exn
@@ -369,7 +449,7 @@ let create
     let c_val = Array.init 16 ~f:(fun k -> if k = 0 then zero 8 else cfield (35 + k - 1) 7 0 (sprintf "cval%d" k)) in
     let c_hdr u =
       let o = 50 + (3 * u) in
-      let n x = sprintf "u%d_%s" (6 + u) x in
+      let n x = sprintf "u%d_%s" (if serial then u else 6 + u) x in
       let start = cfield o 6 0 (n "start")
       and gen = cfield o 7 7 (n "gen")
       and gp = cfield o 11 8 (n "gp")
@@ -381,6 +461,8 @@ let create
     in
     let h6 = c_hdr 0
     and h7 = c_hdr 1 in
+    let hs = if serial then Array.init slots ~f:c_hdr else [||] in
+    if serial && Option.is_some probe_ctx then raise_s [%message "probe_ctx: v1 layout only"];
     Option.iter probe_ctx ~f:(fun f ->
       let w v m = uresize v 16, of_int ~width:16 m in
       let hdr (start, (gen, gp, gs, ge, gh), pbase) =
@@ -400,8 +482,24 @@ let create
       f l (Array.of_list words)
         { ld_k; loading_q; cap; cap_k; ld_dout = dout; ld_issue; ctx_base_q = ctx_base
         ; ctx_loaded_q = ctx_loaded });
-    let rom_tables, rom_present = lib_tables lib ~idx ~remap in
-    let lmux a b = mux2 ld_mode a b in
+    let rom_tables, rom_present =
+      if serial
+      then (
+        (* no ROM on a serial loadable lane: context registers only *)
+        let zg = gnd, zero 4, zero 7, zero 7, zero 7 in
+        ( { S.remap
+          ; preds = c_preds
+          ; windows = c_windows
+          ; code_role = c_role
+          ; code_val = c_val
+          ; starts = Array.init S.n_units ~f:(fun u -> if u < slots then fst3 hs.(u) else zero 7)
+          ; guards = Array.init S.n_units ~f:(fun u -> if u < slots then snd3 hs.(u) else zg)
+          ; present = Array.create ~len:S.n_units true
+          }
+        , Array.init S.n_units ~f:(fun u -> if u < slots then bit lu u else gnd) ))
+      else lib_tables lib ~idx ~remap
+    in
+    let lmux a b = if serial then b else mux2 ld_mode a b in
     let tables : S.tables =
       { remap
       ; preds = Array.mapi rom_tables.preds ~f:(fun k r -> lmux c_preds.(k) r)
@@ -428,15 +526,18 @@ let create
       Array.mapi rom_present ~f:(fun u r ->
         en
         &:
+        if serial then r else
         match u with
         | 6 -> mux2 ld_mode (bit lu 0) r
         | 7 -> mux2 ld_mode (bit lu 1) r
         | _ -> ~:ld_mode &: r)
     in
-    let pcs = [| pc6; pc7 |]
-    and pbases = [| trd3 h6; trd3 h7 |] in
+    let pcs_all = Array.init slots ~f:(fun _ -> wire 7) in
+    let pcs = if serial then pcs_all else [| pc6; pc7 |]
+    and pbases = if serial then Array.map hs ~f:trd3 else [| trd3 h6; trd3 h7 |] in
     let fe =
-      fetcher ~spec ~nspec ~l
+      (if serial then fetcher_n else fetcher ?bug:None)
+        ~spec ~nspec ~l
         ~en:(match bug with Some `Fetch_running_only -> v.running | _ -> v.running |: busy)
         ~ld_mode ~lu ~pcs ~pbases ~dout ()
     in
@@ -454,10 +555,13 @@ let create
           ; ren = ld_issue |: issue
           };
     (* ---- the lane ---- *)
-    let rom_fetch = lib_fetch lib ~idx in
+    let rom_fetch = if serial then (fun _ _ -> zero M.instr_width) else lib_fetch lib ~idx in
     let fetch c pc =
-      let lf = mux2 (c ==:. 7) (ir_word 1) (ir_word 0) in
-      mux2 ld_mode lf (rom_fetch c pc)
+      if serial
+      then mux c (List.init S.n_units ~f:(fun u -> if u < slots then ir_word u else zero M.instr_width))
+      else (
+        let lf = mux2 (c ==:. 7) (ir_word 1) (ir_word 0) in
+        mux2 ld_mode lf (rom_fetch c pc))
     in
     let i =
       { S.I.clock; rst_sync_n; running = v.running; tick = v.tick; ui_in; uio_in
@@ -470,21 +574,36 @@ let create
     cur <== o.unit_;
     pc6 <== o.pc6;
     pc7 <== o.pc7;
+    Array.iteri pcs_all ~f:(fun u w -> w <== List.nth_exn o.pcs u);
     (* a loadable unit's slot with a stale IR (admission makes this unreachable; sticky flag) *)
     let late_now =
       ld_mode &: act
-      &: (((cur ==:. 6) &: ~:(irv.(0) &: (ir_pc.(0) ==: pc6)))
-          |: ((cur ==:. 7) &: ~:(irv.(1) &: (ir_pc.(1) ==: pc7))))
+      &:
+      if serial
+      then
+        mux cur
+          (List.init S.n_units ~f:(fun u ->
+             if u < slots then ~:(irv.(u) &: (ir_pc.(u) ==: pcs_all.(u))) else gnd))
+      else
+        ((cur ==:. 6) &: ~:(irv.(0) &: (ir_pc.(0) ==: pc6)))
+        |: ((cur ==:. 7) &: ~:(irv.(1) &: (ir_pc.(1) ==: pc7)))
     in
     ignore (late_now -- sprintf "mon_late_now%d" l : Signal.t);
     let step = rst_sync_n &: v.running &: v.tick in
     let stamp_l = reg spec ~enable:step now_q -- sprintf "mon_stamp%d" l in
     let stamp = mux2 step now_q stamp_l in
     (* ROM mode: P + 1 >= slots (T<slots>); loadable modes as v1 (slots = 8) *)
-    let min_p = mux2 (ld_mode &: (lu ==:. 3)) (of_int ~width:16 13) (of_int ~width:16 (slots - 1)) in
+    let min_p =
+      if serial
+      then (
+        (* fetch bound for k enabled units: P >= 6 k + 1 (v1: k = 2 gives 13), and T<slots> *)
+        let k = List.fold (bits_lsb lu) ~init:(zero 3) ~f:(fun a b -> a +: uresize b 3) in
+        mux k (List.init 8 ~f:(fun k -> of_int ~width:16 (if k = 0 then slots - 1 else Int.max (slots - 1) ((6 * k) + 1)))))
+      else mux2 (ld_mode &: (lu ==:. 3)) (of_int ~width:16 13) (of_int ~width:16 (slots - 1))
+    in
     let ready = ~:ld_mode |: ctx_loaded in
     let regs8 =
-      [| pkg; zero 1 @: loading_q @: ctx_loaded @: zero 3 @: lu; ctx_base; zero 8; st_addr; zero 8
+      [| pkg; (if serial then zero 1 @: loading_q @: ctx_loaded @: uresize lu 5 else zero 1 @: loading_q @: ctx_loaded @: zero 3 @: lu); ctx_base; zero 8; st_addr; zero 8
        ; zero 8; zero 8 |]
     in
     ( (en, o, { fire = o.fire; unit_ = o.unit_; role = o.role; code = o.code; stamp })

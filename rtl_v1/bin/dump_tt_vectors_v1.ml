@@ -203,7 +203,16 @@ let loadable_l1 h =
   write h 0x22 [ 13; 0 ];
   load h ~lane:1 (on_pin1 (Programs_v1.uart_tx ~d:4));
   let n6 = Array.length ld1.units.(0).code in
-  write_store h ~lane:1 (Mprog.store_image ld1 ~ctx_base:0 ~bases:[ 56; 56 + (6 * n6) ]);
+  (* v2 serial loadable lane (PEMU_SLOTS < 8): 50 + 3 slots header words, units 0..n-1 *)
+  let slots = Option.value_map (Sys.getenv "PEMU_SLOTS") ~default:8 ~f:Int.of_string in
+  let image =
+    if slots < 8
+    then (
+      let h = Mprog.ctx_words_serial ~slots in
+      Mprog.store_image ~slots ld1 ~ctx_base:0 ~bases:[ h; h + (6 * n6) ])
+    else Mprog.store_image ld1 ~ctx_base:0 ~bases:[ 56; 56 + (6 * n6) ]
+  in
+  write_store h ~lane:1 image;
   write h 0x5A [ 0 ];
   write h 0x58 [ 0x80 ];
   write h 0x70 (Array.to_list ld1.remap);

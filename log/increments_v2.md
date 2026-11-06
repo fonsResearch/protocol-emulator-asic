@@ -130,3 +130,19 @@ SPI) no firings, chip = Psim; L30 short stop blamed (33@8449), chip = Psim; I2C 
 stretch, NACK, data delay 30/50/70, + vpipe) chip = Psim, U holds. Data delay 70 cycles (2.33 us, beyond
 the Fm 0.9 us data-valid maximum) is now blamed in the first byte (B77@1065; at 33 MHz B77@5950).
 The emitted core is unchanged by these edits (byte-identical re-emit). docs/info.md updated for 30 MHz.
+
+## 2. Loadable contracts (option A, doc/decisions/inc2_loadable_options.md): CI probe as-is (user choice 2026-11-06)
+
+Branch v2-inc2-loadA. Lane 1 serial loadable (all 5 slots from a 256x16 store `core.u_lstore_l1`,
+65-word context header, five 82-bit IR caches, lowest-index-first fetcher, admission P >= max(4, 6k + 1)
+for k enabled units); lane 1 has no ROM; lane 0 keeps the v2inc1 ROM library; verdict pipe on; 30 MHz.
+- `src/pemu_core_v1m.v`: PEMU_LOADABLE=l1 PEMU_LIB=v2inc1 PEMU_SLOTS=5 PEMU_VPIPE=1, fix_combdly applied
+  (equivalence check of the transform not yet run; it does not gate this probe).
+- Floorplan: floorplan C of v1-tt adapted to 6x4: u_lstore_l1 (3.36, 41.58), u_imem_l1 stacked at
+  (3.36, 207.9), u_imem_l0 (981.44, 41.58); PDN macro connections include lstore_l1.
+- Vectors regenerated from this RTL (5 scenarios incl. v1_loadable_l1: UART TX loaded into lane 1,
+  context loaded, no firing). The v2 scenarios select ROM SPI on lane 1, which this build no longer has:
+  their lane-1 SPI is unmonitored here, so these vectors check RTL vs netlist only. RTL replay 6/6.
+- Local synthesis 398,826 um^2 (3,571 flops); projected routed utilisation about 68 % [estimate].
+- Not yet verified: loadable functional tests beyond the one positive scenario, F0-F2 proofs for the
+  serial fetcher/loader, E4/E5.

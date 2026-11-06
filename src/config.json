@@ -28,8 +28,8 @@
   "PEMU_STRIPE_CROSS_PIN_GAPS": true,
   "ERROR_ON_ILLEGAL_OVERLAPS": 0,
   "PDN_MACRO_CONNECTIONS": [
-    "core\\.u_(imem_l0|imem_l1) VPWR VGND VDD! VSS!",
-    "core\\.u_(imem_l0|imem_l1) VPWR VGND VDDARRAY! VSS!"
+    "core\\.u_(imem_l0|imem_l1|lstore_l1) VPWR VGND VDD! VSS!",
+    "core\\.u_(imem_l0|imem_l1|lstore_l1) VPWR VGND VDDARRAY! VSS!"
   ],
   "RUN_POST_GRT_DESIGN_REPAIR": true,
   "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 30,
@@ -61,10 +61,17 @@
         ]
       },
       "instances": {
-        "core.u_imem_l1": {
+        "core.u_lstore_l1": {
           "location": [
             3.36,
             41.58
+          ],
+          "orientation": "FS"
+        },
+        "core.u_imem_l1": {
+          "location": [
+            3.36,
+            207.9
           ],
           "orientation": "FS"
         },

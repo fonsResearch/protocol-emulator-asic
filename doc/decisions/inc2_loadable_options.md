@@ -75,3 +75,21 @@ Refinements found while sizing the fetcher [estimates, to be proven]:
   admission bound becomes about P >= 6 x units - 1 (v1: 2 units, P >= 13 with margin), proven as F1t.
   2-unit packages (UART TX P = 64, RX P = 32 at 30 MHz) qualify; the 5-unit USB-LS TX at its 30 MHz
   rate (P about 19) does not (needs P >= 29).
+
+## 5. Area gate, first implementation (2026-11-06): correction of section 3
+
+Implementation: Mon_engine serial loadable lane (fetcher_n, 65-word header, context-only tables, no ROM
+on lane 1), Mon_lane `pcs` output, Mprog `store_image ?slots`. The shipped ROM cores re-emit
+byte-identically and all tests pass unchanged. Local synthesis (flow/map/map_v1m.sh typ) [facts]:
+
+| core | area | flops |
+|---|---|---|
+| v2inc1 + T, ROM on both lanes (shipped 30 MHz core) | 252,834 um^2 | 2,199 |
+| same, lane 1 serial loadable (option A) | 398,826 um^2 | 3,571 |
+
+Delta +146.0k um^2 of std cells (local), with the store macro on top. **Correction:** section 3
+compared local-synthesis deltas with the routed CI baseline. The routed CI std-cell area of the
+shipped core is 1.33 x its local synthesis (335,982 / 252,834). On one basis the projection is about
+398,826 x 1.33 = 530k um^2 routed std cells + 3 macros (84.4k) = about 68 % of the core [estimate],
+not 59 %. The storage is also costlier than assumed: each context/IR bit is an enable flop
+(dfrbpq_1 + mux2, about 67 um^2, not 49).

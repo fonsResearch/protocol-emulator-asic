@@ -37,6 +37,8 @@ module O = struct
     ; act : 'a (* the unit of this cycle's slot evaluates *)
     ; pc6 : 'a [@bits 7] (* effective pc of units 6/7 at their next slot (lazy mask applied) *)
     ; pc7 : 'a [@bits 7]
+    ; pcs : 'a list [@length 8] [@bits 7]
+        (* effective pc of every unit with a slot (v2 serial loadable lane); zero for u >= slots *)
     }
   [@@deriving hardcaml]
 end
@@ -172,6 +174,7 @@ let create
   ; act
   ; pc6 = (if slots = S.n_units then pc_eff 6 else zero 7)
   ; pc7 = (if slots = S.n_units then pc_eff 7 else zero 7)
+  ; pcs = List.init S.n_units ~f:(fun u -> if u < slots then pc_eff u else zero 7)
   }
 ;;
 
