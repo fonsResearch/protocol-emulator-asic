@@ -146,3 +146,15 @@ for k enabled units); lane 1 has no ROM; lane 0 keeps the v2inc1 ROM library; ve
 - Local synthesis 398,826 um^2 (3,571 flops); projected routed utilisation about 68 % [estimate].
 - Not yet verified: loadable functional tests beyond the one positive scenario, F0-F2 proofs for the
   serial fetcher/loader, E4/E5.
+
+Probe result, CI run 42242730817 (d7deed2): FAILED, not routable in the 6x4 floorplan as built.
+- Build GDS ran 5.77 h (job limit 6 h). Per-step time from the job log: DetailedRouting 294.2 min,
+  RepairDesignPostGRT 24.8 min, GlobalRouting 7.5 min, KLayout.DRC 7.1 min (green runs: 80-117 min total).
+- Placement: effective utilisation 0.567; global placement routing overflow on about 10.4 % of tiles
+  (1,826 overflowed tiles at the last report). Detailed routing did not converge: 37,929 violations
+  after iteration 0, 22,474 after 1, 19,872 after 2 (later iterations not extracted).
+- End of flow: Magic illegal overlaps 48 (10 on all earlier runs); LibreLane Netgen.LVS crashed parsing
+  Netgen's JSON (`Invalid \escape`), which suggests an LVS mismatch report listing escaped net names
+  [inference]. No artifacts were uploaded (artifact storage quota full at the time).
+- Conclusion: option A as built (local synthesis 398.8k um^2, projected about 68 %) exceeds what this
+  floorplan routes; the highest measured routable point remains 43.5 % (increment-1 build).
