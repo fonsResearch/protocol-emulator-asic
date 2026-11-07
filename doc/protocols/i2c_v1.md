@@ -123,6 +123,8 @@ Host-stream assumptions: the RX FIFO is never full, and the config byte is in th
 
 Each value is floor(UM10204 minimum / step) - 1: an observed phase of D cycles covers at least floor(D / step) steps, and one step is kept as margin for rise time. P = 3 replaces P = 7 (amendment 5.4, user decision 2026-10-18).
 
+v2 (increment 3, log/increments_v2.md section 3): the Sm target ships as ROM package 6 at the 30 MHz v2 clock with P = 4 (the 5-slot admission minimum), step 0.167 µs, by the same rule: h_min 23, l_min 27, hd 23 (`Rom_lib.i2c_tgt_sm_params`). The Fm target is not shipped (it needs P + 1 <= about 2.8 at 30 MHz).
+
 ### 3.3 Assumption (controller behaviour; violation = blame)
 
 - B1 Timing [C]:

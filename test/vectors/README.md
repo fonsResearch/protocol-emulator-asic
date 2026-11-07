@@ -33,3 +33,5 @@ synchroniser). `test/test.py` replays `v1_*` and `v2_*`; the v0.1 vectors above 
 | v2_pwin_uart | 18,569 | (param_windows core) UART TX with the firmware's d = 6: override off = fail 13 (ROM d = 4 contract); window table d = 6 loaded = clean; d = 6 bad start = fail 14 |
 | v2_spi_ctl_uart_rx | 28,085 | v2 library: SPI controller and UART RX lanes |
 | v2_spi_tgt_uart_tx | 24,847 | v2 library: SPI target and UART TX lanes |
+| v2_i2c_tgt | 43,630 | (v2inc3) lane 0 I2C target Sm, ROM 6, P = 4; controller peer at the 30 MHz UM10204 minima: write 0x11 to 0x50, Sr, read 1 byte (0xA1); VERDICT 0 |
+| v2_i2c_tgt_blame | 43,510 | same with the controller's START hold at 60 cycles (minimum 120): blame 0x82 (SCL falls within hd steps of START) |

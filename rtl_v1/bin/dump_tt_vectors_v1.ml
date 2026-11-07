@@ -131,6 +131,7 @@ let lib =
      | "lib10" -> Rom_lib.protocol10 ()
      | "v2min" -> Rom_lib.minimum_v2 ()
      | "v2inc1" -> Rom_lib.v2_inc1 ()
+     | "v2inc3" -> Rom_lib.v2_inc3 ()
      | _ -> Rom_lib.all15 ())
 ;;
 
@@ -376,6 +377,37 @@ let v2_spi_tgt_uart_tx h =
   List.rev !log
 ;;
 
+
+(* increment 3: lane 0 = I2C target Sm (ROM 6, P = 4) with an I2C controller peer at the 30 MHz
+   UM10204 Sm minima (wired-AND bus on uio2/uio3; the lane drives open-drain). [thd_sta]: the
+   controller's START hold in cycles (120 = minimum; 60 = violation, blamed B82). *)
+let v2_i2c_tgt ~thd_sta h =
+  let log = ref [] in
+  let note fmt = ksprintf (fun s -> log := s :: !log) fmt in
+  write h 0x10 [ Programs_v1.i2c_own ];
+  write h 0x11 [ Programs_v1.i2c_od ];
+  write h 0x12 [ Rom_lib.i2c_tgt_sm_p; 0 ];
+  load h ~lane:0 (Programs_v1.i2c_tgt ~addr:0x50);
+  set_pkg h ~lane:0 ~idx:6 (List.nth_exn lib 6);
+  write h 0x19 [ 0x50; 0xA1 ];
+  let t =
+    { Peers.tlow = 141; thigh = 120; thd_sta; tsu_sta = 141; tsu_sto = 120; tbuf = 141; dh = 1; su = 8 }
+  in
+  let ctl = Peers.i2c_controller ~t [ `W (0x50, [ 0x11 ]), true; `R (0x50, 1), false ] in
+  h.t0 <- h.n;
+  h.peer <- Some ctl.cdrive;
+  write h 0x01 [ 0x01 ];
+  let start = h.n in
+  while (not (ctl.cdone ())) && h.n - start < 40_000 do cycle h done;
+  wait h 400;
+  h.peer <- None;
+  h.uio_in <- 0xFF;
+  note "controller done %b, bus %s" (ctl.cdone ()) (ctl.clog ());
+  note "VERDICT %s STATUS 0x%02X" (hex (read h 0x40 12)) (read1 h 0x02);
+  note "lane 0 RX bytes [%s]" (hex (rx_fifo h ~lane:0));
+  List.rev !log
+;;
+
 let () =
   let dir = (Sys.get_argv ()).(1) in
   List.iter
@@ -385,8 +417,12 @@ let () =
      @ (if String.equal (env_or "PEMU_PWIN" "0") "1" then [ "v2_pwin_uart", pwin_uart ] else [])
      @
      (* v2inc1 = v2min packages 0-3 unchanged + I2C controller as 4/5, so the v2 scenarios apply *)
-     if List.mem [ "v2min"; "v2inc1" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
-     then [ "v2_spi_ctl_uart_rx", v2_spi_ctl_uart_rx; "v2_spi_tgt_uart_tx", v2_spi_tgt_uart_tx ]
+     (if List.mem [ "v2min"; "v2inc1"; "v2inc3" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
+      then [ "v2_spi_ctl_uart_rx", v2_spi_ctl_uart_rx; "v2_spi_tgt_uart_tx", v2_spi_tgt_uart_tx ]
+      else [])
+     @
+     if String.equal (env_or "PEMU_LIB" "all") "v2inc3"
+     then [ "v2_i2c_tgt", v2_i2c_tgt ~thd_sta:120; "v2_i2c_tgt_blame", v2_i2c_tgt ~thd_sta:60 ]
      else [])
     ~f:(fun (name, f) ->
       let h = create () in

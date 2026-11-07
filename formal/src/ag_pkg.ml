@@ -478,6 +478,8 @@ let i2c_all ?debug () =
       ~contract:(Lib.i2c_ctl ~l ~h ~tsu ~thold) ~own:P1.i2c_own ~od:P1.i2c_od ~cfg:0 ~cfg2:0 ~name ()
   in
   let tfm = 8, 18, 8 and tsm = 59, 69, 59 in
+  (* increment 3: the v2 ROM package, Sm at 30 MHz and P = 4 (Rom_lib.i2c_tgt_sm_params) *)
+  let tsm30 = 23, 27, 23 in
   let tgt ?(prog = P1.i2c_tgt ~addr:0x50) ?(contract = Fn.id) ~mode (h_min, l_min, hd) name =
     (* host-stream assumption (doc 3.1): the config byte is in the TX FIFO when the lane
        starts, i.e. the config POP (pc 2) never executes with an empty FIFO *)
@@ -497,6 +499,10 @@ let i2c_all ?debug () =
   ; tgt ~prog:i2c_tgt_noack ~mode:`U tfm "a2_i2c_tgt_fm_noack_neg"
   ; tgt ~prog:i2c_tgt_stretchhigh ~mode:`U tfm "a2_i2c_tgt_fm_stretchhigh_neg"
   ; tgt ~contract:i2c_tgt_noassume ~mode:`U tfm "a2_i2c_tgt_fm_noassume_neg"
+  ; tgt ~mode:`U tsm30 "a2_i2c_tgt_sm30_u"
+  ; tgt ~mode:(`N1 Push_ok) tsm30 "a2_i2c_tgt_sm30_n1_cover_neg"
+  ; tgt ~prog:i2c_tgt_noack ~mode:`U tsm30 "a2_i2c_tgt_sm30_noack_neg"
+  ; tgt ~prog:i2c_tgt_stretchhigh ~mode:`U tsm30 "a2_i2c_tgt_sm30_stretchhigh_neg"
   ]
 ;;
 

@@ -208,3 +208,63 @@ E4/E5 (flow/equiv/maps/v2pwin_4a84397.json; prep_cut_v1m.sh + run_e5_induct.sh):
 pair unproven. All 2,397 gate flops paired, outputs and both macro buses paired. Negative controls:
 N1 (uo_out[0] inverted) 0 proven; N4 (wrong FSM invariant) 51 unproven; N5 (xnor2 -> xor2 in the
 mon_now[5] cone) exactly mon_now[5] unproven. Status: option D signed off at 30 MHz on 6x4.
+
+## 3. Increment 3: I2C target, standard mode (ROM package 6)
+
+Branch v2-inc3-i2ctgt (from v2-inc2-pwin). Library `Rom_lib.v2_inc3` = v2inc1 + `i2c_tgt` Sm; the
+build is PEMU_LIB=v2inc3 PEMU_LOADABLE=rom PEMU_SLOTS=5 PEMU_VPIPE=1 PEMU_PWIN=1.
+
+### 3.1 Divisor and contract parameters (agent decision under delegation)
+
+The contract counts steps, so its parameters depend on the clock and P. Rule of
+doc/protocols/i2c_v1.md 3.2, floor(UM10204 minimum / step) - 1. Constraint: the firmware detects
+START by polling (about 7 steps), so hd must stay above that or a short tHD;STA is missed silently.
+Measured in Psim (protocols_v1/test/test_i2c_tgt30.ml, controller peer at the 30 MHz Sm minima,
+tHD;STA swept 20-120 cycles):
+- P = 4..12: clean at the minima, every failed transaction with a short tHD;STA is blamed (B82),
+  no silent miss;
+- P = 14, 16: transactions fail at the minima without any firing (silent). The earlier
+  "P <= 17" estimate in log/protocols_v2.md (from 33 MHz arithmetic) was wrong;
+- P = 4 works from tHD;STA = 30 cycles and blames every value below 120 that was tested.
+Decision: P = 4 (admission minimum, finest step 0.167 us): h_min 23, l_min 27, hd 23
+(`Rom_lib.i2c_tgt_sm_params`; 33 MHz would give 25/30/25). Further Psim checks at P = 4: clock
+stretching up to 102,325 cycles clean; controller faults blamed (tLOW 120: B71, tHIGH 100: B72,
+late data: B83, tHD;STA 60: B82); firmware mutants fail (F54 missing ACK, F57 LSB-first write,
+F55 LSB-first read, F61 stretch in high phase, F61 read data change in high phase); "ACK address
+0x51" is undetected, as documented ([O]).
+
+### 3.2 A2 at the new parameters (bounded, same evidence class as v1 Sm)
+
+A2 is spec-level with free ticks, so only the contract parameters matter. New harnesses
+a2_i2c_tgt_sm30_{u, n1_cover_neg, noack_neg, stretchhigh_neg} (formal/src/ag_pkg.ml, EA1 as v1;
+model 23 inputs, 299 latches, 6,757 AND gates). inv_traces got an `_sm30_` controller base (Sm
+minima in 30 MHz steps at P = 4); with the v1 Sm base no B1 violation would be generated.
+- co-sim, Hardcaml debug harness, replayed on the AIG (aigsim): clean 512 x 30,000 cycles
+  (15.36M, 14,162,470 guarded) and adversarial 512 x 30,000 (15.36M, 4,689,424 guarded): bad 0,
+  AIG-vs-Hardcaml bad mismatch 0;
+- controls on clean traffic (64 x 30,000 each): N1 cover 98 bad cycles (non-vacuity), noack 34,
+  stretchhigh 18;
+- checkpoint BMC (formal/inv/ckpt_bmc.py, bmc3, depth 40, 300 s per window): 8 clean traces x
+  checkpoints 300/2,000/6,000/12,000/20,000 = 40 windows, 0 hits; 35 windows to 40 frames, 2 to
+  38/39, 3 (all at checkpoint 6,000) stopped at the cap without a reported depth. Self-test on the
+  noack mutant from 20 cycles before its first bad cycle: hit at +2 frames, cyclesim replay OK
+  (F54 at frame 9454).
+Status: U bounded, not proved (as v1 Sm). A window covers at most 40 steps, less than one SCL
+period (about 52 steps), so long-range relations rest on the co-simulation.
+
+### 3.3 Chip level
+
+- rtl_v1/test/test_inc3.ml, v2 top RTL vs Psim (shipped configuration vpipe + param_windows, and
+  the default build): clean, tLOW 120, tHIGH 100, tHD;STA 60, late data: monitor-input stream,
+  owned pins, verdict and pushes equal in all 6.
+- Harness fix (test_c3_diff.chip_run): the peer is no longer called before Psim cycle 0. The I2C
+  controller peer counts its own calls, so the calls during the RUN write started its START about
+  195 cycles early (all earlier peers were reactive or time-based; no other expect output changed).
+- Admissibility (test_rom_lib_v2.ml): 7 packages admissible at 5 slots; i2c_tgt 5 units, 107
+  instructions.
+- Core: COMBDLY fix equivalence-checked (832 s); vectors v2_i2c_tgt (43,630 cycles, VERDICT 0) and
+  v2_i2c_tgt_blame (43,510, blame 0x82); the other 5 vectors regenerate byte-identically; local RTL
+  replay 8/8.
+- Local synthesis (flow/map/map_v1m.sh typ): 281,887 um^2, +6,648 over option D. Projected routed
+  utilisation about 48.0 % [estimate, option-D routed/local ratio 1.332], above the highest
+  measured routable point (46.9 %); a CI run decides.

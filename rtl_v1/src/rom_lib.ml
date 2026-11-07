@@ -73,6 +73,34 @@ let v2_inc1_with_p_at ~clock_hz =
 
 let minimum_v2_with_p_at ~clock_hz = List.take (v2_inc1_with_p_at ~clock_hz) 4
 
+(* Increment 3 (log/increments_v2.md section 3): the I2C target, standard mode, as ROM package 6.
+   P = 4, the 5-slot admission minimum: protocols_v1/test/test_i2c_tgt30.ml measures P = 4..12
+   clean at the UM10204 minima with every short tHD;STA blamed, and P = 14, 16 failing silently;
+   P = 4 has the finest step (0.167 us at 30 MHz). Contract parameters by the rule of
+   doc/protocols/i2c_v1.md 3.2, floor(UM10204 minimum / step) - 1, with step = (P + 1) / f:
+   h_min from tHIGH 4.0 us, l_min from tLOW 4.7 us, hd from tHD;STA 4.0 us. At 30 MHz: 23, 27, 23.
+   The contract depends on the clock, so this package is built for a given clock. *)
+let i2c_tgt_sm_p = 4
+
+let i2c_tgt_sm_params ~clock_hz =
+  let steps ns = (ns * clock_hz / (1_000_000_000 * (i2c_tgt_sm_p + 1))) - 1 in
+  steps 4000, steps 4700, steps 4000
+;;
+
+let i2c_tgt_sm_at ~clock_hz =
+  let h_min, l_min, hd = i2c_tgt_sm_params ~clock_hz in
+  Library_v1.i2c_tgt ~h_min ~l_min ~hd
+;;
+
+(* The v2 clock since increment 1 (CLOCK_PERIOD 33.33 ns). *)
+let v2_clock_hz = 30_000_000
+
+let v2_inc3_with_p_at ~clock_hz =
+  v2_inc1_with_p_at ~clock_hz @ [ i2c_tgt_sm_at ~clock_hz, i2c_tgt_sm_p ]
+;;
+
+let v2_inc3 () = List.map (v2_inc3_with_p_at ~clock_hz:v2_clock_hz) ~f:fst
+
 (* Static admissibility (D13 recurrence check, log/harness_audit_v2.md C4): a serial monitor with
    [slots] slots admits RUN only for P >= slots - 1, and a package must fit in the slots.
    Returns the violations; [] means every shipped package runs monitored at its documented P. *)

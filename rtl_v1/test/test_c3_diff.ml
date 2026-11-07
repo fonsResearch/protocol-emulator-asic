@@ -103,7 +103,12 @@ let cycle h =
   (* environment as in Psim: Lane_model.step returns the outputs of the cycle (pre-update), and
      the pad of cycle t resolves the outputs of cycle t - 1, i.e. one cycle of output-to-pad
      delay; here the outputs of cycle t - 1 are those after edge t - 2 *)
-  let pd = h.peer { cycle = h.n - h.off; out = h.prev2_out; oe = h.prev2_oe; pad = h.prev_pad } in
+  (* the peer runs from Psim cycle 0, as in Psim: stateful peers that count their own calls
+     (the I2C controller peer) must not be advanced during the RUN write *)
+  let pd =
+    if h.n - h.off < 0 then no_peer { cycle = h.n - h.off; out = 0; oe = 0; pad = 0xFF }
+    else h.peer { cycle = h.n - h.off; out = h.prev2_out; oe = h.prev2_oe; pad = h.prev_pad }
+  in
   let pad = resolve ~wired:h.wired ~out:h.prev2_out ~oe:h.prev2_oe pd in
   if not h.rst_n then (h.s0 <- false; h.s1 <- false);
   if h.s1 && h.c_rst < 0 then h.c_rst <- h.n;
@@ -209,8 +214,8 @@ type chip_result =
   }
 
 (* [ctrl_writes]: (Psim time at which the CTRL write transaction starts, value) *)
-let chip_run ?(lib = lib) ?verdict_pipe ?windows ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
-  let h = create ~lib ?verdict_pipe ~param_windows:(Option.is_some windows) () in
+let chip_run ?(lib = lib) ?verdict_pipe ?(param_windows = false) ?windows ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
+  let h = create ~lib ?verdict_pipe ~param_windows:(param_windows || Option.is_some windows) () in
   let b = 0x10 in
   write h b [ setup.own ]; write h (b + 1) [ setup.od ];
   write h (b + 2) [ setup.p land 0xFF; setup.p lsr 8 ];

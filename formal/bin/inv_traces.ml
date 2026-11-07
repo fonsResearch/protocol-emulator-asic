@@ -62,7 +62,15 @@ let () =
       else Some (
         (* controller peer: UM10204 Fm/Sm minima scaled to the step length, sometimes faster
            than the contract allows (assumption violations end the useful part of a trace) *)
-        let base = if String.is_substring name ~substring:"_sm_" then Peers.i2c_sm else Peers.i2c_fm in
+        (* base unit: cycles at a 4-cycle step (P = 3), scaled below to the trace's step. _sm30_:
+           the UM10204 Sm minima in 30 MHz steps at P = 4 (tHIGH 24, tLOW 28.2, tSU;DAT 1.5
+           steps), times 4, for the increment-3 contract (23, 27, 23) *)
+        let sm30 = { Peers.tlow = 113; thigh = 96; thd_sta = 96; tsu_sta = 113; tsu_sto = 96; tbuf = 113; dh = 2; su = 6 } in
+        let base =
+          if String.is_substring name ~substring:"_sm30_" then sm30
+          else if String.is_substring name ~substring:"_sm_" then Peers.i2c_sm
+          else Peers.i2c_fm
+        in
         let num = if chance 6 && not clean then 2 + r 2 else 4 + r 8 and den = 4 in
         let sc x = Int.max 2 (x * num * scale / (den * 4)) in
         let t =

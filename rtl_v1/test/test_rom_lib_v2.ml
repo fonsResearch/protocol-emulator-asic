@@ -41,3 +41,27 @@ let%expect_test "v2 minimum library is admissible at 5 slots" =
     slots 5: all admissible
     |}]
 ;;
+
+let%expect_test "increment 3: I2C target Sm package (P = 4) parameters, units, words, admissibility" =
+  List.iter [ 30_000_000; 33_000_000 ] ~f:(fun clock_hz ->
+    let h, l, hd = Rom_lib.i2c_tgt_sm_params ~clock_hz in
+    printf "%d Hz: h_min %d l_min %d hd %d\n" clock_hz h l hd);
+  let lib = Rom_lib.v2_inc3_with_p_at ~clock_hz:Rom_lib.v2_clock_hz in
+  List.iteri lib ~f:(fun i (c, p) ->
+    let m = Compile.compile_exn c in
+    let words = Array.sum (module Int) m.units ~f:(fun u -> Array.length u.code) in
+    printf "%d %-24s P %2d units %d instr %3d\n" i m.name p (Array.length m.units) words);
+  show ~slots:5 lib;
+  [%expect {|
+    30000000 Hz: h_min 23 l_min 27 hd 23
+    33000000 Hz: h_min 25 l_min 30 hd 25
+    0 uart_tx_v1_d4_p0         P 64 units 2 instr  14
+    1 uart_rx_v1_d8_m2_p1      P 32 units 2 instr  32
+    2 spi_ctl_v1_m0_h2         P  7 units 5 instr  63
+    3 spi_tgt_v1_m0_h3_g6      P  7 units 5 instr  86
+    4 i2c_ctl_v1_l6_h4         P  7 units 3 instr 143
+    5 i2c_ctl_v1_l5_h5         P 29 units 3 instr 143
+    6 i2c_tgt_v1_h23_l27       P  4 units 5 instr 107
+    slots 5: all admissible
+    |}]
+;;

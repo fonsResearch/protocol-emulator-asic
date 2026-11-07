@@ -23,12 +23,14 @@ A programmable protocol emulator with an on-chip assumption monitor.
   attached device sets *blame* (`uo[2]`). Both are sticky, with a cause code, unit and cycle stamp
   readable over the host port.
 - **Shipped packages** (ROM, index: package): 0 UART TX (uio0), 1 UART RX (uio1), 2 SPI controller
-  mode 0, 3 SPI target mode 0 (SPI on uio4-7).
+  mode 0, 3 SPI target mode 0 (SPI on uio4-7), 4 I2C controller Fm, 5 I2C controller Sm, 6 I2C
+  target Sm (I2C on uio2 = SCL, uio3 = SDA, open drain). Each ROM lane's timing windows can be
+  replaced by a host-loaded table (WIN_CTL/WIN_LO/WIN_HI, doc/contracts/monitor_isa_v1.md section 8).
 - Verification target: for each package, *fail* is never raised unless *blame* was raised
   earlier, under stated physical assumptions (doc/concept/assume_guarantee.md). This is proved on
   the specification; the link to the chip is being completed (log/proofs_v2.md).
 
-Clock: 30 MHz for this build (v2 minimum + I2C controller increment; timing signed off at the slow corner, 1.08 V / 125 C, setup slack +1.32 ns; see log/increments_v2.md). The lane divisors are host registers, so a different clock only changes the divisor values. Divisors at 30 MHz (`Rom_lib.divisors_at`): UART TX P = 64 and UART RX P = 32 for 115200 baud, SPI controller/target P = 7, I2C controller Fm P = 7 (step 0.27 us, SCL 375 kHz), Sm P = 29 (step 1 us).
+Clock: 30 MHz for this build (v2 minimum + I2C controller + window tables + I2C target, increments 1-3). Timing is signed off at the slow corner, 1.08 V / 125 C, for the build without the I2C target (setup slack +1.32 ns for increment 1, +3.64 ns with the window tables); see log/increments_v2.md for the increment-3 run. The lane divisors are host registers, so a different clock only changes the divisor values. Divisors at 30 MHz (`Rom_lib.divisors_at`): UART TX P = 64 and UART RX P = 32 for 115200 baud, SPI controller/target P = 7, I2C controller Fm P = 7 (step 0.27 us, SCL 375 kHz), Sm P = 29 (step 1 us), I2C target Sm P = 4 (step 0.167 us; contract h_min 23, l_min 27, hd 23 steps).
 
 ## How to test
 
