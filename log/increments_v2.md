@@ -177,3 +177,34 @@ section 6): uart_tx d 3-12, spi_tgt g 6-12, i2c_ctl one more class, i2c_tgt 12 c
   PEMU_VPIPE=1 (fix_combdly applied), 30 MHz config of v2-inc1-30mhz (2 macros); vectors from this RTL
   including v2_pwin_uart (override off: fail 13; windows(d6) loaded: clean; d6 bad start: fail 14);
   RTL replay 6/6.
+
+CI run 42304838081 (v2-inc2-pwin 4a84397, attempt 2 after the repo was made public; attempt 1 cancelled
+for Actions minutes): gds 1 h 51 min, precheck pass, gl_test pass (viewer job fails as on every run).
+Core in the run == flow/equiv/work/inc2/pw_fixed.v (cmp).
+
+| metric | inc1 30 MHz (42160150374) | option D (42304838081) |
+|---|---|---|
+| std-cell area | 335,982 um^2 | 366,728 um^2 |
+| utilisation | 43.47 % | 46.87 % (projected 46.8 %) |
+| std cells / instances | 25,345 / 77,343 | 27,555 / 77,789 |
+| setup WS slow / typ / fast | +1.318 / - / - ns | +3.643 / +14.896 / +21.268 ns |
+| hold WS (fast) | +0.108 ns | +0.099 ns |
+| setup / hold violations | 0 / 0 | 0 / 0 |
+| route DRC, KLayout DRC, LVS, antenna | 0, 0, 0, 0 | 0, 0, 0, 0 |
+| max slew / max cap / max fanout | 45 / 6 / 162 | 60 / 6 / 187 |
+| Magic illegal overlaps | 10 | 10 |
+| wirelength / vias | 1,290,237 / 177,034 | 1,345,807 / 193,086 |
+| power (total) | 4.86 mW | 5.30 mW |
+
+Slow-corner worst path (57-openroad-stapostpnr/nom_slow_1p08V_125C/max.rpt): start _38194_ = core._325
+(reset synchroniser), end _37305_ = core.mon_u3_pc[5] (+3.643 ns), next _36013_ = core.mon_u0_pc_0[5]
+(+3.651 ns); data arrival 30.41 ns. Slack rose by 2.3 ns although logic was added; I read that as
+placement variation between runs, not as a property of option D [inference], so the 30 MHz margin to
+plan with is the smaller of the two runs (+1.3 ns).
+
+E4/E5 (flow/equiv/maps/v2pwin_4a84397.json; prep_cut_v1m.sh + run_e5_induct.sh): E5 proven 2,749/2,749
+(254 s), E4 proven 2,749/2,749 (269 s). The only new map entry is the misnamed flop _14241 = s2_ui[0]
+(same pattern as _13013 in v2-min and _13995 in increment 1); a first run without it left exactly that
+pair unproven. All 2,397 gate flops paired, outputs and both macro buses paired. Negative controls:
+N1 (uo_out[0] inverted) 0 proven; N4 (wrong FSM invariant) 51 unproven; N5 (xnor2 -> xor2 in the
+mon_now[5] cone) exactly mon_now[5] unproven. Status: option D signed off at 30 MHz on 6x4.

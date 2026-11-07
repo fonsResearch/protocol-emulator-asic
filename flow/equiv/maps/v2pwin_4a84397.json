@@ -1,0 +1,32 @@
+{
+ "_comment": [
+  "Correspondence map for E4/E5 of v2inc1 + verdict_pipe + param_windows (PEMU_PWIN=1, PEMU_LIB=v2inc1, 5 slots, PEMU_VPIPE=1), CI run 42304838081 (4a84397), 30 MHz.",
+  "Same structure as maps/v2inc1T_82dd594.json: fsm_recode one-hot bits of _955/_1039, misnamed flop _14241 (holds s2_ui[0]), 3-state FSM and mon_mask invariants.",
+  "See log/increments_v2.md section 2.D."
+ ],
+ "rename": {
+  "_955[1]": "(_955 == 2'b10)",
+  "_1039[0]": "(_1039 == 2'b00)",
+  "_1039[1]": "(_1039 == 2'b10)",
+  "_1039[2]": "(_1039 == 2'b01)",
+  "_14241": "s2_ui[0]"
+ },
+ "invariant": {
+  "inv_955": "(_955 != 2'b11)",
+  "inv_1039": "(_1039 != 2'b11)",
+  "inv_m0_1": "(mon_mask_0[1] == mon_mask_0[0])",
+  "inv_m0_2": "(mon_mask_0[2] == mon_mask_0[0])",
+  "inv_m0_3": "(mon_mask_0[3] == mon_mask_0[0])",
+  "inv_m0_4": "(mon_mask_0[4] == mon_mask_0[0])",
+  "inv_m0_5": "(mon_mask_0[5] == mon_mask_0[0])",
+  "inv_m0_6": "(mon_mask_0[6] == mon_mask_0[0])",
+  "inv_m0_7": "(mon_mask_0[7] == mon_mask_0[0])",
+  "inv_m1_1": "(mon_mask[1] == mon_mask[0])",
+  "inv_m1_2": "(mon_mask[2] == mon_mask[0])",
+  "inv_m1_3": "(mon_mask[3] == mon_mask[0])",
+  "inv_m1_4": "(mon_mask[4] == mon_mask[0])",
+  "inv_m1_5": "(mon_mask[5] == mon_mask[0])",
+  "inv_m1_6": "(mon_mask[6] == mon_mask[0])",
+  "inv_m1_7": "(mon_mask[7] == mon_mask[0])"
+ }
+}
