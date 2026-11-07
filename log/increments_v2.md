@@ -309,3 +309,30 @@ faults B71/B72/B83/B82; firmware mutants F54/F57/F55/F61/F61 without prior blame
   equivalence-checked (566 s); RTL replay 8/8.
 - Open: C3 host-clear divergence window is now 1..j+1 cycles (paper argument of proofs_v2 7.x
   shifts by one; the clear-fault sweep was not re-run with the pipe).
+
+### 3.5 Pipelined build: CI and sign-off
+
+CI run 42387459848 (a1e567e; core == flow/equiv/work/inc3p5/c_fixed.v): gds 2 h 34 min, precheck
+pass, gl_test pass (viewer fails as always).
+
+| metric | option D (42304838081) | inc3, P = 4 (42335133787) | inc3 + lane_pipe (42387459848) |
+|---|---|---|---|
+| std-cell area / utilisation | 366,728 / 46.87 % | 377,905 / 48.11 % | 378,963 / 48.23 % |
+| setup WS slow / typ / fast (ns) | +3.643 / +14.896 / +21.268 | -3.536 / +10.299 / +18.392 | +6.341 / +16.387 / +22.331 |
+| setup violations / hold WS | 0 / +0.099 | 490 / +0.113 | 0 / +0.098 |
+| route DRC, KLayout DRC, LVS, antenna | 0, 0, 0, 0 | 0, 0, 0, 1 | 0, 0, 0, 0 |
+| max slew / cap / fanout | 60 / 6 / 187 | 117 / 12 / 184 | 91 / 8 / 192 |
+| wirelength (um) / power | 1,345,807 / 5.30 mW | 1,531,915 / 5.35 mW | 1,498,218 / 5.41 mW |
+
+Worst slow path now starts at the sequencer register mon_slot[2] and ends in mon_u2_pc_0[3]
+(+6.341 ns, arrival 27.74 ns); the reset synchroniser no longer starts the worst path. The
+estimate of 3.4 (+8.7 ns) was 2.4 ns optimistic.
+
+E4/E5 (maps/v2inc3p_a1e567e.json): E5 proven 2,744/2,744 (246 s), E4 proven 2,744/2,744 (234 s).
+New entries beyond the option-D map: misnamed flop _14749 = s2_ui[0]; invariants mon_smask(_0)
+bits equal; mon_bank_l(_0)[15] == 0 and (~mon_busy | mon_bank_l[0]) (synthesis removed these
+constant bits; with the pipe every slot reads the bank copy, so the free gold bits had left all
+unit state unproven: 588 then 328 unproven before the invariants were complete; a first try had
+bits 0 and 15 swapped, the concatenation is MSB first). All 2,452 gate flops paired, outputs and
+both macro buses paired. Controls: N1 0 proven; N4 19 unproven; N5 exactly mon_now[5] unproven.
+Status: increment 3 signed off at 30 MHz on 6x4.

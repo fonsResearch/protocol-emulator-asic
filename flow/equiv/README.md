@@ -42,5 +42,6 @@ same cut) stays for its negative-control recipes; it was UNDECIDED on these netl
 | v2inc1 + T, 82dd594, 33 MHz (run 41887577418; timing fails, slow WNS -1.99 ns) | `maps/v2inc1T_82dd594.json` | proven, 2,549/2,549 | proven, 2,549/2,549 |
 | v2inc1 + T, d9d2c64, 30 MHz (run 42160150374; slow WNS +1.32 ns; synthesis netlist identical to 82dd594) | `maps/v2inc1T_82dd594.json` | covered by the 82dd594 E4 (same netlist) | proven, 2,549/2,549 |
 | v2inc1 + T + param_windows (option D), 4a84397, 30 MHz (run 42304838081; slow WNS +3.64 ns) | `maps/v2pwin_4a84397.json` | proven, 2,749/2,749 | proven, 2,749/2,749 |
+| v2inc3 (I2C target) + lane_pipe + option D, a1e567e, 30 MHz (run 42387459848; slow WNS +6.34 ns) | `maps/v2inc3p_a1e567e.json` | proven, 2,744/2,744 | proven, 2,744/2,744 |
 
 Details, controls and the premise of the claim: log/ci_results_v2.md section 5.

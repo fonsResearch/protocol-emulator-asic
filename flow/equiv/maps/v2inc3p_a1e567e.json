@@ -1,0 +1,50 @@
+{
+ "_comment": [
+  "Correspondence map for E4/E5 of v2inc3 + lane_pipe + verdict_pipe + param_windows (PEMU_LIB=v2inc3, PEMU_LPIPE=1, PEMU_VPIPE=1, PEMU_PWIN=1, 5 slots), CI run 42387459848 (a1e567e), 30 MHz.",
+  "As maps/v2pwin_4a84397.json plus: misnamed flop _14749 (holds s2_ui[0]); step-mask copies mon_smask(_0) bits equal; bank copies mon_bank_l(_0)[15] == 0 and [0] == 1 while a slot runs (synthesis removed these constant bits).",
+  "See log/increments_v2.md section 3.5."
+ ],
+ "rename": {
+  "_955[1]": "(_955 == 2'b10)",
+  "_1039[0]": "(_1039 == 2'b00)",
+  "_1039[1]": "(_1039 == 2'b10)",
+  "_1039[2]": "(_1039 == 2'b01)",
+  "_14749": "s2_ui[0]"
+ },
+ "invariant": {
+  "inv_955": "(_955 != 2'b11)",
+  "inv_1039": "(_1039 != 2'b11)",
+  "inv_m0_1": "(mon_mask_0[1] == mon_mask_0[0])",
+  "inv_m0_2": "(mon_mask_0[2] == mon_mask_0[0])",
+  "inv_m0_3": "(mon_mask_0[3] == mon_mask_0[0])",
+  "inv_m0_4": "(mon_mask_0[4] == mon_mask_0[0])",
+  "inv_m0_5": "(mon_mask_0[5] == mon_mask_0[0])",
+  "inv_m0_6": "(mon_mask_0[6] == mon_mask_0[0])",
+  "inv_m0_7": "(mon_mask_0[7] == mon_mask_0[0])",
+  "inv_m1_1": "(mon_mask[1] == mon_mask[0])",
+  "inv_m1_2": "(mon_mask[2] == mon_mask[0])",
+  "inv_m1_3": "(mon_mask[3] == mon_mask[0])",
+  "inv_m1_4": "(mon_mask[4] == mon_mask[0])",
+  "inv_m1_5": "(mon_mask[5] == mon_mask[0])",
+  "inv_m1_6": "(mon_mask[6] == mon_mask[0])",
+  "inv_m1_7": "(mon_mask[7] == mon_mask[0])",
+  "inv_s0_1": "(mon_smask[1] == mon_smask[0])",
+  "inv_s0_2": "(mon_smask[2] == mon_smask[0])",
+  "inv_s0_3": "(mon_smask[3] == mon_smask[0])",
+  "inv_s0_4": "(mon_smask[4] == mon_smask[0])",
+  "inv_s0_5": "(mon_smask[5] == mon_smask[0])",
+  "inv_s0_6": "(mon_smask[6] == mon_smask[0])",
+  "inv_s0_7": "(mon_smask[7] == mon_smask[0])",
+  "inv_b0_15": "(mon_bank_l[15] == 1'b0)",
+  "inv_b0_0": "(~mon_busy | mon_bank_l[0])",
+  "inv_s1_1": "(mon_smask_0[1] == mon_smask_0[0])",
+  "inv_s1_2": "(mon_smask_0[2] == mon_smask_0[0])",
+  "inv_s1_3": "(mon_smask_0[3] == mon_smask_0[0])",
+  "inv_s1_4": "(mon_smask_0[4] == mon_smask_0[0])",
+  "inv_s1_5": "(mon_smask_0[5] == mon_smask_0[0])",
+  "inv_s1_6": "(mon_smask_0[6] == mon_smask_0[0])",
+  "inv_s1_7": "(mon_smask_0[7] == mon_smask_0[0])",
+  "inv_b1_15": "(mon_bank_l_0[15] == 1'b0)",
+  "inv_b1_0": "(~mon_busy_0 | mon_bank_l_0[0])"
+ }
+}
