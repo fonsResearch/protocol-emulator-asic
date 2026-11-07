@@ -265,11 +265,11 @@ let pin_mismatches ~own (c : chip_result) (r : Psim.result) ~from ~upto =
 
 let show_opt = function None -> "-" | Some (code, cy) -> sprintf "%02X@%d" code cy
 
-let compare_one_cfg ?lane_pipe ?verdict_pipe ?param_windows ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles () =
+let compare_one_cfg ?lib ?lane_pipe ?verdict_pipe ?param_windows ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles () =
   let pmi = Array.create ~len:cycles None in
   let on_cycle cy mi _ = pmi.(cy) <- Some mi in
   let r = Psim.run ~on_cycle ~tx_bytes ~rx_pop_every:1_000_000_000 ~setup ~cycles ~peer:(peer ()) () in
-  let c = chip_run ?lane_pipe ?verdict_pipe ?param_windows ~k ~setup ~pkg ~tx_bytes ~peer:(peer ()) ~cycles () in
+  let c = chip_run ?lib ?lane_pipe ?verdict_pipe ?param_windows ~k ~setup ~pkg ~tx_bytes ~peer:(peer ()) ~cycles () in
   let pm, pf = pin_mismatches ~own:setup.own c r ~from:0 ~upto:cycles in
   let sf = psim_first r Fail and sb = psim_first r Blame in
   let px = Psim.pushes r in

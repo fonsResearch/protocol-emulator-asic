@@ -44,6 +44,7 @@ let () =
         | "v2min" -> Some "v2min"
         | "v2inc1" -> Some "v2inc1"
         | "v2inc3" -> Some "v2inc3"
+        | ("v2c_spi" | "v2c_usb" | "v2c_both" | "v2inc5") as s -> Some s
         | _ -> None)
       else String.chop_prefix mode ~prefix:"top_macro_mon_lib"
     in
@@ -55,6 +56,10 @@ let () =
         | Some "v2min" -> List.map (Rom_lib.minimum_v2 ()) ~f:Compile.compile_exn
         | Some "v2inc1" -> List.map (Rom_lib.v2_inc1 ()) ~f:Compile.compile_exn
         | Some "v2inc3" -> List.map (Rom_lib.v2_inc3 ()) ~f:Compile.compile_exn
+        | Some "v2c_spi" -> List.map (Rom_lib.v2_cand ~spi13:true ~usb:false) ~f:Compile.compile_exn
+        | Some "v2inc5" -> List.map (Rom_lib.v2_inc5 ()) ~f:Compile.compile_exn
+        | Some "v2c_usb" -> List.map (Rom_lib.v2_cand ~spi13:false ~usb:true) ~f:Compile.compile_exn
+        | Some "v2c_both" -> List.map (Rom_lib.v2_cand ~spi13:true ~usb:true) ~f:Compile.compile_exn
         | Some "15" ->
           List.map
             (protocol10 @ List.init 5 ~f:(fun _ -> Library_v1.spi_tgt ~cpol:false ~cpha:false ~h_min:3 ~g:6))

@@ -65,3 +65,21 @@ let%expect_test "increment 3: I2C target Sm package (P = 4) parameters, units, w
     slots 5: all admissible
     |}]
 ;;
+
+let%expect_test "increment 5: USB-LS TX package 7, divisor and admissibility (pipelined, P >= 5)" =
+  let lib = Rom_lib.v2_inc5_with_p () in
+  List.iteri lib ~f:(fun i (c, p) ->
+    if i >= 6 then (
+      let m = Compile.compile_exn c in
+      let words = Array.sum (module Int) m.units ~f:(fun u -> Array.length u.code) in
+      printf "%d %-24s P %2d units %d instr %3d\n" i m.name p (Array.length m.units) words));
+  printf "USB P at 30 MHz %d (cycles per bit %d), at 33 MHz %d\n" (Rom_lib.usb_ls_p ~clock_hz:30_000_000)
+    (Rom_lib.usb_ls_p ~clock_hz:30_000_000 + 1) (Rom_lib.usb_ls_p ~clock_hz:33_000_000);
+  show ~slots:5 lib;
+  [%expect {|
+    6 i2c_tgt_v1_h19_l22       P  5 units 5 instr 107
+    7 usb_ls_tx_v1             P 19 units 5 instr  27
+    USB P at 30 MHz 19 (cycles per bit 20), at 33 MHz 21
+    slots 5: all admissible
+    |}]
+;;

@@ -113,3 +113,28 @@ let admissibility_violations ~slots (lib : (Lang.t * int) list) =
     then Some (sprintf "%s: units %d (slots %d), P %d (min %d)" m.name units slots p (slots - 1))
     else None)
 ;;
+
+(* Increment 4/5 candidates (log/increments_v2.md section 4, area study): v2inc3 plus
+   - [spi13]: SPI controller and target modes 1-3 (packages 7-12), P = 7 as mode 0;
+   - [usb]: USB-LS TX (one step = one bit), P + 1 = f / 1.5 MHz = 20 at 30 MHz (exact).
+   Package indices follow list order; the ROM index field has 4 bits (16 packages). *)
+let spi_modes_1_3 () =
+  let m = [ false, true; true, false; true, true ] in
+  List.map m ~f:(fun (cpol, cpha) -> Library_v1.spi_ctl ~cpol ~cpha ~h:2, 7)
+  @ List.map m ~f:(fun (cpol, cpha) -> Library_v1.spi_tgt ~cpol ~cpha ~h_min:3 ~g:6, 7)
+;;
+
+let usb_ls_p ~clock_hz = (clock_hz / 1_500_000) - 1
+
+let v2_cand_with_p ~spi13 ~usb =
+  v2_inc3_with_p_at ~clock_hz:v2_clock_hz
+  @ (if spi13 then spi_modes_1_3 () else [])
+  @ if usb then [ Library_v1.usb_ls_tx (), usb_ls_p ~clock_hz:v2_clock_hz ] else []
+;;
+
+let v2_cand ~spi13 ~usb = List.map (v2_cand_with_p ~spi13 ~usb) ~f:fst
+
+(* Increment 5 (log/increments_v2.md section 5, user choice 2026-11-07: USB before SPI modes 1-3):
+   v2inc3 plus USB-LS TX as ROM package 7, P = 19 at 30 MHz (20 cycles per bit, exact). *)
+let v2_inc5_with_p () = v2_cand_with_p ~spi13:false ~usb:true
+let v2_inc5 () = List.map (v2_inc5_with_p ()) ~f:fst

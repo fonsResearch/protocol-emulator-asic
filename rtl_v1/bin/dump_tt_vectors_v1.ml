@@ -132,6 +132,7 @@ let lib =
      | "v2min" -> Rom_lib.minimum_v2 ()
      | "v2inc1" -> Rom_lib.v2_inc1 ()
      | "v2inc3" -> Rom_lib.v2_inc3 ()
+     | "v2inc5" -> Rom_lib.v2_inc5 ()
      | _ -> Rom_lib.all15 ())
 ;;
 
@@ -409,6 +410,27 @@ let v2_i2c_tgt ~thd_sta h =
   List.rev !log
 ;;
 
+
+(* increment 5: lane 0 = USB-LS TX (ROM 7, P = 19 = 20 cycles per bit at 30 MHz) on uio0/uio1;
+   two packets (DATA0 empty, DATA1 with 3 bytes), then a header with N = 9 (status 1, halt) *)
+let v2_usb_tx h =
+  let log = ref [] in
+  let note fmt = ksprintf (fun s -> log := s :: !log) fmt in
+  write h 0x10 [ Programs_v1.usb_own ];
+  write h 0x12 [ Rom_lib.usb_ls_p ~clock_hz:Rom_lib.v2_clock_hz; 0 ];
+  write h 0x15 [ Programs_v1.usb_cfg ];
+  load h ~lane:0 Programs_v1.usb_ls_tx;
+  set_pkg h ~lane:0 ~idx:7 (List.nth_exn lib 7);
+  write h 0x19 [ 0xC3; 0; 0x4B; 3; 0x01; 0x02; 0x03 ];
+  write h 0x01 [ 0x01 ];
+  wait h 6000;
+  note "after 2 packets: VERDICT %s STATUS 0x%02X RX [%s]" (hex (read h 0x40 4)) (read1 h 0x02) (hex (rx_fifo h ~lane:0));
+  write h 0x19 [ 0xC3; 9; 0x01 ];
+  wait h 1500;
+  note "after N = 9: VERDICT %s STATUS 0x%02X RX [%s]" (hex (read h 0x40 4)) (read1 h 0x02) (hex (rx_fifo h ~lane:0));
+  List.rev !log
+;;
+
 let () =
   let dir = (Sys.get_argv ()).(1) in
   List.iter
@@ -418,13 +440,15 @@ let () =
      @ (if String.equal (env_or "PEMU_PWIN" "0") "1" then [ "v2_pwin_uart", pwin_uart ] else [])
      @
      (* v2inc1 = v2min packages 0-3 unchanged + I2C controller as 4/5, so the v2 scenarios apply *)
-     (if List.mem [ "v2min"; "v2inc1"; "v2inc3" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
+     (if List.mem [ "v2min"; "v2inc1"; "v2inc3"; "v2inc5" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
       then [ "v2_spi_ctl_uart_rx", v2_spi_ctl_uart_rx; "v2_spi_tgt_uart_tx", v2_spi_tgt_uart_tx ]
       else [])
      @
-     if String.equal (env_or "PEMU_LIB" "all") "v2inc3"
-     then [ "v2_i2c_tgt", v2_i2c_tgt ~thd_sta:120; "v2_i2c_tgt_blame", v2_i2c_tgt ~thd_sta:60 ]
-     else [])
+     (if List.mem [ "v2inc3"; "v2inc5" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
+      then [ "v2_i2c_tgt", v2_i2c_tgt ~thd_sta:120; "v2_i2c_tgt_blame", v2_i2c_tgt ~thd_sta:60 ]
+      else [])
+     @
+     if String.equal (env_or "PEMU_LIB" "all") "v2inc5" then [ "v2_usb_tx", v2_usb_tx ] else [])
     ~f:(fun (name, f) ->
       let h = create () in
       let log = f h in

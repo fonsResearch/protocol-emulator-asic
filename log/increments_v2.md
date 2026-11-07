@@ -336,3 +336,33 @@ unit state unproven: 588 then 328 unproven before the invariants were complete; 
 bits 0 and 15 swapped, the concatenation is MSB first). All 2,452 gate flops paired, outputs and
 both macro buses paired. Controls: N1 0 proven; N4 19 unproven; N5 exactly mon_now[5] unproven.
 Status: increment 3 signed off at 30 MHz on 6x4.
+
+## 4. Area study for increments 4-5 (2026-11-07)
+
+Local synthesis (flow/map/map_v1m.sh typ / slowr) of v2inc3 + lane pipe with each candidate added;
+routed utilisation projected with the increment-3 routed/local ratio 1.336 [estimate]:
+| candidate | local area | delta | projected util | slowr depth |
+|---|---|---|---|---|
+| v2inc3 (shipped, measured 48.23 %) | 283,629 | - | - | 14.66 ns |
+| + USB-LS TX | 289,313 | +5.7k | about 49.2 % | 14.99 ns |
+| + SPI modes 1-3 (6 packages) | 304,040 | +20.4k | about 51.7 % | 14.63 ns |
+| + both | 322,566 | +38.9k | about 54.8 % | 15.38 ns |
+User decision: USB-LS TX first.
+
+## 5. Increment 5: USB-LS TX (ROM package 7)
+
+Branch v2-inc5-usb (from v2-inc3-i2ctgt 9b7f837). Library `Rom_lib.v2_inc5` = v2inc3 + usb_ls_tx,
+P = f / 1.5 MHz - 1 = 19 at 30 MHz (20 cycles per bit, exact). The contract counts one step per
+bit, so the A2 results carry unchanged (U proved; G7 contents bounded; v1 log/protocols_v1.md).
+Build: PEMU_LIB=v2inc5 PEMU_LOADABLE=rom PEMU_SLOTS=5 PEMU_VPIPE=1 PEMU_PWIN=1 PEMU_LPIPE=1.
+- Admissibility (test_rom_lib_v2.ml): usb_ls_tx 5 units, 27 instructions, P 19; all 8 packages
+  admissible at 5 slots.
+- Chip RTL vs Psim (rtl_v1/test/test_inc5.ml, shipped configuration): two packets clean; N = 9
+  (status 1, halt); mutant sync F A3@421 on both; mutant nopush and sendc no firing on both (sendc
+  changes the CRC only, contents are not checked on chip). Monitor-input stream, pads, pins,
+  verdict and pushes equal in all 5.
+- Vector v2_usb_tx (22,101 cycles); the 7 other vectors regenerate byte-identically; RTL replay 9/9.
+- Local synthesis: 289,127 um^2 (+5.5k), slowr depth 14.77 ns; projected about 49.2 % [estimate].
+- Pins: USB uses uio0/uio1 like UART TX/RX; the two lanes each own their pins, so USB on one lane
+  and UART on the other cannot run at once. Whether the chip detects or refuses overlapping OWN
+  settings across lanes was not checked here.
