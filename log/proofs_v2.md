@@ -284,3 +284,12 @@ is not separable in `Mon_engine` today. It is left as an option for the step-12 
   so a per-module byte comparison of the emitted Verilog is not possible; the source identity is the evidence.
 - E4/E5 netlist equivalence on the green v2 GDS run (41442167676, e218611): proven, 2,285 of 2,285
   pairs each, negative controls N1-N5 fail as required (log/ci_results_v2.md section 5). Step 5 closed.
+
+## 9. R1 with the pipelined slot schedule (increment 3, 2026-11-07)
+
+`formal/src/mon_ref.ml ~pipe`: claim "unit j of Mon_spec fires in step t => Mon_lane fires unit j
+in cycle t + j + 1 with the same role and code, and in no other cycle"; every slot gets the ghost
+word of step t; invariant i_seq: busy_q over since 1..slots with slot_q = since - 1. ENGINE=ind:
+r1v2p_s5_u0..u4 PASS (2-3 s each, 1,173 latches), r1v2p_s5_u4_t5 (ticks 5 apart) PASS;
+r1v2p_s5_u4_t4_neg FAIL (depth 6), r1v2p_s5_u3_smask_neg FAIL (depth 5), replay ok. R1 needs ticks
+at least slots cycles apart; the admission bound P >= slots comes from the blame-to-lane latency.

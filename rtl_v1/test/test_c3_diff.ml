@@ -160,12 +160,12 @@ let write h a d = ignore (transaction h ((a land 0x7F) :: d) : int list)
 let read h a k = List.tl_exn (transaction h ((0x80 lor a) :: List.init k ~f:(fun _ -> 0)))
 let le32 l = List.foldi l ~init:0 ~f:(fun i acc b -> acc lor (b lsl (8 * i)))
 
-let create ?(lib = lib) ?verdict_pipe ?param_windows ?(loadable = [| false; false |]) () =
+let create ?(lib = lib) ?lane_pipe ?verdict_pipe ?param_windows ?(loadable = [| false; false |]) () =
   let sim =
     Sim.create
       (fun i ->
         let o, (d : Top_v1.debug) =
-          Top_v1.create_with_debug ~loadable ~mon_slots:5 ?verdict_pipe ?param_windows ~lib
+          Top_v1.create_with_debug ~loadable ~mon_slots:5 ?lane_pipe ?verdict_pipe ?param_windows ~lib
             ~sram:(fun _ i -> fst (Sram256.behavioural i)) i
         in
         let lo = d.lane_outputs.(0) and l1 = d.lane_outputs.(1) in
@@ -214,8 +214,8 @@ type chip_result =
   }
 
 (* [ctrl_writes]: (Psim time at which the CTRL write transaction starts, value) *)
-let chip_run ?(lib = lib) ?verdict_pipe ?(param_windows = false) ?windows ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
-  let h = create ~lib ?verdict_pipe ~param_windows:(param_windows || Option.is_some windows) () in
+let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?windows ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
+  let h = create ~lib ?lane_pipe ?verdict_pipe ~param_windows:(param_windows || Option.is_some windows) () in
   let b = 0x10 in
   write h b [ setup.own ]; write h (b + 1) [ setup.od ];
   write h (b + 2) [ setup.p land 0xFF; setup.p lsr 8 ];
@@ -265,11 +265,11 @@ let pin_mismatches ~own (c : chip_result) (r : Psim.result) ~from ~upto =
 
 let show_opt = function None -> "-" | Some (code, cy) -> sprintf "%02X@%d" code cy
 
-let compare_one ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles =
+let compare_one_cfg ?lane_pipe ?verdict_pipe ?param_windows ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles () =
   let pmi = Array.create ~len:cycles None in
   let on_cycle cy mi _ = pmi.(cy) <- Some mi in
   let r = Psim.run ~on_cycle ~tx_bytes ~rx_pop_every:1_000_000_000 ~setup ~cycles ~peer:(peer ()) () in
-  let c = chip_run ~k ~setup ~pkg ~tx_bytes ~peer:(peer ()) ~cycles () in
+  let c = chip_run ?lane_pipe ?verdict_pipe ?param_windows ~k ~setup ~pkg ~tx_bytes ~peer:(peer ()) ~cycles () in
   let pm, pf = pin_mismatches ~own:setup.own c r ~from:0 ~upto:cycles in
   let sf = psim_first r Fail and sb = psim_first r Blame in
   let px = Psim.pushes r in
@@ -303,6 +303,10 @@ let compare_one ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles =
     (show_opt sf) (show_opt c.first_fail) (show_opt sb) (show_opt c.first_blame)
     (if [%equal: int list] (List.take px 8) c.rx then sprintf "= (%d)" (List.length c.rx)
      else sprintf "psim %d chip %d DIFFER" (List.length px) (List.length c.rx))
+;;
+
+let compare_one ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles =
+  compare_one_cfg ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles ()
 ;;
 
 let uart_tx_setup prog = { Psim.prog; own = 0x01; od = 0; cfg = 0; cfg2 = 0; p = 7; contract = Lib.uart_tx ~d:4 ~pin:0; open_drain_wired_and = 0 }

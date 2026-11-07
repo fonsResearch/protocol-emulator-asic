@@ -16,6 +16,12 @@
      inside a slot window does not affect the units still to be processed in that step:
      they belong to a step that Mon_spec evaluated before the restart.
 
+   [pipe] (v2 timing increment, log/increments_v2.md section 3.4; default false): slot u runs in
+   cycle tick + 1 + u, always from the copies latched at the tick, so the tick (running, tick,
+   reset) only enables those latches and the sequencer; no datapath select depends on it. A
+   firing of unit u in step c then appears in cycle c + u + 1, and the assumption becomes
+   "ticks at least [slots] + 1 cycles apart" ([overrun] otherwise).
+
    [slots] (v2, default 8 = Mon_spec.n_units): number of unit state entries and slots per step.
    Units slots .. 7 have no state and never fire; the assumption becomes "ticks at least [slots]
    cycles apart" (T<slots>). Refines Mon_spec for packages with at most [slots] units. pc6/pc7
@@ -59,6 +65,7 @@ type internals =
 
 let create
   ?(slots = S.n_units)
+  ?(pipe = false)
   ?front
   ?probe
   ?only_unit
@@ -81,12 +88,14 @@ let create
   let busy_q = reg spec busy -- "mon_busy"
   and slot_q = reg spec slot -- "mon_slot" in
   busy <== (step |: (busy_q &: (slot_q <>:. slots - 1)));
-  slot <== mux2 step (one 3) (slot_q +:. 1);
-  let active = step |: busy_q in
-  let cur = mux2 step (zero 3) slot_q in
+  (* [pipe]: busy_q = a slot runs in this cycle, slot_q = that slot (0 in the cycle after the
+     tick); otherwise slot 0 runs in the tick cycle and busy_q = slots 1.. pending *)
+  slot <== mux2 step (if pipe then zero 3 else one 3) (slot_q +:. 1);
+  let active = if pipe then busy_q else step |: busy_q in
+  let cur = if pipe then slot_q else mux2 step (zero 3) slot_q in
   (* bank and stream events seen by the slot *)
   let bank_l = reg nspec ~enable:step bankv -- "mon_bank_l" in
-  let pbv = mux2 step bankv bank_l in
+  let pbv = if pipe then bank_l else mux2 step bankv bank_l in
   let ev_l x name = reg nspec ~enable:step x -- name in
   let evl : S.events =
     { pop_ev = ev_l i.pop_ev "mon_pop_ev_l"
@@ -96,6 +105,7 @@ let create
     }
   in
   let ev : S.events =
+    if pipe then evl else
     { pop_ev = mux2 step i.pop_ev evl.pop_ev
     ; pop_data = mux2 step i.pop_data evl.pop_data
     ; push_ev = mux2 step i.push_ev evl.push_ev
@@ -110,7 +120,7 @@ let create
   let eff_mask =
     match bug with
     | Some `Smask_unlatched -> mask_q
-    | Some `Pc_eff_mask_only | None -> mux2 step mask_q smask
+    | Some `Pc_eff_mask_only | None -> if pipe then smask else mux2 step mask_q smask
   in
   (* unit state file *)
   let ds = Array.init slots ~f:(fun _ -> List.map S.ustate_widths ~f:wire) in

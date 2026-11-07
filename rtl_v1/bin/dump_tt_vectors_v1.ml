@@ -149,6 +149,7 @@ let create () =
   let sim =
     Sim.create
       (Top_v1.create ~loadable ?mon_slots:(Option.map (Sys.getenv "PEMU_SLOTS") ~f:Int.of_string)
+         ?lane_pipe:(Option.some_if (String.equal (Option.value (Sys.getenv "PEMU_LPIPE") ~default:"0") "1") true)
          ?param_windows:(Option.some_if (String.equal (Option.value (Sys.getenv "PEMU_PWIN") ~default:"0") "1") true) ?verdict_pipe:(Option.some_if (String.equal (Option.value (Sys.getenv "PEMU_VPIPE") ~default:"0") "1") true) ~lib
          ~sram:(fun _ i -> fst (Sram256.behavioural i)))
   in

@@ -53,15 +53,15 @@ let%expect_test "increment 3: I2C target Sm package (P = 4) parameters, units, w
     printf "%d %-24s P %2d units %d instr %3d\n" i m.name p (Array.length m.units) words);
   show ~slots:5 lib;
   [%expect {|
-    30000000 Hz: h_min 23 l_min 27 hd 23
-    33000000 Hz: h_min 25 l_min 30 hd 25
+    30000000 Hz: h_min 19 l_min 22 hd 19
+    33000000 Hz: h_min 21 l_min 24 hd 21
     0 uart_tx_v1_d4_p0         P 64 units 2 instr  14
     1 uart_rx_v1_d8_m2_p1      P 32 units 2 instr  32
     2 spi_ctl_v1_m0_h2         P  7 units 5 instr  63
     3 spi_tgt_v1_m0_h3_g6      P  7 units 5 instr  86
     4 i2c_ctl_v1_l6_h4         P  7 units 3 instr 143
     5 i2c_ctl_v1_l5_h5         P 29 units 3 instr 143
-    6 i2c_tgt_v1_h23_l27       P  4 units 5 instr 107
+    6 i2c_tgt_v1_h19_l22       P  5 units 5 instr 107
     slots 5: all admissible
     |}]
 ;;

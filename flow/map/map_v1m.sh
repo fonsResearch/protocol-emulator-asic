@@ -18,6 +18,10 @@ case "$CORNER" in
   typ)  LIB="$LIBD/sg13cmos5l_stdcell_typ_1p20V_25C.lib"; ABC="abc -liberty $LIB" ;;
   slow) LIB="$LIBD/sg13cmos5l_stdcell_slow_1p08V_125C.lib"
         ABC="abc -D 16670 -liberty $LIB -script +strash;dch;map,-D,16670;buffer;upsize,-D,16670;dnsize,-D,16670;stime,-p" ;;
+  # slowr: reduced script (no buffer/upsize/dnsize; slow fails on some netlists with "node has
+  # no fanout"), for like-for-like logic-depth comparisons between builds
+  slowr) LIB="$LIBD/sg13cmos5l_stdcell_slow_1p08V_125C.lib"
+        ABC="abc -D 16670 -liberty $LIB -script +strash;dch;map,-D,16670;topo;stime,-p" ;;
 esac
 cat > "$OUT/map.ys" <<YS
 read_verilog -lib $BB
@@ -30,4 +34,4 @@ tee -o $OUT/stat.txt stat -liberty $LIB
 YS
 yosys -q -l "$OUT/yosys.log" -s "$OUT/map.ys" > /dev/null
 echo "area $(grep -E 'Chip area' "$OUT/stat.txt" | tail -1 | awk '{print $NF}')"
-if [ "$CORNER" = slow ]; then grep -E "Delay =" "$OUT/yosys.log" | tail -1 | sed -E 's/.*Delay = *([0-9.]+) ps.*/depth \1 ps/'; fi
+if [ "$CORNER" = slow ] || [ "$CORNER" = slowr ]; then grep -E "Delay =" "$OUT/yosys.log" | tail -1 | sed -E 's/.*Delay = *([0-9.]+) ps.*/depth \1 ps/'; fi

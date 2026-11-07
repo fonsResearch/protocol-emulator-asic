@@ -268,3 +268,44 @@ period (about 52 steps), so long-range relations rest on the co-simulation.
 - Local synthesis (flow/map/map_v1m.sh typ): 281,887 um^2, +6,648 over option D. Projected routed
   utilisation about 48.0 % [estimate, option-D routed/local ratio 1.332], above the highest
   measured routable point (46.9 %); a CI run decides.
+
+### 3.4 First CI run fails timing; pipelined monitor schedule (user choice: RTL fix)
+
+CI run 42335133787 (29c780b, P = 4 build): gds, precheck and gl_test pass, routing clean (48.11 %
+utilisation, 377,905 um^2 std cells, route DRC / KLayout DRC / LVS 0, 1 antenna net, wirelength
+1,531,915 um = +14 % over option D for +3 % area), but slow-corner setup WS -3.536 ns with 490
+violating endpoints (typ +10.30 ns, hold +0.113 ns). Every violator starts at core._325
+(rst_sync_n) and ends in the lane-0 unit state (mon_u*_reg/m0/k/pc/stopped). Worst path: 4.5 ns
+of reset buffer tree, then the reset/running/tick gating of slot 0 and the unit datapath, with two
+nor4_1 stages on long wires (3.6 and 2.2 ns); arrival 37.60 ns at 33.33 ns. The same cone was the
+worst path in every v2 run (+1.32 ns inc1, +3.64 ns option D), so it varies by several ns between
+placements. The local slow-script depth predicted none of these swings.
+
+Fix (Mon_lane ~pipe, Mon_engine ~lane_pipe, Top_v1/emitter/vectors PEMU_LPIPE=1; default off,
+default builds re-emit byte-identically): slot u runs in cycle tick + 1 + u, always from the bank,
+events and step mask latched at the tick; the tick only enables those latches and starts the
+sequencer (busy_q = slot runs now, cur = slot_q). Consequences: a firing appears one cycle later
+(stamp unchanged), the registered blame reaches the lane at t + j + 2, so ROM-lane admission is
+P >= slots (5); the I2C target moves to P = 5 with contract 19/22/19 (Psim at P = 5: clean at the
+minima, every short tHD;STA blamed, no silent miss; stretching to 102,324 cycles; controller
+faults B71/B72/B83/B82; firmware mutants F54/F57/F55/F61/F61 without prior blame).
+- Local reduced-script slow depth (flow/map/map_v1m.sh slowr): 21.43 ns -> 14.66 ns; area typ
+  283,629 um^2 (+1.7k). Routed slow path about 24.6 ns at the 1.68 routed/local ratio of run
+  42335133787 [estimate], i.e. about +8.7 ns at 30 MHz.
+- R1 (formal/src/mon_ref.ml ~pipe, claim t + j + 1, ENGINE=ind): r1v2p_s5_u0..u4 PASS (2-3 s each),
+  r1v2p_s5_u4_t5 (ticks 5 apart) PASS; negatives r1v2p_s5_u4_t4_neg FAIL depth 6 and
+  r1v2p_s5_u3_smask_neg FAIL depth 5, both replay ok. (A first control at spacing 5 was not a
+  negative: slot 4 then runs in the next tick cycle from the old latches, which is correct.)
+  The unpipelined r1v2_s5_u0..u4 still PASS.
+- A2 at 19/22/19 (same method as 3.2): co-sim clean 512 x 30,000 (14,121,050 guarded) and
+  adversarial 512 x 30,000 (4,833,844 guarded), bad 0, AIG/Hardcaml mismatch 0; controls N1 108,
+  noack 36, stretchhigh 18 bad cycles; checkpoint BMC 40 windows no hit (29 to 40 frames, 11 to
+  32-39 frames at the 300 s cap); self-test hit at +2, replay OK (F54 at frame 7889). Bounded.
+- Chip RTL vs Psim (rtl_v1/test/test_inc3.ml, lane pipe + vpipe + param_windows): I2C target 6
+  scenarios equal; the 8 C3 directed scenarios of the v2 minimum packages equal (codes and stamps
+  as without the pipe); admission: P = 4 refused, P = 5 runs.
+- Vectors: v1_reset_mid identical; v1_rom_uart, v2_pwin_uart, v2_spi_*: one row each differs,
+  the verdict pin rising one cycle later; v2_i2c_tgt(_blame) regenerated at P = 5. Combdly fix
+  equivalence-checked (566 s); RTL replay 8/8.
+- Open: C3 host-clear divergence window is now 1..j+1 cycles (paper argument of proofs_v2 7.x
+  shifts by one; the clear-fault sweep was not re-run with the pipe).

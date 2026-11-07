@@ -59,13 +59,14 @@ let run ?(t_ctl = Fn.id) ~p ~cycles () =
 ;;
 
 let%expect_test "I2C target Sm at 30 MHz, controller at UM10204 minima, P = 4..16" =
-  List.iter [ 4; 6; 8; 10; 12; 14; 16 ] ~f:(fun p ->
+  List.iter [ 4; 5; 6; 8; 10; 12; 14; 16 ] ~f:(fun p ->
     let c, r, ok = run ~p ~cycles:150_000 () in
     let h_min, l_min, hd = params ~p sm30 in
     printf "P=%2d (h_min %d l_min %d hd %d) done %b ok %b firings [%s] U %b mm %d\n" p h_min l_min hd (c.cdone ()) ok
       (Psim.show_firings r) (u_ok r) r.model_mismatch);
   [%expect {|
     P= 4 (h_min 23 l_min 27 hd 23) done true ok true firings [] U true mm 0
+    P= 5 (h_min 19 l_min 22 hd 19) done true ok true firings [] U true mm 0
     P= 6 (h_min 16 l_min 19 hd 16) done true ok true firings [] U true mm 0
     P= 8 (h_min 12 l_min 14 hd 12) done true ok true firings [] U true mm 0
     P=10 (h_min 9 l_min 11 hd 9) done true ok true firings [] U true mm 0
@@ -78,7 +79,7 @@ let%expect_test "I2C target Sm at 30 MHz, controller at UM10204 minima, P = 4..1
 (* A silent miss is BAD without a firing: the target lost a transaction and the monitor did not
    see it (ACK iff address match is [O]). BAD with a blame is acceptable (controller fault). *)
 let%expect_test "I2C target Sm at 30 MHz: START/Sr hold-time sweep (cycles; UM10204 min 120)" =
-  List.iter [ 4; 6; 8; 10; 12; 14; 16 ] ~f:(fun p ->
+  List.iter [ 4; 5; 6; 8; 10; 12; 14; 16 ] ~f:(fun p ->
     let line =
       List.map [ 20; 30; 40; 50; 60; 70; 80; 90; 100; 110; 120 ] ~f:(fun thd_sta ->
         let _, r, ok = run ~t_ctl:(fun t -> { t with thd_sta }) ~p ~cycles:150_000 () in
@@ -88,6 +89,7 @@ let%expect_test "I2C target Sm at 30 MHz: START/Sr hold-time sweep (cycles; UM10
       (let _, _, hd = params ~p sm30 in hd * (p + 1)) (String.concat ~sep:" " line));
   [%expect {|
     P= 4 hd=23(115 cy) 20:BAD/B82 30:ok/B82 40:ok/B82 50:ok/B82 60:ok/B82 70:ok/B82 80:ok/B82 90:ok/B82 100:ok/B82 110:ok/B82 120:ok
+    P= 5 hd=19(114 cy) 20:BAD/B82 30:BAD/B82 40:ok/B82 50:ok/B82 60:ok/B82 70:ok/B82 80:ok/B82 90:ok/B82 100:ok/B82 110:ok/B82 120:ok
     P= 6 hd=16(112 cy) 20:BAD/B82 30:BAD/B82 40:BAD/B82 50:ok/B82 60:ok/B82 70:ok/B82 80:ok/B82 90:ok/B82 100:ok/B82 110:ok/B82 120:ok
     P= 8 hd=12(108 cy) 20:BAD/B82 30:BAD/B82 40:BAD/B82 50:BAD/B82 60:BAD/B82 70:ok/B82 80:ok/B82 90:ok/B82 100:ok/B82 110:ok 120:ok
     P=10 hd=9(99 cy) 20:BAD/B82 30:BAD/B82 40:BAD/B82 50:BAD/B82 60:BAD/B82 70:BAD/B82 80:BAD/B82 90:ok/B82 100:ok 110:ok 120:ok
@@ -97,18 +99,19 @@ let%expect_test "I2C target Sm at 30 MHz: START/Sr hold-time sweep (cycles; UM10
     |}]
 ;;
 
-(* ---- the shipped divisor, P = 4 ---- *)
+(* ---- the shipped divisor, P = 5 (5 slots with the pipelined monitor schedule need P >= 5) ---- *)
+let ship_p = 5
 
 let run4 ?(t_ctl = Fn.id) ?(prog = Fn.id) ?tx_times ~cycles () =
   let c = i2c_controller ~t:(t_ctl sm30) txs in
-  let s = setup ~p:4 sm30 in
+  let s = setup ~p:ship_p sm30 in
   let r = Psim.run ~tx_bytes:host ?tx_times ~setup:{ s with prog = prog s.prog } ~cycles ~peer:c.cdrive () in
   printf "  bus: %s\n  pushes: %s firings [%s] U %b mm %d\n" (c.clog ()) (hex (Psim.pushes r)) (Psim.show_firings r)
     (u_ok r) r.model_mismatch;
   r
 ;;
 
-let%expect_test "P=4 Sm 30 MHz: read bytes late (stretching), 0 / 60000 / 120000 cycles" =
+let%expect_test "P=5 Sm 30 MHz: read bytes late (stretching), 0 / 60000 / 120000 cycles" =
   List.iter [ 0; 60_000; 120_000 ] ~f:(fun d ->
     printf "delay %d:\n" d;
     let r = run4 ~tx_times:[ 0; d; d; d ] ~cycles:300_000 () in
@@ -124,15 +127,15 @@ let%expect_test "P=4 Sm 30 MHz: read bytes late (stretching), 0 / 60000 / 120000
     delay 60000:
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
       pushes: 11 22 33 44 firings [] U true mm 0
-      lane SCL pulls: 1, longest 42320 cycles
+      lane SCL pulls: 1, longest 42318 cycles
     delay 120000:
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
       pushes: 11 22 33 44 firings [] U true mm 0
-      lane SCL pulls: 1, longest 102325 cycles
+      lane SCL pulls: 1, longest 102324 cycles
     |}]
 ;;
 
-let%expect_test "P=4 Sm 30 MHz: controller misbehaviour is blamed" =
+let%expect_test "P=5 Sm 30 MHz: controller misbehaviour is blamed" =
   List.iter
     [ "tlow 120 (< 141)", (fun t -> { t with tlow = 120 }); "thigh 100 (< 120)", (fun t -> { t with thigh = 100 })
     ; "late data (dh 150 > tlow)", (fun t -> { t with dh = 150 }); "thd_sta 60", (fun t -> { t with thd_sta = 60 }) ]
@@ -142,16 +145,16 @@ let%expect_test "P=4 Sm 30 MHz: controller misbehaviour is blamed" =
   [%expect {|
     tlow 120 (< 141):
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
-      pushes: 11 22 33 44 firings [B71@641] U true mm 0
+      pushes: 11 22 33 44 firings [B71@643] U true mm 0
     thigh 100 (< 120):
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
-      pushes: 11 22 33 44 firings [B72@761] U true mm 0
+      pushes: 11 22 33 44 firings [B72@763] U true mm 0
     late data (dh 150 > tlow):
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
-      pushes: 11 22 33 44 firings [B83@671,F51@2816] U true mm 0
+      pushes: 11 22 33 44 firings [B83@673,F51@2815] U true mm 0
     thd_sta 60:
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
-      pushes: 11 22 33 44 firings [B82@461] U true mm 0
+      pushes: 11 22 33 44 firings [B82@463] U true mm 0
     |}]
 ;;
 
@@ -162,7 +165,7 @@ let mutate_at prog ~at ~f =
   | None -> raise_s [%message "mutant site not found"]
 ;;
 
-let%expect_test "P=4 Sm 30 MHz: firmware mutants fail (read bytes late, so the target stretches)" =
+let%expect_test "P=5 Sm 30 MHz: firmware mutants fail (read bytes late, so the target stretches)" =
   let open Pemu_spec_v1.Isa1 in
   let nth a i = if i >= 0 && i < Array.length a then Some a.(i) else None in
   let eqi x y = match x with Some x -> [%equal: t] x y | None -> false in
@@ -186,19 +189,19 @@ let%expect_test "P=4 Sm 30 MHz: firmware mutants fail (read bytes late, so the t
   [%expect {|
     write ACK missing:
       bus: S A50W+ W11- W22- W33- P S A50W+ W44- Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
-      pushes: 11 22 33 44 firings [F54@5046] U false mm 0
+      pushes: 11 22 33 44 firings [F54@5047] U false mm 0
     write bits LSB-first:
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R36 P S A51R- RFF P S A52W- WAA- P S A50R+ R0E P
-      pushes: 88 44 CC 22 firings [F57@4921] U false mm 0
+      pushes: 88 44 CC 22 firings [F57@4927] U false mm 0
     read bits LSB-first:
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ R85 R6C P S A51R- RFF P S A52W- WAA- P S A50R+ R70 P
-      pushes: 11 22 33 44 firings [F55@60541] U false mm 0
+      pushes: 11 22 33 44 firings [F55@60547] U false mm 0
     stretch in high phase:
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ RA1 R6D P S A51R- RFF P S A52W- WAA- P S A50R- RFF P
-      pushes: 11 22 33 44 firings [F61@17596,B72@17601] U false mm 0
+      pushes: 11 22 33 44 firings [F61@17599,B72@17605] U false mm 0
     read data changes in high phase:
       bus: S A50W+ W11+ W22+ W33+ P S A50W+ W44+ Sr A50R+ R43 R6C P S A51R- RFF P S A52W- WAA- P S A50R+ R1C P
-      pushes: 11 22 33 44 firings [F61@60051,B82@60146,F51@60286] U false mm 0
+      pushes: 11 22 33 44 firings [F61@60061,B82@60151,F51@60289] U false mm 0
     ACKs address 0x51 [O]:
       bus: S A50W- W11- W22- W33- P S A50W- W44- Sr A50R- RFF RFF P S A51R+ RA1 P S A52W- WAA- P S A50R- RFF P
       pushes:  firings [] U true mm 0

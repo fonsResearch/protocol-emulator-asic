@@ -33,7 +33,9 @@ module S = Pemu_monitor_v1.Mon_spec
 module L = Pemu_monitor_v1.Mon_lane
 module M = Pemu_monitor_v1.Mprog
 
-let harness ?debug ?bug ?(slots = S.n_units) ?(spacing = 8) ~j ~name () =
+(* [pipe] (Mon_lane ~pipe, log/increments_v2.md section 3.4): the claim is shifted by one cycle,
+   unit j fires in cycle t + j + 1, and every slot receives the ghost word of step t. *)
+let harness ?debug ?bug ?(slots = S.n_units) ?(pipe = false) ?(spacing = 8) ~j ~name () =
   let clock = input "clock" 1 in
   let gs = Reg_spec.create ~clock () in
   let started = reg gs vdd -- "env_started" in
@@ -110,10 +112,10 @@ let harness ?debug ?bug ?(slots = S.n_units) ?(spacing = 8) ~j ~name () =
   let lint = ref None in
   let present = Array.init S.n_units ~f:(fun u -> if u = j then vdd else inp (sprintf "free_in_present%d" u) 1) in
   let lo =
-    L.create ~slots ~front ~probe:(fun x -> lint := Some x) ~only_unit:j ?bug ~tables ~present
+    L.create ~slots ~pipe ~front ~probe:(fun x -> lint := Some x) ~only_unit:j ?bug ~tables ~present
       ~fetch:(fun _cur pc ->
         lane_pc <== pc;
-        mux2 step w_spec g_w)
+        if pipe then g_w else mux2 step w_spec g_w)
       i
   in
   let lint = Option.value_exn !lint in
@@ -129,7 +131,7 @@ let harness ?debug ?bug ?(slots = S.n_units) ?(spacing = 8) ~j ~name () =
   rst_win_d <== mux2 step gnd (rst_win |: ~:rst_sync_n);
   (* slot window without reset: for j = 0 the window is the step cycle itself (never a reset
      cycle); for j > 0, no reset cycle after the step up to and including this cycle *)
-  let clean = if j = 0 then vdd else ~:(rst_win |: ~:rst_sync_n) in
+  let clean = if j = 0 && not pipe then vdd else ~:(rst_win |: ~:rst_sync_n) in
   (* environment assumption T8 (sticky; stored inverted so that init 0 = holds so far) *)
   let env_ok_d = wire 1 in
   let env_ok = reg gs env_ok_d -- "h_env_ok_n" in
@@ -137,9 +139,11 @@ let harness ?debug ?bug ?(slots = S.n_units) ?(spacing = 8) ~j ~name () =
   let ok_so_far = ~:env_ok_d in
   (* ---- refinement property ---- *)
   let lane_fj = lo.fire &: (lo.unit_ ==:. j) in
-  let at_slot = if j = 0 then step else seen &: (since ==:. j) in
+  let at_slot =
+    if pipe then seen &: (since ==:. j + 1) else if j = 0 then step else seen &: (since ==:. j)
+  in
   let exp_fire, exp_role, exp_code, exp_pc =
-    if j = 0 then s_fire, s_role, s_code, spec_pc else g_fire, g_role, g_code, g_pc
+    if j = 0 && not pipe then s_fire, s_role, s_code, spec_pc else g_fire, g_role, g_code, g_pc
   in
   let mism =
     (lane_fj ^: exp_fire) |: (exp_fire &: ((lo.role ^: exp_role) |: (lo.code <>: exp_code)))
@@ -182,8 +186,13 @@ let harness ?debug ?bug ?(slots = S.n_units) ?(spacing = 8) ~j ~name () =
   in
   let i_np = pending |: st_eq (st_mux m_now rst_st entry) spec_st in
   let i_seq =
-    (lint.busy_q ==: (seen &: (since >=:. 1) &: (since <=:. slots - 1) &: ~:rst_win))
-    &: (~:(lint.busy_q) |: (uresize lint.slot_q 4 ==: since))
+    if pipe
+    then
+      (lint.busy_q ==: (seen &: (since >=:. 1) &: (since <=:. slots) &: ~:rst_win))
+      &: (~:(lint.busy_q) |: (uresize lint.slot_q 4 +:. 1 ==: since))
+    else
+      (lint.busy_q ==: (seen &: (since >=:. 1) &: (since <=:. slots - 1) &: ~:rst_win))
+      &: (~:(lint.busy_q) |: (uresize lint.slot_q 4 ==: since))
   in
   let inv_bad = ~:(i_ghost &: i_pend &: i_np &: i_seq) in
   let bad = ok_so_far &: (bad_slot |: bad_extra |: inv_bad) in
@@ -202,7 +211,12 @@ let all ?debug () =
     ]
   (* v2 (doc/decisions/arch_v2_options.md V2-2): 5 slots, assumption T5 *)
   @ List.init 5 ~f:(fun j -> harness ?debug ~slots:5 ~spacing:5 ~j ~name:(sprintf "r1v2_s5_u%d" j) ())
+  @ List.init 5 ~f:(fun j ->
+    harness ?debug ~slots:5 ~pipe:true ~spacing:6 ~j ~name:(sprintf "r1v2p_s5_u%d" j) ())
   @ [ harness ?debug ~slots:5 ~spacing:5 ~j:3 ~bug:`Smask_unlatched ~name:"r1v2_s5_u3_smask_neg" ()
     ; harness ?debug ~slots:5 ~spacing:4 ~j:4 ~name:"r1v2_s5_u4_t4_neg" ()
+    ; harness ?debug ~slots:5 ~pipe:true ~spacing:4 ~j:4 ~name:"r1v2p_s5_u4_t4_neg" ()
+    ; harness ?debug ~slots:5 ~pipe:true ~spacing:5 ~j:4 ~name:"r1v2p_s5_u4_t5" ()
+    ; harness ?debug ~slots:5 ~pipe:true ~spacing:6 ~j:3 ~bug:`Smask_unlatched ~name:"r1v2p_s5_u3_smask_neg" ()
     ]
 ;;

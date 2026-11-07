@@ -36,7 +36,7 @@ values are estimates, to be fixed in each increment.
 | 10 | i2c_ctl Fm | bounded (bmc3, 77 frames) | increment 1 | about 8 (367 kHz) | - | - |
 | 11 | i2c_ctl Sm | bounded (bmc3, 76 frames) | increment 1 | about 32 | - | - |
 | 12 | i2c_tgt Fm | bounded with EA1 (co-sim + checkpoint BMC) | **dropped** | needs P + 1 <= about 2.8; 5 slots need P >= 4 | - | - |
-| 13 | i2c_tgt Sm | bounded with EA1; v2 parameters 23/27/23 bounded again (log/increments_v2.md 3) | increment 3 (ROM 6) | 4 at 30 MHz (the earlier '<= 17' was wrong: P = 14, 16 fail silently at 30 MHz) | rtl_v1/test/test_inc3.ml | v2_i2c_tgt, v2_i2c_tgt_blame |
+| 13 | i2c_tgt Sm | bounded with EA1; v2 parameters 19/22/19 bounded again (log/increments_v2.md 3) | increment 3 (ROM 6) | 5 at 30 MHz (pipelined schedule needs P >= 5; the earlier '<= 17' was wrong: P = 14, 16 fail silently at 30 MHz) | rtl_v1/test/test_inc3.ml | v2_i2c_tgt, v2_i2c_tgt_blame |
 | 14 | usb_ls_tx | U proved (1,246 s); contents G7 bounded | increment 5 | 21 (exact, 22 cycles per bit) | - | - |
 
 ## 3. D13 recurrence check (chip level, own P)

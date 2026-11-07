@@ -478,8 +478,9 @@ let i2c_all ?debug () =
       ~contract:(Lib.i2c_ctl ~l ~h ~tsu ~thold) ~own:P1.i2c_own ~od:P1.i2c_od ~cfg:0 ~cfg2:0 ~name ()
   in
   let tfm = 8, 18, 8 and tsm = 59, 69, 59 in
-  (* increment 3: the v2 ROM package, Sm at 30 MHz and P = 4 (Rom_lib.i2c_tgt_sm_params) *)
-  let tsm30 = 23, 27, 23 in
+  (* increment 3: the v2 ROM package, Sm at 30 MHz and P = 5 (Rom_lib.i2c_tgt_sm_params; the
+     P = 4 parameters 23/27/23 were checked the same way before the pipelined schedule) *)
+  let tsm30 = 19, 22, 19 in
   let tgt ?(prog = P1.i2c_tgt ~addr:0x50) ?(contract = Fn.id) ~mode (h_min, l_min, hd) name =
     (* host-stream assumption (doc 3.1): the config byte is in the TX FIFO when the lane
        starts, i.e. the config POP (pc 2) never executes with an empty FIFO *)

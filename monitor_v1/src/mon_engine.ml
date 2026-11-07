@@ -351,6 +351,7 @@ type loader_probe =
 
 let create
   ?(slots = S.n_units)
+  ?(lane_pipe = false)
   ?(verdict_pipe = false)
   ?(param_windows = false)
   ?probe_ctx
@@ -361,6 +362,10 @@ let create
      loadable units 6/7, and every ROM package must fit in the slots (elaboration-time checks). *)
   (* slots < 8 with a loadable lane: v2 serial loadable lane (all slots from the store, no ROM on
      that lane; doc/decisions/inc2_loadable_options.md option A) *)
+  (* [lane_pipe] (log/increments_v2.md section 3.4): Mon_lane ~pipe, slot u in cycle tick + 1 + u.
+     ROM lanes only: the fetcher timing of loadable lanes is derived for slot u in tick + u. *)
+  if lane_pipe && Array.exists loadable ~f:Fn.id
+  then raise_s [%message "Mon_engine: lane_pipe is for ROM lanes only"];
   List.iter lib ~f:(fun (p : M.t) ->
     if Array.length p.units > slots
     then raise_s [%message "Mon_engine: package needs more units than slots" p.name (Array.length p.units : int) (slots : int)]);
@@ -588,7 +593,7 @@ let create
       ; uo_out = v.uo_out; uio_out = v.uio_out; uio_oe = v.uio_oe; pop_ev = v.pop_ev
       ; pop_data = v.pop_data; push_ev = v.push_ev; push_data = v.push_data }
     in
-    let o = Mon_lane.create ~slots ~tables ~present ~fetch i in
+    let o = Mon_lane.create ~slots ~pipe:lane_pipe ~tables ~present ~fetch i in
     busy <== o.busy;
     act <== o.act;
     cur <== o.unit_;
@@ -611,7 +616,8 @@ let create
     ignore (late_now -- sprintf "mon_late_now%d" l : Signal.t);
     let step = rst_sync_n &: v.running &: v.tick in
     let stamp_l = reg spec ~enable:step now_q -- sprintf "mon_stamp%d" l in
-    let stamp = mux2 step now_q stamp_l in
+    (* [lane_pipe]: no slot runs in the tick cycle, so every firing reads the latched stamp *)
+    let stamp = if lane_pipe then stamp_l else mux2 step now_q stamp_l in
     (* ROM mode: P + 1 >= slots (T<slots>); loadable modes as v1 (slots = 8) *)
     let min_p =
       if serial
@@ -619,6 +625,11 @@ let create
         (* fetch bound for k enabled units: P >= 6 k + 1 (v1: k = 2 gives 13), and T<slots> *)
         let k = List.fold (bits_lsb lu) ~init:(zero 3) ~f:(fun a b -> a +: uresize b 3) in
         mux k (List.init 8 ~f:(fun k -> of_int ~width:16 (if k = 0 then slots - 1 else Int.max (slots - 1) ((6 * k) + 1)))))
+      else if lane_pipe
+      then
+        (* slots run in tick + 1 .. tick + slots, and the registered blame of slot j reaches the
+           lane in tick + j + 2, which must be at or before the next tick: P >= slots *)
+        of_int ~width:16 slots
       else mux2 (ld_mode &: (lu ==:. 3)) (of_int ~width:16 13) (of_int ~width:16 (slots - 1))
     in
     let ready = ~:ld_mode |: ctx_loaded in

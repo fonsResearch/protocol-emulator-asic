@@ -63,9 +63,9 @@ let () =
         (* controller peer: UM10204 Fm/Sm minima scaled to the step length, sometimes faster
            than the contract allows (assumption violations end the useful part of a trace) *)
         (* base unit: cycles at a 4-cycle step (P = 3), scaled below to the trace's step. _sm30_:
-           the UM10204 Sm minima in 30 MHz steps at P = 4 (tHIGH 24, tLOW 28.2, tSU;DAT 1.5
-           steps), times 4, for the increment-3 contract (23, 27, 23) *)
-        let sm30 = { Peers.tlow = 113; thigh = 96; thd_sta = 96; tsu_sta = 113; tsu_sto = 96; tbuf = 113; dh = 2; su = 6 } in
+           the UM10204 Sm minima in 30 MHz steps at P = 5 (tHIGH 20, tLOW 23.5, tSU;DAT 1.33
+           steps), times 4, for the increment-3 contract (19, 22, 19) *)
+        let sm30 = { Peers.tlow = 94; thigh = 80; thd_sta = 80; tsu_sta = 94; tsu_sto = 80; tbuf = 94; dh = 2; su = 5 } in
         let base =
           if String.is_substring name ~substring:"_sm30_" then sm30
           else if String.is_substring name ~substring:"_sm_" then Peers.i2c_sm
