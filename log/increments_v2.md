@@ -387,3 +387,11 @@ E4/E5 (maps/v2inc5_d9d97d2.json, only change: misnamed flop _15015 = s2_ui[0]): 
 2,748/2,748 (278 s), E4 proven 2,748/2,748 (257 s) on the first run. All 2,456 gate flops paired,
 outputs and macro buses paired. Controls: N1 0 proven; N4 19 unproven; N5 exactly mon_now[5]
 unproven. Status: increment 5 signed off at 30 MHz on 6x4.
+
+## 6. Increment 4 (SPI modes 1-3): probed, not adopted
+
+Probe on branch v2-inc4-spi (7320ecc, CI run 42447019150; details in its log/increments_v2.md
+section 6): chip RTL vs Psim equal in 12 scenarios, routes at 53.52 % with DRC/LVS 0, but slow-corner
+setup WS +0.501 ns, hold WS +0.035 ns, 371 slow max-slew warnings. Below the 1 ns rule; user
+decision 2026-11-08: v2-inc5-usb (this branch, slow +5.83 ns at 48.56 %) stays the tape-out
+candidate, SPI is mode 0 only. Plan step 7 closed: increments 1, 2 (option D), 3 and 5 shipped.
