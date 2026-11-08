@@ -293,3 +293,14 @@ word of step t; invariant i_seq: busy_q over since 1..slots with slot_q = since 
 r1v2p_s5_u0..u4 PASS (2-3 s each, 1,173 latches), r1v2p_s5_u4_t5 (ticks 5 apart) PASS;
 r1v2p_s5_u4_t4_neg FAIL (depth 6), r1v2p_s5_u3_smask_neg FAIL (depth 5), replay ok. R1 needs ticks
 at least slots cycles apart; the admission bound P >= slots comes from the blame-to-lane latency.
+
+## 10. C3 host-clear sweep with the pipelined schedule (2026-11-08)
+
+`rtl_v1/test/test_c3_pipe.ml` (shipped configuration: lane pipe + vpipe + param_windows), same
+scenarios as section 7.2. Prediction shifted by one cycle: a host clear landing d cycles after a
+blame of unit j makes the chip diverge from the A2 harness composition iff d in 1 .. j + 1.
+- uart_rx 8 % fast, blame 32@4421, j = 0: diverges only at d = 1 (was never); 0 mismatches.
+- spi_ctl MISO hold glitch, blame 91@1145, j = 4: diverges for d = 1..5 (was 1..4); 0 mismatches.
+The first-blame verdict is identical in every run, so theorem U is unaffected; the C3 statement in
+section 7 holds with j replaced by j + 1 for lane_pipe builds. The open item of increments_v2 3.4
+is closed.
