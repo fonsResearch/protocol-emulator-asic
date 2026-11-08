@@ -1,0 +1,36 @@
+{
+ "rom_verdict": {
+  "fail": true,
+  "blame": false,
+  "blame_lane": 0,
+  "fail_lane": 0,
+  "overrun": 0,
+  "fail_code": 19,
+  "blame_code": 0,
+  "fail_unit": 0,
+  "blame_unit": 0,
+  "fail_time": 7236,
+  "blame_time": 0
+ },
+ "window_verdict": {
+  "fail": false,
+  "blame": false,
+  "blame_lane": 0,
+  "fail_lane": 0,
+  "overrun": 0,
+  "fail_code": 0,
+  "blame_code": 0,
+  "fail_unit": 0,
+  "blame_unit": 0,
+  "fail_time": 0,
+  "blame_time": 0
+ },
+ "rom_received": [
+  165,
+  60
+ ],
+ "received": [
+  165,
+  60
+ ]
+}

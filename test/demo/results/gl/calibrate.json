@@ -1,0 +1,52 @@
+{
+ "verdict": {
+  "fail": true,
+  "blame": false,
+  "blame_lane": 0,
+  "fail_lane": 0,
+  "overrun": 0,
+  "fail_code": 19,
+  "blame_code": 0,
+  "fail_unit": 0,
+  "blame_unit": 0,
+  "fail_time": 7236,
+  "blame_time": 0
+ },
+ "t_run": 6404,
+ "release": 10,
+ "edges": [
+  [
+   "oe",
+   6729
+  ],
+  [
+   "fall",
+   6925
+  ],
+  [
+   "rise",
+   7250
+  ],
+  [
+   "fall",
+   7510
+  ],
+  [
+   "rise",
+   7770
+  ],
+  [
+   "fall",
+   8030
+  ],
+  [
+   "rise",
+   8550
+  ],
+  [
+   "fall",
+   8810
+  ]
+ ],
+ "fail_board": 7246
+}

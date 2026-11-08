@@ -1,0 +1,41 @@
+{
+ "verdict": {
+  "fail": false,
+  "blame": true,
+  "blame_lane": 1,
+  "fail_lane": 0,
+  "overrun": 0,
+  "fail_code": 0,
+  "blame_code": 145,
+  "fail_unit": 0,
+  "blame_unit": 4,
+  "fail_time": 0,
+  "blame_time": 7850
+ },
+ "target_received": [
+  165,
+  60,
+  0,
+  255,
+  129,
+  126,
+  85,
+  15
+ ],
+ "pushed": [
+  150,
+  1,
+  128,
+  195,
+  90,
+  240,
+  51,
+  231
+ ],
+ "miso_changes": [
+  7855,
+  7919,
+  7951,
+  7983
+ ]
+}

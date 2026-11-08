@@ -1,0 +1,18 @@
+calibrate.vcd.gz: 21767 edges, defined from edge 1/1, identical
+i2c_ctl_clean.vcd.gz: 107975 edges, defined from edge 1/1, identical
+i2c_ctl_late_ack.vcd.gz: 107975 edges, defined from edge 1/1, identical
+i2c_ctl_slow_target.vcd.gz: 107975 edges, defined from edge 1/1, identical
+i2c_tgt_clean.vcd.gz: 109919 edges, defined from edge 1/1, identical
+i2c_tgt_short_start_hold.vcd.gz: 109919 edges, defined from edge 1/1, identical
+spi_ctl_clean.vcd.gz: 29863 edges, defined from edge 1/1, identical
+spi_ctl_slow_target.vcd.gz: 29863 edges, defined from edge 1/1, identical
+spi_tgt_clean.vcd.gz: 34719 edges, defined from edge 1/1, identical
+spi_tgt_early_cs.vcd.gz: 33887 edges, defined from edge 1/1, identical
+two_lanes.vcd.gz: 43607 edges, defined from edge 1/1, identical
+uart_rx_clean.vcd.gz: 52271 edges, defined from edge 1/1, identical
+uart_rx_fast_peer.vcd.gz: 49957 edges, defined from edge 1/1, identical
+uart_tx_bad_start.vcd.gz: 21767 edges, defined from edge 1/1, identical
+uart_tx_clean.vcd.gz: 44685 edges, defined from edge 1/1, identical
+usb_ls_tx.vcd.gz: 38519 edges, defined from edge 1/1, identical
+windows_uart_d6.vcd.gz: 64279 edges, defined from edge 1/1, identical
+0 scenarios differ

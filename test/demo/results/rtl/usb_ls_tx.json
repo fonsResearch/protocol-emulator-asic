@@ -1,0 +1,45 @@
+{
+ "verdict": {
+  "fail": false,
+  "blame": false,
+  "blame_lane": 0,
+  "fail_lane": 0,
+  "overrun": 0,
+  "fail_code": 0,
+  "blame_code": 0,
+  "fail_unit": 0,
+  "blame_unit": 0,
+  "fail_time": 0,
+  "blame_time": 0
+ },
+ "pushed": [
+  0,
+  0
+ ],
+ "packets": [
+  {
+   "pid": 195,
+   "payload": [],
+   "sync_ok": true,
+   "pid_ok": true,
+   "crc_ok": true,
+   "stuff_err": false,
+   "whole_bytes": true
+  },
+  {
+   "pid": 75,
+   "payload": [
+    1,
+    2,
+    3
+   ],
+   "sync_ok": true,
+   "pid_ok": true,
+   "crc_ok": true,
+   "stuff_err": false,
+   "whole_bytes": true
+  }
+ ],
+ "bad_runs": 0,
+ "bad": []
+}
