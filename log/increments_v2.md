@@ -387,3 +387,18 @@ E4/E5 (maps/v2inc5_d9d97d2.json, only change: misnamed flop _15015 = s2_ui[0]): 
 2,748/2,748 (278 s), E4 proven 2,748/2,748 (257 s) on the first run. All 2,456 gate flops paired,
 outputs and macro buses paired. Controls: N1 0 proven; N4 19 unproven; N5 exactly mon_now[5]
 unproven. Status: increment 5 signed off at 30 MHz on 6x4.
+
+## 6. Increment 4 probe: SPI modes 1-3 (ROM packages 8-13)
+
+Branch v2-inc4-spi (from v2-inc5-usb 7907b3d; v2-inc5-usb stays the frozen candidate). Library
+`Rom_lib.v2_inc4` = v2inc5 + spi_ctl m1-m3 (8-10) + spi_tgt m1-m3 (11-13), P = 7. A2: U proved for
+all six in v1 (spi_tgt m1 via the CPOL symmetry lemma); contract parameters unchanged.
+- Admissibility: 14 packages, all admissible at 5 slots (5 units each for the new ones).
+- Chip RTL vs Psim (rtl_v1/test/test_inc4.ml, shipped configuration): per mode, controller with
+  target peer tco 3 (clean) and tco 14 (blame 91), target with controller peer (clean) and early CS
+  (blame 61 for m1/m3, 52 for m2); all 12 equal in monitor-input stream, pads, pins, verdict, pushes.
+- Vectors v2_spi_ctl_m3 (12,721 cycles, clean) and v2_spi_tgt_m1 (11,937, blame 0x61); the 8 other
+  vectors regenerate byte-identically; RTL replay 11/11; COMBDLY fix equivalence-checked.
+- Local synthesis 320,886 um^2 (+31.8k over v2inc5; the earlier +20.4k study figure was against the
+  unfixed v2inc3 core and underestimated), slowr depth 14.47 ns. Projected routed utilisation about
+  53.9 % [estimate, v2inc5 ratio 1.321], above the highest routed point (48.6 %).

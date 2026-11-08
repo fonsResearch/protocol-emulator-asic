@@ -24,14 +24,14 @@ A programmable protocol emulator with an on-chip assumption monitor.
   readable over the host port.
 - **Shipped packages** (ROM, index: package): 0 UART TX (uio0), 1 UART RX (uio1), 2 SPI controller
   mode 0, 3 SPI target mode 0 (SPI on uio4-7), 4 I2C controller Fm, 5 I2C controller Sm, 6 I2C
-  target Sm (I2C on uio2 = SCL, uio3 = SDA, open drain), 7 USB-LS TX (uio0 = D+, uio1 = D-; the same
+  target Sm (I2C on uio2 = SCL, uio3 = SDA, open drain), 8-10 SPI controller modes 1-3, 11-13 SPI target modes 1-3 (increment 4 probe build only), 7 USB-LS TX (uio0 = D+, uio1 = D-; the same
   pins as UART TX/RX, so USB and UART cannot run on the two lanes at once). Each ROM lane's timing windows can be
   replaced by a host-loaded table (WIN_CTL/WIN_LO/WIN_HI, doc/contracts/monitor_isa_v1.md section 8).
 - Verification target: for each package, *fail* is never raised unless *blame* was raised
   earlier, under stated physical assumptions (doc/concept/assume_guarantee.md). This is proved on
   the specification; the link to the chip is being completed (log/proofs_v2.md).
 
-Clock: 30 MHz for this build (v2 minimum + I2C controller + window tables + I2C target + USB-LS TX, increments 1-3 and 5, with the pipelined monitor schedule). Timing is signed off at the slow corner, 1.08 V / 125 C: setup slack +5.83 ns at 48.6 % utilisation, route DRC / LVS / antenna clean (log/increments_v2.md section 5.1). The lane divisors are host registers, so a different clock only changes the divisor values. Divisors at 30 MHz (`Rom_lib.divisors_at`): UART TX P = 64 and UART RX P = 32 for 115200 baud, SPI controller/target P = 7, I2C controller Fm P = 7 (step 0.27 us, SCL 375 kHz), Sm P = 29 (step 1 us), I2C target Sm P = 5 (step 0.2 us; contract h_min 19, l_min 22, hd 19 steps). USB-LS TX P = 19 (20 cycles = one 1.5 Mbit/s bit). The monitor admits RUN only for P >= 5 (5 slots, pipelined schedule).
+Clock: 30 MHz. This branch is the increment-4 probe (SPI modes 1-3 added; CI result pending). The signed-off build (v2 minimum + I2C controller + window tables + I2C target + USB-LS TX, increments 1-3 and 5, with the pipelined monitor schedule) has timing signed off at the slow corner, 1.08 V / 125 C: setup slack +5.83 ns at 48.6 % utilisation, route DRC / LVS / antenna clean (log/increments_v2.md section 5.1). The lane divisors are host registers, so a different clock only changes the divisor values. Divisors at 30 MHz (`Rom_lib.divisors_at`): UART TX P = 64 and UART RX P = 32 for 115200 baud, SPI controller/target P = 7, I2C controller Fm P = 7 (step 0.27 us, SCL 375 kHz), Sm P = 29 (step 1 us), I2C target Sm P = 5 (step 0.2 us; contract h_min 19, l_min 22, hd 19 steps). USB-LS TX P = 19 (20 cycles = one 1.5 Mbit/s bit). The monitor admits RUN only for P >= 5 (5 slots, pipelined schedule).
 
 ## How to test
 

@@ -138,3 +138,8 @@ let v2_cand ~spi13 ~usb = List.map (v2_cand_with_p ~spi13 ~usb) ~f:fst
    v2inc3 plus USB-LS TX as ROM package 7, P = 19 at 30 MHz (20 cycles per bit, exact). *)
 let v2_inc5_with_p () = v2_cand_with_p ~spi13:false ~usb:true
 let v2_inc5 () = List.map (v2_inc5_with_p ()) ~f:fst
+
+(* Increment 4 probe (log/increments_v2.md section 6, user choice 2026-11-08): v2inc5 plus SPI
+   modes 1-3, controller as packages 8-10 (m1, m2, m3) and target as 11-13, P = 7 as mode 0. *)
+let v2_inc4_with_p () = v2_inc5_with_p () @ spi_modes_1_3 ()
+let v2_inc4 () = List.map (v2_inc4_with_p ()) ~f:fst

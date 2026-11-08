@@ -83,3 +83,21 @@ let%expect_test "increment 5: USB-LS TX package 7, divisor and admissibility (pi
     slots 5: all admissible
     |}]
 ;;
+
+let%expect_test "increment 4 probe: SPI modes 1-3 as packages 8-13, admissibility (pipelined, P >= 5)" =
+  let lib = Rom_lib.v2_inc4_with_p () in
+  printf "%d packages\n" (List.length lib);
+  List.iteri lib ~f:(fun i (c, p) ->
+    if i >= 8 then printf "%d %-24s P %d units %d\n" i (Compile.compile_exn c).name p (Array.length (Compile.compile_exn c).units));
+  show ~slots:5 lib;
+  [%expect {|
+    14 packages
+    8 spi_ctl_v1_m1_h2         P 7 units 5
+    9 spi_ctl_v1_m2_h2         P 7 units 5
+    10 spi_ctl_v1_m3_h2         P 7 units 5
+    11 spi_tgt_v1_m1_h3_g6      P 7 units 5
+    12 spi_tgt_v1_m2_h3_g6      P 7 units 5
+    13 spi_tgt_v1_m3_h3_g6      P 7 units 5
+    slots 5: all admissible
+    |}]
+;;

@@ -30,9 +30,9 @@ values are estimates, to be fixed in each increment.
 | 0 | uart_tx d4 | U proved (dprove 9 s), N1 + 2 negatives | **shipped** | 71 | 7.1, 7.3 (A, B, D, F, K at P = 71) | v1_rom_uart, v2_spi_tgt_uart_tx |
 | 1 | uart_rx d8 m2 | U proved (681 s), N1 + 3 negatives | **shipped** | 35 | 7.1, 7.2 (sweep, 6 random), 7.3 (C, E, J, L at P = 35) | v2_spi_ctl_uart_rx |
 | 2 | spi_ctl m0 h2 | U proved (65 s) | **shipped** | 7 | 7.1, 7.2 (sweep j = 4, 4 random), 7.3 | v2_spi_ctl_uart_rx |
-| 3-5 | spi_ctl m1-m3 | U proved (59-77 s) | increment 4 | 7 | - | - |
+| 3-5 | spi_ctl m1-m3 | U proved (59-77 s) | increment 4 probe (ROM 8-10) | 7 | rtl_v1/test/test_inc4.ml | v2_spi_ctl_m3 |
 | 6 | spi_tgt m0 h3 g6 | U proved (898 s) | **shipped** | 7 | 7.1, 7.2 (6 random), 7.3 (C, E, G, K) | v2_spi_tgt_uart_tx |
-| 7-9 | spi_tgt m1-m3 | m2/m3 proved; m1 via the CPOL symmetry lemma | increment 4 | 7 | - | - |
+| 7-9 | spi_tgt m1-m3 | m2/m3 proved; m1 via the CPOL symmetry lemma | increment 4 probe (ROM 11-13) | 7 | rtl_v1/test/test_inc4.ml | v2_spi_tgt_m1 |
 | 10 | i2c_ctl Fm | bounded (bmc3, 77 frames) | increment 1 | about 8 (367 kHz) | - | - |
 | 11 | i2c_ctl Sm | bounded (bmc3, 76 frames) | increment 1 | about 32 | - | - |
 | 12 | i2c_tgt Fm | bounded with EA1 (co-sim + checkpoint BMC) | **dropped** | needs P + 1 <= about 2.8; 5 slots need P >= 4 | - | - |

@@ -133,6 +133,7 @@ let lib =
      | "v2inc1" -> Rom_lib.v2_inc1 ()
      | "v2inc3" -> Rom_lib.v2_inc3 ()
      | "v2inc5" -> Rom_lib.v2_inc5 ()
+     | "v2inc4" -> Rom_lib.v2_inc4 ()
      | _ -> Rom_lib.all15 ())
 ;;
 
@@ -431,6 +432,55 @@ let v2_usb_tx h =
   List.rev !log
 ;;
 
+
+(* increment 4: lane 1 SPI controller mode 3 (package 10) against an SPI target peer (clean) *)
+let v2_spi_ctl_m3 h =
+  let log = ref [] in
+  let note fmt = ksprintf (fun s -> log := s :: !log) fmt in
+  write h 0x20 [ Programs_v1.spi_own_ctl ];
+  write h 0x22 [ 7; 0 ];
+  write h 0x25 [ Programs_v1.spi_cfg_ctl ];
+  write h 0x26 [ Programs_v1.spi_cfg2_ctl ];
+  load h ~lane:1 (Programs_v1.spi_ctl ~cpol:true ~cpha:true);
+  set_pkg h ~lane:1 ~idx:10 (List.nth_exn lib 10);
+  write h 0x29 [ 0xA5; 0x3C; 0x00; 0xFF ];
+  let tgt = Peers.spi_target ~cpol:true ~cpha:true ~tco:3 ~send:[ 0x96; 0x01; 0x80; 0xC3 ] () in
+  h.t0 <- h.n;
+  h.peer <- Some tgt.drive;
+  write h 0x01 [ 0x02 ];
+  wait h 3000;
+  h.peer <- None;
+  h.uio_in <- 0xFF;
+  note "VERDICT %s STATUS 0x%02X" (hex (read h 0x40 12)) (read1 h 0x02);
+  note "lane 1 SPI ctl m3 RX bytes [%s]; peer received [%s]" (hex (rx_fifo h ~lane:1)) (hex (tgt.received ()));
+  List.rev !log
+;;
+
+(* increment 4: lane 1 SPI target mode 1 (package 11) against an SPI controller peer whose
+   frame 3 raises CS early (blame) *)
+let v2_spi_tgt_m1 h =
+  let log = ref [] in
+  let note fmt = ksprintf (fun s -> log := s :: !log) fmt in
+  write h 0x20 [ Programs_v1.spi_own_tgt ];
+  write h 0x22 [ 7; 0 ];
+  load h ~lane:1 (Programs_v1.spi_tgt ~cpol:false ~cpha:true);
+  set_pkg h ~lane:1 ~idx:11 (List.nth_exn lib 11);
+  write h 0x29 [ 0xA5; 0x3C; 0x00; 0xFF ];
+  let ctl =
+    Peers.spi_controller ~cpol:false ~cpha:true ~hp:40 ~setup:40 ~hold:40 ~gap:144 ~mdly:2 ~t0:400
+      ~bytes:[ 0x96; 0x01; 0x80; 0xC3 ] ~defect:(Early_rise (3, 9)) ()
+  in
+  h.t0 <- h.n;
+  h.peer <- Some ctl.cdrive;
+  write h 0x01 [ 0x02 ];
+  wait h (Int.max (ctl.frames_end + 300) 3000);
+  h.peer <- None;
+  h.uio_in <- 0xFF;
+  note "VERDICT %s STATUS 0x%02X" (hex (read h 0x40 12)) (read1 h 0x02);
+  note "lane 1 SPI tgt m1 RX bytes [%s]" (hex (rx_fifo h ~lane:1));
+  List.rev !log
+;;
+
 let () =
   let dir = (Sys.get_argv ()).(1) in
   List.iter
@@ -440,15 +490,19 @@ let () =
      @ (if String.equal (env_or "PEMU_PWIN" "0") "1" then [ "v2_pwin_uart", pwin_uart ] else [])
      @
      (* v2inc1 = v2min packages 0-3 unchanged + I2C controller as 4/5, so the v2 scenarios apply *)
-     (if List.mem [ "v2min"; "v2inc1"; "v2inc3"; "v2inc5" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
+     (if List.mem [ "v2min"; "v2inc1"; "v2inc3"; "v2inc5"; "v2inc4" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
       then [ "v2_spi_ctl_uart_rx", v2_spi_ctl_uart_rx; "v2_spi_tgt_uart_tx", v2_spi_tgt_uart_tx ]
       else [])
      @
-     (if List.mem [ "v2inc3"; "v2inc5" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
+     (if List.mem [ "v2inc3"; "v2inc5"; "v2inc4" ] (env_or "PEMU_LIB" "all") ~equal:String.equal
       then [ "v2_i2c_tgt", v2_i2c_tgt ~thd_sta:120; "v2_i2c_tgt_blame", v2_i2c_tgt ~thd_sta:60 ]
       else [])
      @
-     if String.equal (env_or "PEMU_LIB" "all") "v2inc5" then [ "v2_usb_tx", v2_usb_tx ] else [])
+     (if List.mem [ "v2inc5"; "v2inc4" ] (env_or "PEMU_LIB" "all") ~equal:String.equal then [ "v2_usb_tx", v2_usb_tx ] else [])
+     @
+     if String.equal (env_or "PEMU_LIB" "all") "v2inc4"
+     then [ "v2_spi_ctl_m3", v2_spi_ctl_m3; "v2_spi_tgt_m1", v2_spi_tgt_m1 ]
+     else [])
     ~f:(fun (name, f) ->
       let h = create () in
       let log = f h in
