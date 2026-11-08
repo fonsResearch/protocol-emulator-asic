@@ -366,3 +366,24 @@ Build: PEMU_LIB=v2inc5 PEMU_LOADABLE=rom PEMU_SLOTS=5 PEMU_VPIPE=1 PEMU_PWIN=1 P
 - Pins: USB uses uio0/uio1 like UART TX/RX; the two lanes each own their pins, so USB on one lane
   and UART on the other cannot run at once. Whether the chip detects or refuses overlapping OWN
   settings across lanes was not checked here.
+
+### 5.1 CI and sign-off
+
+CI run 42426292730 (d9d97d2; core == flow/equiv/work/inc5/c_fixed.v): gds 2 h 15 min, precheck
+pass, gl_test pass (viewer fails as always).
+
+| metric | inc3 + lane_pipe (42387459848) | inc5 (42426292730) |
+|---|---|---|
+| std-cell area / utilisation | 378,963 / 48.23 % | 381,949 / 48.56 % (projected 49.2 %) |
+| setup WS slow / typ / fast (ns) | +6.341 / +16.387 / +22.331 | +5.827 / +16.189 / +22.253 |
+| setup / hold violations, hold WS | 0 / 0, +0.098 | 0 / 0, +0.075 |
+| route DRC, KLayout DRC, LVS, antenna | 0, 0, 0, 0 | 0, 0, 0, 0 |
+| max slew / cap / fanout | 91 / 8 / 192 | 86 / 6 / 186 |
+| Magic illegal overlaps | 10 | 5 |
+| wirelength (um) / power | 1,498,218 / 5.41 mW | 1,577,746 / 5.41 mW |
+
+Worst slow path: mon_slot_0[2] (lane-1 sequencer) -> mon_vp_code0[7] (+5.827 ns).
+E4/E5 (maps/v2inc5_d9d97d2.json, only change: misnamed flop _15015 = s2_ui[0]): E5 proven
+2,748/2,748 (278 s), E4 proven 2,748/2,748 (257 s) on the first run. All 2,456 gate flops paired,
+outputs and macro buses paired. Controls: N1 0 proven; N4 19 unproven; N5 exactly mon_now[5]
+unproven. Status: increment 5 signed off at 30 MHz on 6x4.
