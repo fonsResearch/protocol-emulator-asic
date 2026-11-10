@@ -195,3 +195,17 @@ let of_package ?slots (p : Mprog.t) i =
   let fetch u pc = mux u (List.init S.n_units ~f:(fun k -> S.rom_fetch p k pc)) in
   create ?slots ~tables ~present ~fetch i
 ;;
+
+(* Mutation-campaign hook (formal/src/mutate_v2.ml, plan step 9): when set, Mon_engine builds its
+   monitor lanes with it instead of [create]. Never set in the shipped flow. *)
+let hook :
+  (slots:int -> pipe:bool -> tables:S.tables -> present:Signal.t array
+   -> fetch:(Signal.t -> Signal.t -> Signal.t) -> Signal.t I.t -> Signal.t O.t)
+    option
+    ref
+  = ref None
+
+let instance ~slots ~pipe ~tables ~present ~fetch i =
+  match !hook with
+  | Some f -> f ~slots ~pipe ~tables ~present ~fetch i
+  | None -> create ~slots ~pipe ~tables ~present ~fetch i

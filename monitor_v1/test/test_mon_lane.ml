@@ -138,6 +138,107 @@ let%expect_test "time-multiplexed lane = spec circuit" =
     |}]
 ;;
 
+(* Shipped v2 configuration: 5 slots, pipelined slot schedule (Mon_lane ~pipe:true, firing of
+   unit u in step c at cycle c + u + 1). [mk] builds the lane under test from the package tables
+   (default the shipped Mon_lane; the mutation campaign passes mutants). Stops at the first
+   package with a mismatch when [stop_first]. Returns (packages, steps, firings, mismatches,
+   first mismatch). *)
+let diff_pipe ?mk ?(stop_first = false) ?(slots = 5) ~spacing ~packages ~cycles ~seed0 () =
+  let mk =
+    match mk with
+    | Some f -> f
+    | None -> fun ~tables ~present ~fetch i -> Mon_lane.create ~slots ~pipe:true ~tables ~present ~fetch i
+  in
+  let pk = ref 0 and steps = ref 0 and firings = ref 0 and mism = ref 0 and first = ref None in
+  let seed = ref seed0 in
+  while !pk < packages && not (stop_first && !mism > 0) do
+    incr seed;
+    let st = Random.State.make [| !seed; 23 |] in
+    match Compile.compile (Test_mmodel.gen_contract st) with
+    | Error _ -> ()
+    | Ok p when Array.length p.units > slots -> ignore p
+    | Ok p ->
+      let p = if !seed % 2 = 0 then fill8 ~n_to:slots p else p in
+      incr pk;
+      let ss = Test_mon_spec.sim_of p in
+      let tables = Mon_spec.tables_of_package p in
+      let present = Array.map tables.present ~f:(fun b -> if b then Signal.vdd else Signal.gnd) in
+      let fetch u pc = Signal.mux u (List.init Mon_spec.n_units ~f:(fun k -> Mon_spec.rom_fetch p k pc)) in
+      let sl = Sim_l.create (mk ~tables ~present ~fetch) in
+      let inp = spaced_inputs ~spacing st in
+      let lo : _ Mon_lane.O.t = Cyclesim.outputs ~clock_edge:Before sl in
+      let expected = Hashtbl.create (module Int)
+      and got = Hashtbl.create (module Int)
+      and rst_cycles = Hash_set.create (module Int)
+      and step_cycles = ref [] in
+      for cy = 0 to cycles - 1 do
+        let i = inp cy in
+        if not i.rst_sync_n then Hash_set.add rst_cycles cy;
+        if i.rst_sync_n && i.running && i.tick then step_cycles := cy :: !step_cycles;
+        set_inputs (Cyclesim.inputs sl) i;
+        ignore (Test_mon_spec.step_sim ss i);
+        Cyclesim.cycle sl;
+        if Bits.to_bool !(lo.fire)
+        then
+          Hashtbl.set got ~key:cy
+            ~data:
+              ( Bits.to_int !(lo.unit_)
+              , (if Bits.to_bool !(lo.role) then Lang.Blame else Lang.Fail)
+              , Bits.to_int !(lo.code) );
+        let so : _ Mon_spec.O.t = Cyclesim.outputs ~clock_edge:Before ss in
+        let fv = Bits.to_int !(so.fire) in
+        for u = 0 to Mon_spec.n_units - 1 do
+          if (fv lsr u) land 1 = 1
+          then
+            Hashtbl.set expected ~key:(cy + u + 1)
+              ~data:
+                ( u
+                , (if (Bits.to_int !(so.role) lsr u) land 1 = 1 then Lang.Blame else Lang.Fail)
+                , Bits.to_int !(List.nth_exn so.codes u) )
+        done
+      done;
+      List.iter !step_cycles ~f:(fun c ->
+        if List.exists (List.init (slots + 1) ~f:(fun d -> c + d)) ~f:(Hash_set.mem rst_cycles)
+           || c + slots >= cycles
+        then ()
+        else (
+          incr steps;
+          for d = 1 to slots do
+            let e = Hashtbl.find expected (c + d)
+            and g = Hashtbl.find got (c + d) in
+            Option.iter e ~f:(fun _ -> incr firings);
+            if not ([%equal: (int * Lang.role * int) option] e g)
+            then (
+              incr mism;
+              if Option.is_none !first
+              then
+                first
+                := Some
+                     (sprintf "seed %d step %d slot %d: spec %s lane %s" !seed c (d - 1)
+                        (Sexp.to_string ([%sexp_of: (int * Lang.role * int) option] e))
+                        (Sexp.to_string ([%sexp_of: (int * Lang.role * int) option] g))))
+          done))
+  done;
+  !pk, !steps, !firings, !mism, !first
+;;
+
+let%expect_test "shipped v2 lane (5 slots, pipelined schedule) = spec circuit" =
+  let show (pk, steps, firings, mism, first) =
+    Option.iter first ~f:print_endline;
+    printf "packages %d steps %d firings %d mismatches %d\n" pk steps firings mism
+  in
+  show (diff_pipe ~spacing:5 ~packages:200 ~cycles:3000 ~seed0:6000 ());
+  show (diff_pipe ~spacing:9 ~packages:50 ~cycles:3000 ~seed0:6500 ());
+  (* assumption broken (ticks 4 apart): shows the comparison is not vacuous *)
+  show (diff_pipe ~spacing:4 ~packages:50 ~cycles:3000 ~seed0:7000 ());
+  [%expect {|
+    packages 200 steps 101313 firings 59876 mismatches 0
+    packages 50 steps 15075 firings 10179 mismatches 0
+    seed 7004 step 2683 slot 0: spec ((4 Blame 3)) lane ()
+    packages 50 steps 30521 firings 14374 mismatches 1481
+    |}]
+;;
+
 (* v2 (doc/decisions/arch_v2_options.md V2-2): 5 slots, assumption T5 *)
 let%expect_test "time-multiplexed lane, 5 slots = spec circuit" =
   run ~slots:5 ~spacing:5 ~packages:200 ~cycles:3000 ~seed0:3000 ();

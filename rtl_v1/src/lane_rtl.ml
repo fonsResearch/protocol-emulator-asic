@@ -531,3 +531,9 @@ let create ?(bug : bug option) ~(sram : sram) (i : _ I.t) =
   ; imem_wack = wack
   }
 ;;
+
+(* Mutation-campaign hook (formal/src/mutate_v2.ml, plan step 9): when set, Top_v1 builds its
+   lanes with it instead of [create]. Never set in the shipped flow. *)
+let hook : (sram:sram -> Signal.t I.t -> Signal.t O.t) option ref = ref None
+
+let instance ~sram i = match !hook with Some f -> f ~sram i | None -> create ~sram i

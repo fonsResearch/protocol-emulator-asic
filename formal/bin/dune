@@ -1,3 +1,10 @@
 (executables
  (names emit_formal replay_cex mutants witness symdisc syminv inv_traces)
+ (modules emit_formal replay_cex mutants witness symdisc syminv inv_traces)
  (libraries core hardcaml pemu_formal pemu_monitor_v1 pemu_protocols_v1))
+
+(executable
+ (name mutants_v2)
+ (modules mutants_v2)
+ (libraries core core_unix hardcaml pemu_formal pemu_rtl_v1_test pemu_spec_v1_test pemu_monitor_v1_test)
+ (preprocess (pps ppx_jane)))

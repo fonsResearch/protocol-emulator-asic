@@ -593,7 +593,7 @@ let create
       ; uo_out = v.uo_out; uio_out = v.uio_out; uio_oe = v.uio_oe; pop_ev = v.pop_ev
       ; pop_data = v.pop_data; push_ev = v.push_ev; push_data = v.push_data }
     in
-    let o = Mon_lane.create ~slots ~pipe:lane_pipe ~tables ~present ~fetch i in
+    let o = Mon_lane.instance ~slots ~pipe:lane_pipe ~tables ~present ~fetch i in
     busy <== o.busy;
     act <== o.act;
     cur <== o.unit_;

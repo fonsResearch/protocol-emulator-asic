@@ -48,7 +48,9 @@ stats=$(yosys-abc -c "read_aiger $A/$h.aig; print_stats" 2>&1 | sed 's/\x1b\[[0-
 # sequential reductions (retiming, rewriting, latch correspondence, fraiging), K-step
 # induction, interpolation, BDD reachability, PDR. Measured before the switch: 2-10x faster
 # than pdr on most harnesses; pdr cannot prove a1_miter (UNDECIDED at 1200 s).
-# BMC (bmc3) is used below only to produce a shortest counterexample for cyclesim replay.
+# BMC (bmc3) is used below only to produce a shortest counterexample for cyclesim replay
+# (to depth+1 by default; REPLAY_F overrides the depth, since a dprove frame number can come
+# from a retimed network and undercount the original depth: v2 campaign, NO-BMC-CEX cases).
 t0=$(date +%s)
 # ENGINE (default dprove, the project default): ind = ABC k-induction (ind -F ${IND_K:-12}),
 # for harnesses whose property carries explicit strengthening invariants; it proves or is
@@ -80,12 +82,24 @@ if [ "$res" = FAIL ]; then
     # frame with no inputs
     printf "\n\n# DONE\n" > $A/$h.cex; bdepth=0
   else
-    bout=$(formal/tlimit.sh $TMO yosys-abc -c "read_aiger $A/$h.aig; bmc3 -F $(( ${depth:-300} + 1 )) -T $TMO; write_cex -a $A/$h.cex" 2>&1)
+    bout=$(formal/tlimit.sh ${REPLAY_BMC_T:-$TMO} yosys-abc -c "read_aiger $A/$h.aig; bmc3 -F ${REPLAY_F:-$(( ${depth:-300} + 1 ))} -T ${REPLAY_BMC_T:-$TMO}; write_cex -a $A/$h.cex" 2>&1)
     echo "$bout" > $A/$h.bmc.log
     bdepth=$(echo "$bout" | grep -o -E "asserted in frame [0-9]+" | grep -o -E "[0-9]+$" | head -1)
     [ -n "$bdepth" ] && depth=$bdepth
   fi
-  if [ -z "${bdepth:-}" ]; then replay="NO-BMC-CEX"
+  if [ -z "${bdepth:-}" ] && [ "$engine" = dprove ]; then
+    # Fallback (v2 campaign): bmc3 cannot reach the failing depth within the limit, which happens
+    # when dprove's sequential reductions find the failure much faster than plain BMC. Take
+    # dprove's own counterexample (mapped back to this AIG by ABC) and replay it; it need not be a
+    # shortest trace, so a kill only requires bad to rise somewhere in the trace in cyclesim.
+    formal/tlimit.sh $TMO yosys-abc -c "read_aiger $A/$h.aig; dprove -T $TMO; write_cex -a $A/$h.dcex" > $A/$h.dcex.log 2>&1
+    if [ -s $A/$h.dcex ]; then
+      formal/tlimit.sh $TMO "$B/default/formal/bin/replay_cex.exe" $h $A/$h.dcex $A/$h.map > $A/$h.replay.txt 2>&1
+      if grep -q -E "REPLAY (OK|MISMATCH): bad first rises at frame" $A/$h.replay.txt; then
+        replay="replay ok (dprove cex, bad at frame $(grep -o -E 'rises at frame [0-9]+' $A/$h.replay.txt | grep -o -E '[0-9]+$'))"
+      else replay="NO-BMC-CEX, dprove cex does not replay"; fi
+    else replay="NO-BMC-CEX"; fi
+  elif [ -z "${bdepth:-}" ]; then replay="NO-BMC-CEX"
   elif formal/tlimit.sh $TMO "$B/default/formal/bin/replay_cex.exe" $h $A/$h.cex $A/$h.map > $A/$h.replay.txt 2>&1
   then replay="replay ok"; else replay="REPLAY MISMATCH"; fi
 fi

@@ -378,7 +378,7 @@ let create_with_debug ?(loadable = [| false; true |]) ?mon_slots ?lane_pipe ?ver
   let lane_out =
     Array.init 2 ~f:(fun l ->
       let u0 = mark () in
-      let o = Lane_rtl.create ~sram:(sram l) lane_in.(l) in
+      let o = Lane_rtl.instance ~sram:(sram l) lane_in.(l) in
       lane_uids.(l) <- (u0, mark ()) :: lane_uids.(l);
       o)
   in

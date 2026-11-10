@@ -35,7 +35,7 @@ module M = Pemu_monitor_v1.Mprog
 
 (* [pipe] (Mon_lane ~pipe, log/increments_v2.md section 3.4): the claim is shifted by one cycle,
    unit j fires in cycle t + j + 1, and every slot receives the ghost word of step t. *)
-let harness ?debug ?bug ?(slots = S.n_units) ?(pipe = false) ?(spacing = 8) ~j ~name () =
+let harness ?debug ?bug ?(claim_only = false) ?(slots = S.n_units) ?(pipe = false) ?(spacing = 8) ~j ~name () =
   let clock = input "clock" 1 in
   let gs = Reg_spec.create ~clock () in
   let started = reg gs vdd -- "env_started" in
@@ -111,12 +111,16 @@ let harness ?debug ?bug ?(slots = S.n_units) ?(pipe = false) ?(spacing = 8) ~j ~
   let lane_pc = wire 7 in
   let lint = ref None in
   let present = Array.init S.n_units ~f:(fun u -> if u = j then vdd else inp (sprintf "free_in_present%d" u) 1) in
+  let fetch _cur pc =
+    lane_pc <== pc;
+    if pipe then g_w else mux2 step w_spec g_w
+  in
   let lo =
-    L.create ~slots ~pipe ~front ~probe:(fun x -> lint := Some x) ~only_unit:j ?bug ~tables ~present
-      ~fetch:(fun _cur pc ->
-        lane_pc <== pc;
-        if pipe then g_w else mux2 step w_spec g_w)
-      i
+    match Mutate_v2.index_for Mon_lane with
+    | Some index ->
+      assert (Option.is_none bug);
+      Mutate_v2.mon_lane ~probe:(fun x -> lint := Some x) ~index ~slots ~pipe ~tables ~present ~fetch i
+    | None -> L.create ~slots ~pipe ~front ~probe:(fun x -> lint := Some x) ~only_unit:j ?bug ~tables ~present ~fetch i
   in
   let lint = Option.value_exn !lint in
   (* window bookkeeping *)
@@ -195,7 +199,10 @@ let harness ?debug ?bug ?(slots = S.n_units) ?(pipe = false) ?(spacing = 8) ~j ~
       &: (~:(lint.busy_q) |: (uresize lint.slot_q 4 ==: since))
   in
   let inv_bad = ~:(i_ghost &: i_pend &: i_np &: i_seq) in
-  let bad = ok_so_far &: (bad_slot |: bad_extra |: inv_bad) in
+  (* [claim_only] (mutation campaign, bounded checking): the refinement claim without the
+     strengthening invariants, so every counterexample is an observable firing / fetch-address
+     difference *)
+  let bad = ok_so_far &: (bad_slot |: bad_extra |: if claim_only then gnd else inv_bad) in
   Harness.bad_circuit ?debug
     ~dbg:
       [ "step", step; "since", since; "lane_fire", lo.fire; "lane_unit", lo.unit_; "exp_fire", exp_fire

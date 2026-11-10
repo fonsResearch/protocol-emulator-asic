@@ -23,7 +23,8 @@ type cov =
   ; mutable first : string option
   }
 
-let run_one ~seed ~cycles cov =
+(* [mk]: lane constructor (default Lane_circuit; the mutation campaign passes mutants) *)
+let run_one ?(mk = fun ~imem i -> Lane_circuit.create ~imem i) ~seed ~cycles cov =
   let st = Random.State.make [| seed |] in
   let framed = seed % 2 = 0 in
   let prog =
@@ -38,7 +39,7 @@ let run_one ~seed ~cycles cov =
   let model = Lane_model.create words in
   let sim =
     Sim.create ~config:Cyclesim.Config.trace_all
-      (Lane_circuit.create ~imem:(Lane_circuit.imem_rom words))
+      (mk ~imem:(Lane_circuit.imem_rom words))
   in
   let si = Cyclesim.inputs sim
   and so = Cyclesim.outputs ~clock_edge:Before sim in

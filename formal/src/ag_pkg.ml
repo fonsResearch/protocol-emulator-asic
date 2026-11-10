@@ -90,8 +90,13 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ~io ~
   let words = Isa1.assemble prog in
   let blame_in = wire 1 in
   L.taps := [];
+  let lane_create ~imem i =
+    match Mutate_v2.index_for Lane_spec with
+    | Some index -> Mutate_v2.lane_spec ~index ~imem i
+    | None -> L.create ~imem i
+  in
   let o =
-    L.create ~imem:(L.imem_rom words)
+    lane_create ~imem:(L.imem_rom words)
       { L.I.clock; rst_sync_n; tick; run; loaded = vdd; len = of_int ~width:8 (List.length prog)
       ; own = of_int ~width:8 own; od = of_int ~width:8 od; cfg = of_int ~width:8 cfg
       ; cfg2 = of_int ~width:8 cfg2; pins = sync2 uio_in; tx_push = io.tx_push

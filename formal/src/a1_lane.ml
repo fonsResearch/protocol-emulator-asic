@@ -55,8 +55,23 @@ let lane_inputs () =
   }
 ;;
 
+(* v2 mutation campaign hooks (formal/src/mutate_v2.ml): the active mutant replaces the unit *)
+let rtl_create ?bug ~sram ri =
+  match Mutate_v2.index_for Lane_rtl with
+  | Some index ->
+    assert (Option.is_none bug);
+    Mutate_v2.lane_rtl ~index ~sram ri
+  | None -> R.create ?bug ~sram ri
+;;
+
+let spec_create ~imem i =
+  match Mutate_v2.index_for Lane_spec with
+  | Some index -> Mutate_v2.lane_spec ~index ~imem i
+  | None -> L.create ~imem i
+;;
+
 let spec_of (i : _ R.I.t) ~imem =
-  L.create
+  spec_create
     ~imem
     { L.I.clock = i.clock; rst_sync_n = i.rst_sync_n; tick = i.tick; run = i.run
     ; loaded = i.loaded; len = i.len; own = i.own; od = i.od; cfg = i.cfg; cfg2 = i.cfg2
@@ -84,7 +99,7 @@ let full ?debug ?bug ~name () =
     words := mem;
     o
   in
-  let r = R.create ?bug ~sram ri in
+  let r = rtl_create ?bug ~sram ri in
   let s = spec_of ri ~imem:(fun pc -> mux pc !words) in
   let pairs = compare_outputs s r in
   Harness.bad_circuit ?debug ~dbg:(dbg pairs) ~name (differ pairs)
@@ -127,7 +142,7 @@ let fetch ?debug ?bug ~name () =
     port := Some i;
     free_read_sram ~rdata i
   in
-  let r = R.create ?bug ~sram ri in
+  let r = rtl_create ?bug ~sram ri in
   let p = Option.value_exn !port in
   let dout_addr, fresh = ghost ~clock p in
   let running = ri.rst_sync_n &: ri.run &: ri.loaded &: ~:(r.faulted) in
@@ -156,7 +171,7 @@ let datapath ?debug ?bug ~name () =
     dout := Some o.a_dout;
     o
   in
-  let r = R.create ?bug ~sram ri in
+  let r = rtl_create ?bug ~sram ri in
   let ir = Option.value_exn !dout in
   let s = spec_of ri ~imem:(fun _ -> ir) in
   let pairs = compare_outputs s r in

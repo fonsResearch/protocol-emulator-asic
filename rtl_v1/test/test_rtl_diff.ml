@@ -9,10 +9,11 @@ open Pemu_spec_v1
 open Pemu_rtl_v1
 module Sim = Cyclesim.With_interface (Lane_rtl.I) (Lane_rtl.O)
 
-let create_sim () =
+(* [mk]: lane constructor (default the shipped Lane_rtl; the mutation campaign passes mutants) *)
+let create_sim ?(mk = fun ~sram i -> Lane_rtl.create ~sram i) () =
   Sim.create
     ~config:Cyclesim.Config.trace_all
-    (Lane_rtl.create ~sram:(fun i -> fst (Sram256.behavioural i)))
+    (mk ~sram:(fun i -> fst (Sram256.behavioural i)))
 ;;
 
 type cov =
@@ -28,7 +29,7 @@ type cov =
   ; mutable first : string option
   }
 
-let run_one ~seed ~cycles cov =
+let run_one ?mk ~seed ~cycles cov =
   let st = Random.State.make [| seed; 7 |] in
   let framed = seed % 2 = 0 in
   let prog =
@@ -43,7 +44,7 @@ let run_one ~seed ~cycles cov =
   (* the model starts from garbage memory; only acknowledged writes define it *)
   let model_mem = Array.init 256 ~f:(fun _ -> Random.State.int st 65536) in
   let model = Lane_model.create model_mem in
-  let sim = create_sim () in
+  let sim = create_sim ?mk () in
   let si = Cyclesim.inputs sim
   and so = Cyclesim.outputs ~clock_edge:Before sim in
   let own = if framed then 0xFF else Random.State.int st 256
