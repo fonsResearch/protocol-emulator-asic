@@ -1,0 +1,5 @@
+(library
+ (name pemu_toolchain)
+ (libraries core pemu_spec_v1 pemu_monitor_v1 pemu_rtl_v1)
+ (preprocess
+  (pps ppx_jane)))

@@ -1,0 +1,5 @@
+(executables
+ (names pemu_asm pemu_cc)
+ (libraries core pemu_toolchain pemu_spec_v1)
+ (preprocess
+  (pps ppx_jane)))

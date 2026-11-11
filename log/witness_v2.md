@@ -122,8 +122,9 @@ for all 80). No blame witness fires together with a fail. The weak results are k
 
 Observed (Psim and chip RTL agree): if the host stops draining RX during a long write to the I2C
 target, the run shows 8 push events (the RXF depth) and then none; the contract's frame watcher
-reports fail 56 (push missing) at cycle 47935. Whether the lane blocks or drops at a full RXF was
-not examined for this note. The protocol document lists "RX FIFO never full" as a
+reports fail 56 (push missing) at cycle 47935. By ISA v1 section 5, PUSH on a full RX FIFO blocks (with
+timeout `to`; `to` = 0 waits forever), so the target firmware stalls at its PUSH and the frame
+watcher's push window expires. The protocol document lists "RX FIFO never full" as a
 host-stream assumption checked outside the monitor, so this is the documented behaviour. In a
 demo, however, it reads as a chip guarantee violation caused by the host, which is exactly the
 blame/fail confusion the assume-guarantee design is meant to prevent. The same pattern applies
