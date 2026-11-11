@@ -219,7 +219,7 @@ type chip_result =
    driver do). Default: all bytes are written before the run (bytes beyond the 8-deep TXF are
    dropped by the chip). [rx_drain] (stream mode only): the host also pops RXF one byte at a time
    whenever FIFO_ST shows RX data (the I2C host-stream assumption "the RX FIFO is never full"). *)
-let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?windows ?(ctrl_writes = []) ?(stream = false) ?(rx_drain = false) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
+let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?windows ?(ctrl_writes = []) ?(stream = false) ?(rx_drain = false) ?(monitor = true) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
   let h = create ~lib ?lane_pipe ?verdict_pipe ~param_windows:(param_windows || Option.is_some windows) () in
   let b = 0x10 in
   write h b [ setup.own ]; write h (b + 1) [ setup.od ];
@@ -228,8 +228,11 @@ let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?win
   let words = Isa1.assemble setup.prog in
   write h (b + 4) [ List.length setup.prog ]; write h (b + 7) [ 0 ];
   write h (b + 8) (List.concat_map (List.init (List.length setup.prog) ~f:Fn.id) ~f:(fun a -> [ words.(a) land 0xFF; words.(a) lsr 8 ]));
-  let p = List.nth_exn lib pkg in
-  write h 0x50 [ 0x80 lor pkg ]; write h 0x60 (Array.to_list p.remap);
+  (* [monitor = false]: no package selected, the lane runs unmonitored (held-out firmware) *)
+  if monitor
+  then (
+    let p = List.nth_exn lib pkg in
+    write h 0x50 [ 0x80 lor pkg ]; write h 0x60 (Array.to_list p.remap));
   Option.iter windows ~f:(fun w -> write_windows h ~lane:0 w);
   let pending = ref (if stream then List.drop tx_bytes 8 else []) and drained = ref [] in
   let tx_pre = if stream then List.take tx_bytes 8 else tx_bytes in
@@ -283,11 +286,11 @@ let pin_mismatches ~own (c : chip_result) (r : Psim.result) ~from ~upto =
 
 let show_opt = function None -> "-" | Some (code, cy) -> sprintf "%02X@%d" code cy
 
-let compare_one_cfg ?lib ?lane_pipe ?verdict_pipe ?param_windows ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles () =
+let compare_one_cfg ?lib ?lane_pipe ?verdict_pipe ?param_windows ?monitor ?stream ~k ~name ~setup ~pkg ~tx_bytes ~peer ~cycles () =
   let pmi = Array.create ~len:cycles None in
   let on_cycle cy mi _ = pmi.(cy) <- Some mi in
   let r = Psim.run ~on_cycle ~tx_bytes ~rx_pop_every:1_000_000_000 ~setup ~cycles ~peer:(peer ()) () in
-  let c = chip_run ?lib ?lane_pipe ?verdict_pipe ?param_windows ~k ~setup ~pkg ~tx_bytes ~peer:(peer ()) ~cycles () in
+  let c = chip_run ?lib ?lane_pipe ?verdict_pipe ?param_windows ?monitor ?stream ~k ~setup ~pkg ~tx_bytes ~peer:(peer ()) ~cycles () in
   let pm, pf = pin_mismatches ~own:setup.own c r ~from:0 ~upto:cycles in
   let sf = psim_first r Fail and sb = psim_first r Blame in
   let px = Psim.pushes r in
