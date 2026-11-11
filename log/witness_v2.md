@@ -29,6 +29,7 @@ Per-check results: `log/witness_v2_table.md` and `log/witness_v2.csv`, both gene
 | all | 103 | 103 | 94 | 9 | 0 | 0 |
 
 Verified: every check of the shipped contracts can fire as the first verdict. No dead checks.
+All 80 fail witnesses are clean: no blame fires in the same step (section 2.4).
 
 Reference interpreter (`Pemu_monitor_v1.Interp`): agrees on all 103. For the 94 formal witnesses
 it fires the same role and code in the counterexample's last frame. For the 9 directed witnesses
@@ -103,6 +104,20 @@ Notes:
    host-stream assumption "the RX FIFO is never full" (`doc/protocols/i2c_v1.md`, target section),
    so it is not a valid witness. It was replaced by the draining-host witness above. See section 3.
 
+### 2.4 Strict fail witnesses
+
+The first cover definition excluded earlier verdicts only (`~:(fail_seen |: blame_seen)`). 8 of
+the 80 fail witnesses fired together with a blame in the same step: i2c_tgt F51 (+B71), F52 (+B72),
+F61 (+B91); spi_tgt F72 (+B52), F73 (+B55), F74 (+B55), F76 (+B54), F81 (+B55). The U property
+counts a same-step blame as an excuse (`~:(blame_seen |: blame_now)`), so such a run does not show
+a chip fault in a clean environment. The fail cover now also requires `~:blame_now`
+(`Ag_pkg` `Cover`, fail role only). The 8 checks were re-proved under the strict definition
+(dprove, 21 min wall, 8 jobs). All 8 FAIL with a replayed counterexample, depths 4 to 812, and the
+interpreter agrees. The other 72 formal fail witnesses already met the strict definition (their
+interpreter decode has no blame in the last frame; `formal/mutation/v2/clean_witness.py` reports 0
+for all 80). No blame witness fires together with a fail. The weak results are kept in
+`formal/work/mut_v2/witness3_weak/`.
+
 ## 3. Finding: an unmonitored host assumption surfaces as a fail
 
 Observed (Psim and chip RTL agree): if the host stops draining RX during a long write to the I2C
@@ -123,6 +138,12 @@ Decision for the user:
 3. Host-side guard only: the RP2350 host package (plan step 10) asserts the drain rate and flags
    the run as host-invalid. No RTL change, but only covers the reference host.
 
+Decision (2026-11-11; user delegated the choice): option 1 plus the option 3 guard. The drain
+requirement goes into `docs/info.md` and the demo docs, and the step-10 host package flags
+host-invalid runs. Reason: the violation needs a host that breaks its own interface requirement,
+and option 2 would reopen the sign-off of a clean tape-out candidate. Option 2 stays open until
+the freeze.
+
 ## 4. Limits
 
 - One witness per check code. Several codes are shared by many statements (e.g. spi_tgt B52 by 16
@@ -136,15 +157,63 @@ Decision for the user:
 - Gate level: not re-run for these witnesses. The demo board has shown RTL == GL on 17 scenarios
   (`log/demo_v2.md`); the witnesses were not added to the GL set.
 
-## 5. Use for the contract-mutation score (not done)
+## 5. Witness oracle W on the contract mutants
 
-The 103 witnesses are a check-level regression: replaying each witness against a mutated
-contract would kill every code bump and role swap on a witnessed check, plus any weakening that
-removes the witnessed firing. The undetected contract mutants of `log/campaign_v2.md` section 3
-(63/100, of which 0/14 code bumps and 0/3 role swaps were caught) could be re-scored with this
-oracle. Cost estimate: directed witnesses in Psim take seconds. Formal witnesses need the
-interpreter replay of 94 counterexample traces per mutant (replay_cex already decodes monitor
-inputs), estimated well under an hour for 100 mutants.
+User decision 2026-11-11: re-score the contract mutants with the witnesses before plan step 10.
+
+Oracle W (`mutants_v2.exe wsv <pkg> <index>`, `formal/mutation/v2/run_wsv.sh`): for each witness
+of the package, the reference interpreter runs the shipped and the mutated contract on the
+witness's monitor-input trace. The mutant is killed if the firing lists (frame, role, code) differ.
+- Formal witnesses: traces parsed from the replay files (dbg_ ports).
+- Directed witnesses: the wsearch scenario is re-run in Psim under both contracts.
+
+Sanity: on all 65 witness traces of the five scored packages, the witnessed check fires in the
+shipped contract's first verdict frame (`check_wsv.py`). Cost: about 0.6 s per mutant, 100
+mutants in about 1 min.
+
+Result on the 100 sampled contract mutants of `log/campaign_v2.md` section 3 (aggregated in
+`log/kill_matrix_v2.md` section 3 and `log/kill_matrix_v2_contracts.csv`, new column W):
+
+| package | W kills | undetected without W | undetected with W |
+|---|---|---|---|
+| uart_tx | 18/20 | 11 | 2 |
+| uart_rx | 19/20 | 12 | 1 |
+| spi_ctl | 11/20 | 11 | 7 |
+| spi_tgt | 9/20 | 14 | 9 |
+| usb | 13/20 | 15 | 6 |
+| all | 70/100 | 63 | 25 |
+
+| direction | mutants | survived A2U/A2N/SV | survived with W |
+|---|---|---|---|
+| code only (code bump) | 14 | 14 | 2 |
+| role swap | 3 | 3 | 0 |
+| garble | 1 | 0 | 0 |
+| strengthen | 11 | 8 | 4 |
+| strengthen (longer hold) | 21 | 4 | 2 |
+| weaken | 40 | 32 | 15 |
+| weaken (shorter hold) | 10 | 2 | 2 |
+
+W alone kills 38 mutants no other oracle kills.
+
+The 25 survivors, classified by the code of the mutated statement (`mutants_v2.exe wsite`):
+
+1. Shared code (15). The statement's code is carried by 4 to 16 statements, and the single
+   witness for that code fires at another statement. These are spi_ctl 18, 28, 65, 132, 168 and
+   223; spi_tgt 17, 22, 32, 173, 234, 257, 284 and 305; and usb 54. This includes both surviving
+   code bumps (spi_ctl 65 F54 and spi_ctl 168 F75, 8 statements each). Per-statement witnesses
+   target exactly this class.
+2. Unique code, bound not probed (10). The statement is witnessed, but the mutation moves a hold
+   length or window bound that the witness run does not test (the witness fires away from the
+   bound). These are uart_tx 50 (hold up) and 51 (hold down), F1B; uart_rx 60, F4B/F4A; spi_ctl 1,
+   F52; spi_tgt 202, B54; and usb 59 FB1, 67 and 68 FB2, 73 FC1, 79 FC2. Killing these needs
+   boundary witnesses: the check fires at bound − 1 and not at the bound. Some of these may be
+   equivalent mutants (e.g. a lowered window edge that no environment within the assumptions can
+   reach); that was not checked.
+
+So the residual contract-error tolerance is now a measured property of the witness set, not of
+fault-scenario coverage: one witness per code and none at the bounds. Both extensions are
+mechanical: a per-statement cover (site-tagged `Cover`), and boundary covers for each
+`hold_for` / window with an exact-bound environment.
 
 ## 6. Reproduction
 
@@ -158,6 +227,10 @@ M=./_build/default/formal/bin/mutants_v2.exe
 cat /tmp/ws.txt | xargs -P 9 -n 2 sh -c "perl formal/glimit.pl 3000 $M wsearch \$0 \$1 > formal/work/mut_v2/wsearch/\$0_\$1.txt"
 $M wbase i2c_tgt; $M wbase usb           # shipped firmware on the fail bases: no verdict
 python3 formal/mutation/v2/witness_report.py
+python3 formal/mutation/v2/clean_witness.py  # fail witnesses with a same-step blame: 0
+formal/mutation/v2/run_wsv.sh                # oracle W on the 100 contract mutants
+python3 formal/mutation/v2/kill_matrix_v2.py
 ```
 
-Wall time: formal 63 min (9 jobs), directed search 27 s (9 jobs), chip confirmation included.
+Wall time: formal 63 min (9 jobs) plus 21 min strict re-run of 8 checks, directed search 27 s (9 jobs), chip
+confirmation included, oracle W about 1 min.

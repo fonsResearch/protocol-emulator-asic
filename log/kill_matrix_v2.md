@@ -174,105 +174,88 @@ Sites: 861; rejected by Lang.validate / Compile / slot limit (not sampled): 345 
 | uart_tx | A2U | 9 | 11 | 0 | 0 | 0 |
 | uart_tx | A2N | 1 | 19 | 0 | 0 | 0 |
 | uart_tx | SV | 9 | 11 | 0 | 0 | 0 |
+| uart_tx | W | 18 | 2 | 0 | 0 | 0 |
 | uart_rx | A2U | 2 | 15 | 3 | 0 | 0 |
 | uart_rx | A2N | 0 | 20 | 0 | 0 | 0 |
 | uart_rx | SV | 8 | 12 | 0 | 0 | 0 |
+| uart_rx | W | 19 | 1 | 0 | 0 | 0 |
 | spi_ctl | A2U | 8 | 12 | 0 | 0 | 0 |
 | spi_ctl | A2N | 0 | 20 | 0 | 0 | 0 |
 | spi_ctl | SV | 9 | 11 | 0 | 0 | 0 |
+| spi_ctl | W | 11 | 9 | 0 | 0 | 0 |
 | spi_tgt | A2U | 4 | 16 | 0 | 0 | 0 |
 | spi_tgt | A2N | 0 | 20 | 0 | 0 | 0 |
 | spi_tgt | SV | 3 | 17 | 0 | 0 | 0 |
+| spi_tgt | W | 9 | 11 | 0 | 0 | 0 |
 | usb | A2U | 4 | 5 | 11 | 0 | 0 |
 | usb | A2N | 0 | 20 | 0 | 0 | 0 |
 | usb | SV | 4 | 16 | 0 | 0 | 0 |
+| usb | W | 13 | 7 | 0 | 0 | 0 |
 
 Kill sets:
 
 | kill set | mutants |
 |---|---|
-| none | 63 |
-| A2U+SV | 22 |
-| SV | 10 |
-| A2U | 4 |
-| A2U+A2N+SV | 1 |
+| W | 38 |
+| none | 25 |
+| A2U+SV+W | 21 |
+| SV+W | 7 |
+| SV | 3 |
+| A2U+W | 3 |
+| A2U+A2N+SV+W | 1 |
+| A2U+SV | 1 |
+| A2U | 1 |
 
 By direction (operator class, nominal):
 
 | direction | mutants | killed by any oracle | survived all |
 |---|---|---|---|
-| code only | 14 | 0 | 14 |
+| code only | 14 | 12 | 2 |
 | garble | 1 | 1 | 0 |
-| role | 3 | 0 | 3 |
-| strengthen | 11 | 3 | 8 |
-| strengthen (longer hold) | 21 | 17 | 4 |
-| weaken | 40 | 8 | 32 |
+| role | 3 | 3 | 0 |
+| strengthen | 11 | 7 | 4 |
+| strengthen (longer hold) | 21 | 19 | 2 |
+| weaken | 40 | 25 | 15 |
 | weaken (shorter hold) | 10 | 8 | 2 |
 
-Contract-error tolerance: contract mutants no oracle catches: 63/100
+Contract-error tolerance: contract mutants no oracle catches: 25/100 (without W: 63/100)
 
-| package | index | op | direction | watcher | stmt | A2U | A2N | SV |
-|---|---|---|---|---|---|---|---|---|
-| uart_tx | 2 | drop_check | weaken | frame | hold_for | S | S | S |
-| uart_tx | 17 | drop_check | weaken | frame | hold_for | S | S | S |
-| uart_tx | 24 | code_bump | code only | frame | hold_for | S | S | S |
-| uart_tx | 34 | code_bump | code only | frame | hold_for | S | S | S |
-| uart_tx | 37 | drop_check | weaken | frame | hold_for | S | S | S |
-| uart_tx | 39 | code_bump | code only | frame | hold_for | S | S | S |
-| uart_tx | 42 | drop_check | weaken | frame | hold_for | S | S | S |
-| uart_tx | 50 | hold_up | strengthen (longer hold) | frame | hold_for | S | S | S |
-| uart_tx | 51 | hold_down | weaken (shorter hold) | frame | hold_for | S | S | S |
-| uart_tx | 54 | code_bump | code only | frame | hold_for | S | S | S |
-| uart_tx | 57 | drop_check | weaken | one_pop | hold_for | S | S | S |
-| uart_rx | 17 | role_swap | role | receiver | hold_for | S | S | S |
-| uart_rx | 21 | drop_check | weaken | receiver | hold_for | S | S | S |
-| uart_rx | 28 | code_bump | code only | receiver | hold_for | S | S | S |
-| uart_rx | 38 | code_bump | code only | receiver | hold_for | S | S | S |
-| uart_rx | 43 | code_bump | code only | receiver | hold_for | S | S | S |
-| uart_rx | 48 | code_bump | code only | receiver | hold_for | S | S | S |
-| uart_rx | 51 | drop_check | weaken | receiver | hold_for | U | S | S |
-| uart_rx | 56 | drop_check | weaken | receiver | hold_for | S | S | S |
-| uart_rx | 59 | win_lo_up | strengthen | receiver | await | S | S | S |
-| uart_rx | 60 | win_lo_down | weaken | receiver | await | S | S | S |
-| uart_rx | 61 | win_hi_up | weaken | receiver | await | S | S | S |
-| uart_rx | 62 | win_hi_down | strengthen | receiver | await | S | S | S |
-| spi_ctl | 1 | win_lo_down | weaken | shape | await | S | S | S |
-| spi_ctl | 2 | win_hi_up | weaken | shape | await | S | S | S |
-| spi_ctl | 3 | win_hi_down | strengthen | shape | await | S | S | S |
-| spi_ctl | 18 | drop_check | weaken | shape | hold_for | S | S | S |
-| spi_ctl | 28 | drop_check | weaken | shape | hold_for | S | S | S |
-| spi_ctl | 65 | code_bump | code only | shape | hold_for | S | S | S |
-| spi_ctl | 132 | drop_check | weaken | mosi | hold_for | S | S | S |
-| spi_ctl | 137 | role_swap | role | miso | hold_for | S | S | S |
-| spi_ctl | 168 | code_bump | code only | miso | hold_for | S | S | S |
-| spi_ctl | 201 | code_bump | code only | target | hold_for | S | S | S |
-| spi_ctl | 223 | drop_check | weaken | target | hold_for | S | S | S |
-| spi_tgt | 17 | win_hi_down | strengthen | ctl | hold_until | S | S | S |
-| spi_tgt | 22 | hold_down | weaken (shorter hold) | ctl | hold_for | S | S | S |
-| spi_tgt | 32 | drop_check | weaken | ctl | hold_until | S | S | S |
-| spi_tgt | 57 | hold_up | strengthen (longer hold) | ctl | hold_for | S | S | S |
-| spi_tgt | 173 | win_hi_down | strengthen | ctl | hold_until | S | S | S |
-| spi_tgt | 189 | hold_up | strengthen (longer hold) | ctl | hold_for | S | S | S |
-| spi_tgt | 202 | win_lo_down | weaken | ctl | hold_until | S | S | S |
-| spi_tgt | 234 | drop_check | weaken | mosi_ok | hold_until | S | S | S |
-| spi_tgt | 257 | drop_check | weaken | mosi_ok | expect | S | S | S |
-| spi_tgt | 284 | win_lo_down | weaken | mosi_ok | hold_until | S | S | S |
-| spi_tgt | 305 | drop_check | weaken | frame | expect | S | S | S |
-| spi_tgt | 369 | win_lo_up | strengthen | frame | await | S | S | S |
-| spi_tgt | 386 | role_swap | role | ready | hold_for | S | S | S |
-| spi_tgt | 387 | code_bump | code only | ready | hold_for | S | S | S |
-| usb | 2 | drop_check | weaken | drive | hold_for | U | S | S |
-| usb | 4 | code_bump | code only | drive | hold_for | U | S | S |
-| usb | 7 | drop_check | weaken | legal | hold_for | U | S | S |
-| usb | 12 | drop_check | weaken | frame | hold_for | U | S | S |
-| usb | 49 | drop_check | weaken | frame | await | S | S | S |
-| usb | 51 | drop_check | weaken | frame | hold_for | U | S | S |
-| usb | 54 | hold_up | strengthen (longer hold) | frame | hold_for | U | S | S |
-| usb | 59 | win_lo_down | weaken | runs | await | U | S | S |
-| usb | 64 | drop_check | weaken | runs | await | U | S | S |
-| usb | 67 | win_hi_up | weaken | runs | hold_until | S | S | S |
-| usb | 68 | win_hi_down | strengthen | runs | hold_until | U | S | S |
-| usb | 73 | win_lo_down | weaken | status | hold_until | S | S | S |
-| usb | 79 | win_lo_up | strengthen | status | await | U | S | S |
-| usb | 81 | win_hi_up | weaken | status | await | S | S | S |
-| usb | 84 | code_bump | code only | status | await | S | S | S |
+By direction, without W -> with W (survivors):
+
+| direction | mutants | survived A2U/A2N/SV | survived with W |
+|---|---|---|---|
+| code only | 14 | 14 | 2 |
+| garble | 1 | 0 | 0 |
+| role | 3 | 3 | 0 |
+| strengthen | 11 | 8 | 4 |
+| strengthen (longer hold) | 21 | 4 | 2 |
+| weaken | 40 | 32 | 15 |
+| weaken (shorter hold) | 10 | 2 | 2 |
+
+| package | index | op | direction | watcher | stmt | A2U | A2N | SV | W |
+|---|---|---|---|---|---|---|---|---|---|
+| uart_tx | 50 | hold_up | strengthen (longer hold) | frame | hold_for | S | S | S | S |
+| uart_tx | 51 | hold_down | weaken (shorter hold) | frame | hold_for | S | S | S | S |
+| uart_rx | 60 | win_lo_down | weaken | receiver | await | S | S | S | S |
+| spi_ctl | 1 | win_lo_down | weaken | shape | await | S | S | S | S |
+| spi_ctl | 18 | drop_check | weaken | shape | hold_for | S | S | S | S |
+| spi_ctl | 28 | drop_check | weaken | shape | hold_for | S | S | S | S |
+| spi_ctl | 65 | code_bump | code only | shape | hold_for | S | S | S | S |
+| spi_ctl | 132 | drop_check | weaken | mosi | hold_for | S | S | S | S |
+| spi_ctl | 168 | code_bump | code only | miso | hold_for | S | S | S | S |
+| spi_ctl | 223 | drop_check | weaken | target | hold_for | S | S | S | S |
+| spi_tgt | 17 | win_hi_down | strengthen | ctl | hold_until | S | S | S | S |
+| spi_tgt | 22 | hold_down | weaken (shorter hold) | ctl | hold_for | S | S | S | S |
+| spi_tgt | 32 | drop_check | weaken | ctl | hold_until | S | S | S | S |
+| spi_tgt | 173 | win_hi_down | strengthen | ctl | hold_until | S | S | S | S |
+| spi_tgt | 202 | win_lo_down | weaken | ctl | hold_until | S | S | S | S |
+| spi_tgt | 234 | drop_check | weaken | mosi_ok | hold_until | S | S | S | S |
+| spi_tgt | 257 | drop_check | weaken | mosi_ok | expect | S | S | S | S |
+| spi_tgt | 284 | win_lo_down | weaken | mosi_ok | hold_until | S | S | S | S |
+| spi_tgt | 305 | drop_check | weaken | frame | expect | S | S | S | S |
+| usb | 54 | hold_up | strengthen (longer hold) | frame | hold_for | U | S | S | S |
+| usb | 59 | win_lo_down | weaken | runs | await | U | S | S | S |
+| usb | 67 | win_hi_up | weaken | runs | hold_until | S | S | S | S |
+| usb | 68 | win_hi_down | strengthen | runs | hold_until | U | S | S | S |
+| usb | 73 | win_lo_down | weaken | status | hold_until | S | S | S | S |
+| usb | 79 | win_lo_up | strengthen | status | await | U | S | S | S |

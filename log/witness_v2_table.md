@@ -54,11 +54,11 @@
 | w2_spi_ctl_F81 | F | 81 | drive.hold_for | WITNESSED | formal | 2 | 0 | agrees | drive #0 |  |  |
 | w2_spi_ctl_B91 | B | 91 | target.expect,target.expect,target.expect,target.expect,target.expe... | WITNESSED | formal | 10 | 0 | agrees | target #0 |  |  |
 | w2_spi_ctl_B92 | B | 92 | target.hold_for,target.hold_for,target.hold_for,target.hold_for,tar... | WITNESSED | formal | 11 | 0 | agrees | target #0 |  |  |
-| w2_spi_tgt_F72 | F | 72 | frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,fr... | WITNESSED | formal | 10 | 0 | agrees | frame #0 |  |  |
+| w2_spi_tgt_F72 | F | 72 | frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,fr... | WITNESSED | formal | 12 | 0 | agrees | frame #0 |  |  |
 | w2_spi_tgt_F73 | F | 73 | frame.hold_for | WITNESSED | formal | 5 | 0 | agrees | frame #0 |  |  |
-| w2_spi_tgt_F74 | F | 74 | frame.await | WITNESSED | formal | 61 | 142 | agrees | frame #0 |  |  |
+| w2_spi_tgt_F74 | F | 74 | frame.await | WITNESSED | formal | 61 | 35 | agrees | frame #0 |  |  |
 | w2_spi_tgt_F75 | F | 75 | frame.match | WITNESSED | formal | 59 | 103 | agrees | frame #0 |  |  |
-| w2_spi_tgt_F76 | F | 76 | frame.await.early | WITNESSED | formal | 58 | 104 | agrees | frame #0 |  |  |
+| w2_spi_tgt_F76 | F | 76 | frame.await.early | WITNESSED | formal | 58 | 47 | agrees | frame #0 |  |  |
 | w2_spi_tgt_F81 | F | 81 | drive.hold_for | WITNESSED | formal | 4 | 0 | agrees | drive #0 |  |  |
 | w2_spi_tgt_F91 | F | 91 | ready.hold_for | WITNESSED | formal | 4 | 0 | agrees | ready #0 |  |  |
 | w2_spi_tgt_B51 | B | 51 | ctl.expect | WITNESSED | formal | 9 | 0 | agrees | ctl #0 |  |  |
@@ -92,8 +92,8 @@
 | w2_i2c_ctl_sm_F75 | F | 75 | frame.match,frame.match,frame.match | WITNESSED | formal | 6 | 0 | agrees | frame #0 |  |  |
 | w2_i2c_ctl_sm_B76 | B | 76 | frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,fr... | WITNESSED | formal | 43 | 186 | agrees | frame #0 |  |  |
 | w2_i2c_ctl_sm_B77 | B | 77 | frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for,frame.h... | WITNESSED | directed |  | 1800 | agrees (Psim) |  | dd208 @ cycle 20881 | fail - blame 77@20881 |
-| w2_i2c_tgt_F51 | F | 51 | frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,fr... | WITNESSED | formal | 24 | 18 | agrees | frame #0 |  |  |
-| w2_i2c_tgt_F52 | F | 52 | frame.hold_for,frame.hold_for,frame.hold_for | WITNESSED | formal | 809 | 688 | agrees | frame #0 |  |  |
+| w2_i2c_tgt_F51 | F | 51 | frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,fr... | WITNESSED | formal | 45 | 45 | agrees | frame #0 |  |  |
+| w2_i2c_tgt_F52 | F | 52 | frame.hold_for,frame.hold_for,frame.hold_for | WITNESSED | formal | 812 | 565 | agrees | frame #0 |  |  |
 | w2_i2c_tgt_F54 | F | 54 | frame.expect | WITNESSED | directed |  | 1800 | agrees (Psim) |  | nominal/fw 109:nop @ cycle 5047 | fail 54@5047 blame - |
 | w2_i2c_tgt_F55 | F | 55 | frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,fr... | WITNESSED | directed |  | 1800 | agrees (Psim) |  | nominal/fw 119:nop @ cycle 10351 | fail 55@10351 blame - |
 | w2_i2c_tgt_F56 | F | 56 | frame.await | WITNESSED | directed |  | 1800 | agrees (Psim) |  | long16/fw 82:nop @ cycle 29359 | fail 56@29359 blame - |

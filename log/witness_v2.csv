@@ -39,11 +39,11 @@ w2_spi_ctl_F75,spi_ctl,F,75,"miso.hold_for,miso.hold_for,miso.hold_for,miso.hold
 w2_spi_ctl_F81,spi_ctl,F,81,drive.hold_for,2,0,replay ok,WITNESSED,agrees,drive #0,formal,,
 w2_spi_ctl_B91,spi_ctl,B,91,"target.expect,target.expect,target.expect,target.expect,target.expect,target.expect,target.expect,target.expect",10,0,replay ok,WITNESSED,agrees,target #0,formal,,
 w2_spi_ctl_B92,spi_ctl,B,92,"target.hold_for,target.hold_for,target.hold_for,target.hold_for,target.hold_for,target.hold_for,target.hold_for,target.hold_for",11,0,replay ok,WITNESSED,agrees,target #0,formal,,
-w2_spi_tgt_F72,spi_tgt,F,72,"frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect",10,0,replay ok,WITNESSED,agrees,frame #0,formal,,
+w2_spi_tgt_F72,spi_tgt,F,72,"frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect",12,0,replay ok,WITNESSED,agrees,frame #0,formal,,
 w2_spi_tgt_F73,spi_tgt,F,73,frame.hold_for,5,0,replay ok,WITNESSED,agrees,frame #0,formal,,
-w2_spi_tgt_F74,spi_tgt,F,74,frame.await,61,142,replay ok,WITNESSED,agrees,frame #0,formal,,
+w2_spi_tgt_F74,spi_tgt,F,74,frame.await,61,35,replay ok,WITNESSED,agrees,frame #0,formal,,
 w2_spi_tgt_F75,spi_tgt,F,75,frame.match,59,103,replay ok,WITNESSED,agrees,frame #0,formal,,
-w2_spi_tgt_F76,spi_tgt,F,76,frame.await.early,58,104,replay ok,WITNESSED,agrees,frame #0,formal,,
+w2_spi_tgt_F76,spi_tgt,F,76,frame.await.early,58,47,replay ok,WITNESSED,agrees,frame #0,formal,,
 w2_spi_tgt_F81,spi_tgt,F,81,drive.hold_for,4,0,replay ok,WITNESSED,agrees,drive #0,formal,,
 w2_spi_tgt_F91,spi_tgt,F,91,ready.hold_for,4,0,replay ok,WITNESSED,agrees,ready #0,formal,,
 w2_spi_tgt_B51,spi_tgt,B,51,ctl.expect,9,0,replay ok,WITNESSED,agrees,ctl #0,formal,,
@@ -77,8 +77,8 @@ w2_i2c_ctl_sm_F74,i2c_ctl_sm,F,74,"frame.await,frame.await,frame.await",12,0,rep
 w2_i2c_ctl_sm_F75,i2c_ctl_sm,F,75,"frame.match,frame.match,frame.match",6,0,replay ok,WITNESSED,agrees,frame #0,formal,,
 w2_i2c_ctl_sm_B76,i2c_ctl_sm,B,76,"frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect",43,186,replay ok,WITNESSED,agrees,frame #0,formal,,
 w2_i2c_ctl_sm_B77,i2c_ctl_sm,B,77,"frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for,frame.hold_for",,1800,,WITNESSED,agrees (Psim),,directed,dd208 @ cycle 20881,fail - blame 77@20881
-w2_i2c_tgt_F51,i2c_tgt,F,51,"frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect",24,18,replay ok,WITNESSED,agrees,frame #0,formal,,
-w2_i2c_tgt_F52,i2c_tgt,F,52,"frame.hold_for,frame.hold_for,frame.hold_for",809,688,"replay ok (dprove cex, bad at frame 809)",WITNESSED,agrees,frame #0,formal,,
+w2_i2c_tgt_F51,i2c_tgt,F,51,"frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect",45,45,replay ok,WITNESSED,agrees,frame #0,formal,,
+w2_i2c_tgt_F52,i2c_tgt,F,52,"frame.hold_for,frame.hold_for,frame.hold_for",812,565,"replay ok (dprove cex, bad at frame 812)",WITNESSED,agrees,frame #0,formal,,
 w2_i2c_tgt_F54,i2c_tgt,F,54,frame.expect,,1800,,WITNESSED,agrees (Psim),,directed,nominal/fw 109:nop @ cycle 5047,fail 54@5047 blame -
 w2_i2c_tgt_F55,i2c_tgt,F,55,"frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect,frame.expect",,1800,,WITNESSED,agrees (Psim),,directed,nominal/fw 119:nop @ cycle 10351,fail 55@10351 blame -
 w2_i2c_tgt_F56,i2c_tgt,F,56,frame.await,,1800,,WITNESSED,agrees (Psim),,directed,long16/fw 82:nop @ cycle 29359,fail 56@29359 blame -

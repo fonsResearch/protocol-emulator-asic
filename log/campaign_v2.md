@@ -126,9 +126,13 @@ of the five contracts (uart_tx 1/12, uart_rx 2/15, spi_ctl 1/13, spi_tgt 5/14, u
 of a check no scenario or negative ever triggers can only be noticed by A2U, and only if it
 strengthens the check enough to reject the correct firmware. The contract-error tolerance figure
 is therefore mostly a statement about fault-scenario coverage of the checks, not about the
-contracts. Remedy (not done, a scope decision): a per-check witness obligation, i.e. every fail
-check fires for some firmware mutant and every blame check for some peer behaviour, checked
-formally as cover properties.
+contracts. Remedy (done 2026-11-11, `log/witness_v2.md`): a per-check witness obligation, i.e.
+every fail check fires for some chip behaviour and every blame check for some peer behaviour.
+All 103 checks of the 8 shipped contracts are witnessed. Replaying the witnesses as oracle W
+kills 70 of the 100 sampled contract mutants and lowers the undetected count from 63/100 to
+25/100: code bumps 14 to 2 survivors, role swaps 3 to 0, weakenings 32 to 15. The 25 survivors
+are 15 mutants on statements whose code is shared with the witnessed statement, and 10 bound
+changes that no witness probes (`log/witness_v2.md` section 5).
 
 ## 4. Comparison with v1 (log/kill_matrix.md, slice engine)
 

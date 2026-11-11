@@ -434,8 +434,145 @@ let wsearch pkg role code =
       (Option.value_map c.first_blame ~default:"-" ~f:(fun (cc, t) -> sprintf "%02X@%d" cc t))
 ;;
 
+(* ---- witness oracle W for contract mutants (log/witness_v2.md section 5) ----
+   Every witness of a package is a monitor-input trace in which the shipped contract's first
+   verdict is the witnessed check. A contract mutant is killed when the reference interpreter
+   (Interp) gives a different firing list (frame, role, code) on some witness trace. Formal
+   witnesses: the traces are parsed from the replay files of the cover run (dbg_ ports; the
+   replay has already checked that Interp agrees with the harness). Directed witnesses: the
+   wsearch scenario re-run in Psim under both contracts. *)
+let witness_dir = "formal/work/mut_v2/witness3"
+let wsearch_dir = "formal/work/mut_v2/wsearch"
+
+let parse_replay file : Pemu_monitor_v1.Interp.inputs list =
+  let lines = In_channel.read_lines file in
+  let words l = String.split l ~on:' ' |> List.filter ~f:(fun x -> not (String.is_empty x)) in
+  let hdr = List.find_exn lines ~f:(String.is_prefix ~prefix:"# frame ") in
+  let cols = words (String.drop_prefix hdr 2) in
+  let idx n = fst (List.findi_exn cols ~f:(fun _ c -> String.equal c n)) in
+  let iv x = if String.equal x "-" then 0 else Int.of_string x in
+  List.filter_map lines ~f:(fun l ->
+    let t = words l in
+    if String.is_prefix l ~prefix:"#" || List.length t <> List.length cols
+    then None
+    else (
+      let g n = iv (List.nth_exn t (idx n)) in
+      let b n = g n = 1 in
+      Some
+        { Pemu_monitor_v1.Interp.rst_sync_n = b "dbg_m_rst"; running = b "dbg_m_running"; tick = b "dbg_tick"; ui_in = 0
+        ; uio_in = g "dbg_uio_in"; uo_out = 0; uio_out = g "dbg_m_out"; uio_oe = g "dbg_m_oe"; pop_ev = b "dbg_m_pop"
+        ; pop_data = g "dbg_m_popd"; push_ev = b "dbg_m_push"; push_data = g "dbg_m_pushd" }))
+;;
+
+let trace_firings contract mis =
+  let module I = Pemu_monitor_v1.Interp in
+  let t = I.create contract in
+  List.concat_mapi mis ~f:(fun k mi -> List.map (I.step t mi) ~f:(fun (r, c) -> k, r, c))
+;;
+
+(* directed witnesses of a package: (check name, scenario) from the wsearch records *)
+let directed_witnesses pkg =
+  match Stdlib.Sys.readdir wsearch_dir with
+  | exception _ -> []
+  | files ->
+    Array.to_list files
+    |> List.sort ~compare:String.compare
+    |> List.filter_map ~f:(fun f ->
+      if not (String.is_prefix f ~prefix:(pkg ^ "_") && String.is_suffix f ~suffix:".txt")
+      then None
+      else (
+        let last = List.last (In_channel.read_lines (wsearch_dir ^/ f)) in
+        match last with
+        | Some l when String.is_substring l ~substring:"chip CONFIRMED" ->
+          let desc = List.nth_exn (String.split_on_chars l ~on:[ '['; ']' ]) 1 in
+          let base, fw = match String.lsplit2 desc ~on:'/' with Some (b, m) -> b, Some (String.chop_prefix_exn m ~prefix:"fw ") | None -> desc, None in
+          let s = List.find_exn (wfamilies pkg) ~f:(fun s -> String.equal s.wname base) in
+          let s =
+            match fw with
+            | None -> s
+            | Some d -> { s with wsetup = { s.wsetup with prog = List.Assoc.find_exn (fw_mutants s.wsetup.prog) ~equal:String.equal d } }
+          in
+          Some (String.chop_suffix_exn f ~suffix:".txt", s)
+        | _ -> None))
+;;
+
+(* check code(s) of the statement holding contract-mutation site i (same pre-order numbering as
+   Cmut.traverse), and how many statements of the contract carry each code *)
+let site_checks (c : Pemu_monitor_v1.Lang.t) i =
+  let module C = Pemu_formal.Cmut in
+  let module Lang = Pemu_monitor_v1.Lang in
+  let n = ref 0 and found = ref None in
+  let own base (st : Lang.stmt) =
+    let w (x : Lang.window) = x.timeout :: Option.to_list x.early in
+    (match st with
+     | Await { w = x; _ } | Hold_until { w = x; _ } | Take { w = Some x; _ } -> w x
+     | Hold_for { check; _ } | Expect { check; _ } | Match { check } -> [ check ]
+     | Raise ch -> [ ch ]
+     | _ -> [])
+    |> List.map ~f:(fun ((r, k) : Lang.check) -> r, base + k)
+  in
+  let rec go wn base (l : Lang.stmt list) =
+    List.iter l ~f:(fun (st : Lang.stmt) ->
+      let k = List.length (C.ops_of st) in
+      if i >= !n && i < !n + k then found := Some (wn, C.stmt_kind st, own base st);
+      n := !n + k;
+      match st with
+      | If (_, a, b) -> go wn base a; go wn base b
+      | Loop b | Repeat (_, b) -> go wn base b
+      | Guard { body; handler; _ } -> go wn base body; go wn base handler
+      | _ -> ())
+  in
+  List.iter c.watchers ~f:(fun wt -> go wt.wname wt.base wt.body);
+  let all = Pemu_formal.Witness_v2.checks c in
+  match !found with
+  | None -> "SITE none"
+  | Some (wn, sk, chs) ->
+    sprintf "SITE %s.%s %s" wn sk
+      (String.concat ~sep:" "
+         (List.map chs ~f:(fun ((r, k) as ch) ->
+            sprintf "%s%02X(shared by %d)" (match (r : Lang.role) with Fail -> "F" | Blame -> "B") k
+              (List.count all ~f:(fun (_, _, x) -> [%equal: Lang.role * int] x ch)))))
+;;
+
+let wsv pname i =
+  let module C = Pemu_formal.Cmut in
+  let p = C.pkg_by pname in
+  let m = C.mutant p.contract i in
+  match C.invalid m with
+  | Some why -> printf "W INVALID %s\n" why
+  | None ->
+    let show l =
+      String.concat ~sep:","
+        (List.map (List.take l 3) ~f:(fun (c, r, k) ->
+           sprintf "%s%02X@%d" (match (r : Pemu_monitor_v1.Lang.role) with Fail -> "F" | Blame -> "B") k c))
+    in
+    let killed = ref [] in
+    let report name g x =
+      let same = [%equal: (int * Pemu_monitor_v1.Lang.role * int) list] g x in
+      if not same then killed := name :: !killed;
+      printf "%s golden [%s] mutant [%s] %s\n" name (show g) (show x) (if same then "same" else "DIFF")
+    in
+    let files =
+      Stdlib.Sys.readdir witness_dir |> Array.to_list |> List.sort ~compare:String.compare
+      |> List.filter ~f:(fun f -> String.is_prefix f ~prefix:(sprintf "w2_%s_" pname) && String.is_suffix f ~suffix:".replay.txt")
+    in
+    List.iter files ~f:(fun f ->
+      let mis = parse_replay (witness_dir ^/ f) in
+      report (String.chop_suffix_exn f ~suffix:".replay.txt") (trace_firings p.contract mis) (trace_firings m mis));
+    let dws = directed_witnesses pname in
+    List.iter dws ~f:(fun (n, s) ->
+      let run contract =
+        Psim.firings (Psim.run ~tx_bytes:s.wtx ~rx_pop_every:s.wpop ~setup:{ s.wsetup with contract } ~cycles:s.wcycles ~peer:(s.wpeer ()) ())
+      in
+      report ("directed " ^ n) (run p.contract) (run m));
+    printf "W traces %d directed %d\n" (List.length files) (List.length dws);
+    printf "W %s\n" (match List.rev !killed with [] -> "SURVIVED" | n :: _ -> "KILLED " ^ n)
+;;
+
 let () =
   match Sys.get_argv () |> Array.to_list |> List.tl_exn with
+  | [ "wsv"; pkg; i ] -> wsv pkg (Int.of_string i)
+  | [ "wsite"; pkg; i ] -> print_endline (site_checks (Pemu_formal.Cmut.pkg_by pkg).contract (Int.of_string i))
   | [ "wins"; pkg; i ] ->
     (* firmware instruction i (and neighbours) of the package's nominal scenario *)
     let s = List.hd_exn (wfamilies pkg) in

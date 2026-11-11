@@ -193,13 +193,16 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ?(fre
       ok &: g &: ~:(fail_seen |: fail_now |: blame_seen |: blame_now)
     | `Cover ((r : Pemu_monitor_v1.Lang.role), c) ->
       (* check witness: some unit fires this (role, code) in a cycle with no earlier verdict, the
-         environment assumptions having held so far. bad reachable = the check can fire. *)
+         environment assumptions having held so far. bad reachable = the check can fire. A fail
+         witness must also be clean: no blame in the same cycle (as in `U, where a same-cycle
+         blame excuses the fail); log/witness_v2.md section 2.4. *)
       let rv = match r with Blame -> vdd | Fail -> gnd in
       let hit =
         List.mapi mo.codes ~f:(fun u code -> bit mo.fire u &: (bit mo.role u ==: rv) &: (code ==:. c))
         |> reduce ~f:( |: )
       in
-      ok &: hit &: ~:(fail_seen |: blame_seen)
+      let clean = match r with Fail -> ~:blame_now | Blame -> vdd in
+      ok &: hit &: clean &: ~:(fail_seen |: blame_seen)
   in
   (* observable behaviour per cycle, for the symmetry lemma *)
   let obs =

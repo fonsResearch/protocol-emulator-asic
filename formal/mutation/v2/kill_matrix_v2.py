@@ -164,6 +164,8 @@ with open(LOG / "kill_matrix_v2.csv", "w", newline="") as fh:
     w.writerows(rows)
 
 # ---- contracts ----
+# W: witness oracle (log/witness_v2.md section 5): replay of the check witnesses under the mutant
+COR = ["A2U", "A2N", "SV", "W"]
 crows = []
 cs = {}
 for p in ["uart_tx", "uart_rx", "spi_ctl", "spi_tgt", "usb"]:
@@ -199,9 +201,10 @@ if (MUT / "sample_contract.txt").exists():
         if n_cells:
             r["A2N"] = "K" if "K" in n_cells else ("S" if all(c == "S" for c in n_cells) else ("E" if "E" in n_cells else "U"))
         r["SV"] = last_line_cell(MUT / "sv" / f"{p}_{i}.txt", "SV")
+        r["W"] = last_line_cell(MUT / "wsv" / f"{p}_{i}.txt", "W")
         crows.append(r)
     with open(LOG / "kill_matrix_v2_contracts.csv", "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["pkg", "index", "op", "direction", "watcher", "stmt", "A2U", "A2N", "SV"])
+        w = csv.DictWriter(fh, fieldnames=["pkg", "index", "op", "direction", "watcher", "stmt"] + COR)
         w.writeheader()
         w.writerows(crows)
 
@@ -285,10 +288,10 @@ if crows:
     P("| package | oracle | K | S | U | E | missing |")
     P("|---|---|---|---|---|---|---|")
     for p in ["uart_tx", "uart_rx", "spi_ctl", "spi_tgt", "usb"]:
-        for o in ["A2U", "A2N", "SV"]:
+        for o in COR:
             c = collections.Counter(r[o] for r in crows if r["pkg"] == p)
             P(f"| {p} | {o} | {c['K']} | {c['S']} | {c['U']} | {c['E']} | {c['missing']} |")
-    combos = collections.Counter("+".join(o for o in ["A2U", "A2N", "SV"] if r[o] == "K") or "none" for r in crows)
+    combos = collections.Counter("+".join(o for o in COR if r[o] == "K") or "none" for r in crows)
     P("\nKill sets:\n")
     P("| kill set | mutants |")
     P("|---|---|")
@@ -299,15 +302,23 @@ if crows:
     P("|---|---|---|---|")
     for dname in sorted({r["direction"] for r in crows}):
         g = [r for r in crows if r["direction"] == dname]
-        k = sum(1 for r in g if any(r[o] == "K" for o in ["A2U", "A2N", "SV"]))
+        k = sum(1 for r in g if any(r[o] == "K" for o in COR))
         P(f"| {dname} | {len(g)} | {k} | {len(g) - k} |")
-    tol = [r for r in crows if not any(r[o] == "K" for o in ["A2U", "A2N", "SV"])]
-    P(f"\nContract-error tolerance: contract mutants no oracle catches: {len(tol)}/{len(crows)}\n")
+    tol0 = [r for r in crows if not any(r[o] == "K" for o in ["A2U", "A2N", "SV"])]
+    tol = [r for r in crows if not any(r[o] == "K" for o in COR)]
+    P(f"\nContract-error tolerance: contract mutants no oracle catches: {len(tol)}/{len(crows)} "
+      f"(without W: {len(tol0)}/{len(crows)})\n")
+    P("By direction, without W -> with W (survivors):\n")
+    P("| direction | mutants | survived A2U/A2N/SV | survived with W |")
+    P("|---|---|---|---|")
+    for dname in sorted({r["direction"] for r in crows}):
+        g = [r for r in crows if r["direction"] == dname]
+        P(f"| {dname} | {len(g)} | {sum(1 for r in g if r in tol0)} | {sum(1 for r in g if r in tol)} |")
     if tol:
-        P("| package | index | op | direction | watcher | stmt | A2U | A2N | SV |")
-        P("|---|---|---|---|---|---|---|---|---|")
+        P("\n| package | index | op | direction | watcher | stmt | A2U | A2N | SV | W |")
+        P("|---|---|---|---|---|---|---|---|---|---|")
         for r in tol:
-            P(f"| {r['pkg']} | {r['index']} | {r['op']} | {r['direction']} | {r['watcher']} | {r['stmt']} | {r['A2U']} | {r['A2N']} | {r['SV']} |")
+            P(f"| {r['pkg']} | {r['index']} | {r['op']} | {r['direction']} | {r['watcher']} | {r['stmt']} | {r['A2U']} | {r['A2N']} | {r['SV']} | {r['W']} |")
 
 (LOG / "kill_matrix_v2.md").write_text("\n".join(out) + "\n")
 print(f"wrote log/kill_matrix_v2.md ({len(rows)} sample rows, {len(pop)} population, {len(crows)} contract rows)")
