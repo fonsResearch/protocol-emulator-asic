@@ -2,12 +2,15 @@
 # One-command reproduction of the v2 results (plan step 10). Tiers, cheapest first:
 #   tools/reproduce.sh quick     build, all expect tests (dune @runtest), toolchain CLIs, host assets
 #                                up to date, MicroPython check (if `micropython` is on PATH)   ~5 min
+#                                and the freeze check (re-emitted core == src/pemu_core_v1m.v)
 #   tools/reproduce.sh sim       quick + virtual demo board (17 scenarios, one simulator run; per-
-#                                scenario waveforms: test/demo/run_demo.sh) and host package (11
-#                                scenarios) on the RTL; with GL_NETLIST and PDK_ROOT set, also on
-#                                the gate-level netlist, and RTL = GL compared                  ~5 min (+10 GL)
+#                                scenario waveforms: test/demo/run_demo.sh), host package (11
+#                                scenarios) and held-out 1-Wire (3, log/flexibility_v2.md
+#                                ) on the RTL; with GL_NETLIST and PDK_ROOT set, also on the gate-
+#                                level netlist (sha256 = sign-off netlist), and RTL = GL compared                  ~5 min (+10 GL)
 #   tools/reproduce.sh proofs    shipped-configuration proofs: pipelined R1 (k-induction) and package
-#                                A2 (U and negative controls) for UART TX/RX, SPI ctl/tgt, USB  ~1-2 h
+#                                A2 (U, N1 and negative controls) for UART TX/RX, SPI ctl/tgt, USB
+#                                (21 harnesses; A2_FILTER=<regex> for a subset)                ~1.5-2.5 h
 #   tools/reproduce.sh r1        only the pipelined R1 proofs and their negative controls     ~1 min
 #   tools/reproduce.sh witness   check-witness obligation (103 covers, directed witnesses, oracle W) ~1.5 h
 #   tools/reproduce.sh all       everything above
@@ -34,6 +37,22 @@ step() { # name, command...
   fi
 }
 
+# The frozen design: the core emitted from the current sources (inc5 recipe, log/increments_v2.md
+# section 5) must be byte-identical to the committed src/pemu_core_v1m.v, and a gate-level netlist
+# given in GL_NETLIST must be the sign-off netlist of CI run 42426292730.
+SIGNOFF_NL_SHA=b450fe7c24d63d1107968b43c271f7826458913ce80c18aab3c588620c75abb0
+freeze_verilog() {
+  dune build ./rtl_v1/bin/emit_lane_rtl.exe || return 1
+  local d; d=$(mktemp -d /tmp/pemu_freeze.XXXXXX)
+  PEMU_LIB=v2inc5 PEMU_LOADABLE=rom PEMU_SLOTS=5 PEMU_VPIPE=1 PEMU_PWIN=1 PEMU_LPIPE=1 \
+    ./_build/default/rtl_v1/bin/emit_lane_rtl.exe top_macro_mon_sweep > "$d/raw.v" || return 1
+  python3 tools/fix_combdly.py "$d/raw.v" "$d/fixed.v" || return 1
+  cmp "$d/fixed.v" src/pemu_core_v1m.v && echo "re-emitted core identical to src/pemu_core_v1m.v"
+}
+gl_netlist_sha() {
+  local h; h=$(shasum -a 256 "$GL_NETLIST" | cut -d' ' -f1)
+  echo "$h"; [ "$h" = "$SIGNOFF_NL_SHA" ]
+}
 quick() {
   step build dune build
   step runtest dune build @runtest
@@ -41,6 +60,7 @@ quick() {
   step cc_retune ./_build/default/toolchain/bin/pemu_cc.exe retune 0 uart_tx:d=6,pin=0
   step asm_examples sh -c 'for f in toolchain/examples/*.s; do ./_build/default/toolchain/bin/pemu_asm.exe asm "$f" --werror > /dev/null || exit 1; done'
   step host_assets python3 host/tools/build_assets.py --check
+  step freeze_verilog freeze_verilog
   if command -v micropython > /dev/null; then
     step micropython micropython host/tools/upy_check.py
   else
@@ -79,8 +99,13 @@ sim() {
   step host_pkg_rtl sim_make repro_rtl_host test_host_pkg
   step demo_rtl_verdicts python3 test/demo/compare_verdicts.py test/demo/results/repro_rtl test/demo/results/rtl
   step host_rtl_verdicts python3 test/demo/compare_verdicts.py test/demo/results/repro_rtl_host test/demo/results/rtl_host
+  step flex_rtl sim_make repro_rtl_flex test_flex
+  step flex_rtl_records python3 test/demo/compare_flex.py test/demo/results/repro_rtl_flex test/demo/results/rtl_flex
   if [ -n "${GL_NETLIST:-}" ] && [ -n "${PDK_ROOT:-}" ]; then
+    step gl_netlist_sha gl_netlist_sha
     step demo_gl sim_make repro_gl test_demo GATES=yes GL_NETLIST="$GL_NETLIST"
+    step flex_gl sim_make repro_gl_flex test_flex GATES=yes GL_NETLIST="$GL_NETLIST"
+    step flex_rtl_eq_gl python3 test/demo/compare_flex.py test/demo/results/repro_rtl_flex test/demo/results/repro_gl_flex
     step host_pkg_gl sim_make repro_gl_host test_host_pkg GATES=yes GL_NETLIST="$GL_NETLIST"
     step demo_rtl_eq_gl sh -c 'cd test/demo && python3 compare_runs.py results/repro_rtl results/repro_gl | grep -q "^0 differing"'
     step host_rtl_eq_gl sh -c 'cd test/demo && python3 compare_runs.py results/repro_rtl_host results/repro_gl_host | grep -q "^0 differing"'
@@ -96,7 +121,12 @@ proofs() {
   step r1_pipelined env ENGINE=ind bash -c "$(declare -f check_results prove); prove r1 6 '^r1v2p_s5_u[0-4](_t5)?$' 300"
   step r1_pipelined_neg env ENGINE=bmc BMC_F=30 bash -c "$(declare -f check_results prove); prove r1neg 2 '^r1v2p_s5_.*_neg$' 300"
   [ "${R1_ONLY:-0}" = 1 ] && return
-  step a2_packages bash -c "$(declare -f check_results prove); prove a2 10 '^a2_(uart_tx_d4|uart_rx_d8|spi_ctl_m0|spi_tgt_m0|usb)' 1800"
+  # A2_FILTER (regex) re-runs a subset; the default is every unbounded package harness (21).
+  # a2_usb_g7 is excluded: USB packet contents (G7) are bounded, not proved (dprove times out;
+  # log/protocols_v1.md), so it cannot be expected to PASS here. Its negatives stay in.
+  local f=${A2_FILTER:-'^a2_(uart_tx_d4|uart_rx_d8|spi_ctl_m0|spi_tgt_m0|usb_u|usb_n1|usb_g7_)'}
+  local n=21; [ -n "${A2_FILTER:-}" ] && n=1
+  step a2_packages bash -c "$(declare -f check_results prove); prove a2 $n '$f' 1800"
 }
 
 # the checks the formal covers leave open (timeouts at 1,800 s; log/witness_v2.md section 2.2)

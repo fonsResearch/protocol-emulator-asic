@@ -14,6 +14,7 @@ setup slack +5.83 ns, 48.6 % utilisation, DRC/LVS/antenna clean). Not tested on 
 
 | topic | document |
 |---|---|
+| **verification write-up (start here)** | `doc/verification.md` |
 | architecture overview | `doc/architecture_v2.md` |
 | concept (assume-guarantee) | `doc/concept/assume_guarantee.md` |
 | lane ISA, host interface, monitor | `doc/isa/isa_v1.md`, `doc/interface_v1.md`, `doc/contracts/monitor_isa_v1.md` |
@@ -22,6 +23,8 @@ setup slack +5.83 ns, 48.6 % utilisation, DRC/LVS/antenna clean). Not tested on 
 | host package (RP2350, MicroPython) | `doc/host.md` |
 | proofs and verification results | `log/proofs_v2.md`, `log/protocols_v2.md`, `log/witness_v2.md`, `log/campaign_v2.md`, `log/demo_v2.md` |
 | physical design and sign-off | `log/ci_results_v2.md`, `log/increments_v2.md` |
+| held-out protocol (1-Wire, after freeze) | `log/flexibility_v2.md`, `doc/protocols/onewire_v1.md` |
+| one-command reproduction | `tools/reproduce.sh <tier>`, tiers quick, sim, proofs, r1, witness, all |
 | change log of frozen documents | `doc/CHANGES.md` |
 
 ## Licence
