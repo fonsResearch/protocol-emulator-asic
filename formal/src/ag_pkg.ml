@@ -77,7 +77,10 @@ type core_out =
   }
 
 (* The harness logic on given inputs. *)
-let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ~io ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () =
+(* [free_chip] (check-witness obligation, log/witness_v2.md): the monitor and the pad resolution
+   see free chip outputs (owned pins, oe, pop/push events and data) instead of the lane's, so a
+   `Cover of a fail check asks whether some chip behaviour makes the monitor report it. *)
+let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ?(free_chip = false) ~io ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () =
   let clock = io.clock in
   let gs = Reg_spec.create ~clock () in
   let started = reg gs vdd -- "env_started" in
@@ -105,13 +108,20 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ~io ~
   in
   let running = rst_sync_n &: run &: ~:(o.faulted) in
   let ownv = of_int ~width:8 own in
-  uio_in <== (io.uio_in &: ~:(o.uio_oe &: ~:(o.uio_out) &: ownv &: of_int ~width:8 od_wired));
+  let c_out, c_oe, c_pop, c_popd, c_push, c_pushd =
+    if free_chip
+    then
+      ( input "w_chip_out" 8, input "w_chip_oe" 8, input "w_chip_pop" 1, input "w_chip_popd" 8
+      , input "w_chip_push" 1, input "w_chip_pushd" 8 )
+    else o.uio_out, o.uio_oe, o.pop_ev, o.pop_data, o.push_ev, o.push_data
+  in
+  uio_in <== (io.uio_in &: ~:(c_oe &: ~:c_out &: ownv &: of_int ~width:8 od_wired));
   let pkg = Compile.compile_exn contract in
   let mo =
     S.of_package pkg
       { S.I.clock; rst_sync_n; running; tick; ui_in = zero 8; uio_in; uo_out = zero 8
-      ; uio_out = o.uio_out &: ownv; uio_oe = o.uio_oe &: ownv; pop_ev = o.pop_ev
-      ; pop_data = o.pop_data; push_ev = o.push_ev; push_data = o.push_data }
+      ; uio_out = c_out &: ownv; uio_oe = c_oe &: ownv; pop_ev = c_pop
+      ; pop_data = c_popd; push_ev = c_push; push_data = c_pushd }
   in
   let fail_now = mo.fire &: ~:(mo.role) |> fun v -> v <>:. 0
   and blame_now = mo.fire &: mo.role |> fun v -> v <>:. 0 in
@@ -181,6 +191,15 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ~io ~
         | Push_data v -> o.push_ev &: (o.push_data ==:. v)
       in
       ok &: g &: ~:(fail_seen |: fail_now |: blame_seen |: blame_now)
+    | `Cover ((r : Pemu_monitor_v1.Lang.role), c) ->
+      (* check witness: some unit fires this (role, code) in a cycle with no earlier verdict, the
+         environment assumptions having held so far. bad reachable = the check can fire. *)
+      let rv = match r with Blame -> vdd | Fail -> gnd in
+      let hit =
+        List.mapi mo.codes ~f:(fun u code -> bit mo.fire u &: (bit mo.role u ==: rv) &: (code ==:. c))
+        |> reduce ~f:( |: )
+      in
+      ok &: hit &: ~:(fail_seen |: blame_seen)
   in
   (* observable behaviour per cycle, for the symmetry lemma *)
   let obs =
@@ -192,8 +211,8 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ~io ~
   ; dbg =
       [ "tick", tick; "pc", o.pc; "fire", mo.fire; "role", mo.role; "uio_in", uio_in
         (* monitor inputs, for the reference-interpreter decode in replay_cex *)
-      ; "m_rst", rst_sync_n; "m_running", running; "m_out", o.uio_out &: ownv; "m_oe", o.uio_oe &: ownv
-      ; "m_pop", o.pop_ev; "m_popd", o.pop_data; "m_push", o.push_ev; "m_pushd", o.push_data ]
+      ; "m_rst", rst_sync_n; "m_running", running; "m_out", c_out &: ownv; "m_oe", c_oe &: ownv
+      ; "m_pop", c_pop; "m_popd", c_popd; "m_push", c_push; "m_pushd", c_pushd ]
   ; obs
   ; blame_seen; ok; running; rst_sync_n; tick; pc = o.pc; lane_taps = !L.taps }
 ;;
@@ -201,9 +220,9 @@ let core ?(rx_never_full = false) ?(pop_pcs = []) ?(od_wired = 0) ?i2c_env ~io ~
 (* harness name -> contract, for the reference-interpreter decode of counterexamples *)
 let contracts : Pemu_monitor_v1.Lang.t String.Table.t = String.Table.create ()
 
-let harness ?debug ?rx_never_full ?pop_pcs ?od_wired ?i2c_env ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
+let harness ?debug ?rx_never_full ?pop_pcs ?od_wired ?i2c_env ?free_chip ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 ~name () =
   Hashtbl.set contracts ~key:name ~data:contract;
-  let c = core ?rx_never_full ?pop_pcs ?od_wired ?i2c_env ~io:(free_io ()) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () in
+  let c = core ?rx_never_full ?pop_pcs ?od_wired ?i2c_env ?free_chip ~io:(free_io ()) ~mode ~prog ~contract ~own ~od ~cfg ~cfg2 () in
   Harness.bad_circuit ?debug ~dbg:c.dbg ~name c.bad
 ;;
 

@@ -214,7 +214,12 @@ type chip_result =
   }
 
 (* [ctrl_writes]: (Psim time at which the CTRL write transaction starts, value) *)
-let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?windows ?(ctrl_writes = []) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
+(* [stream] (default false): the host preloads at most 8 TX bytes and writes the rest during the
+   run, one byte per SPI write whenever FIFO_ST shows TX room (as Psim's host and a polling
+   driver do). Default: all bytes are written before the run (bytes beyond the 8-deep TXF are
+   dropped by the chip). [rx_drain] (stream mode only): the host also pops RXF one byte at a time
+   whenever FIFO_ST shows RX data (the I2C host-stream assumption "the RX FIFO is never full"). *)
+let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?windows ?(ctrl_writes = []) ?(stream = false) ?(rx_drain = false) ~k ~(setup : Psim.setup) ~pkg ~tx_bytes ~peer ~cycles () =
   let h = create ~lib ?lane_pipe ?verdict_pipe ~param_windows:(param_windows || Option.is_some windows) () in
   let b = 0x10 in
   write h b [ setup.own ]; write h (b + 1) [ setup.od ];
@@ -226,7 +231,9 @@ let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?win
   let p = List.nth_exn lib pkg in
   write h 0x50 [ 0x80 lor pkg ]; write h 0x60 (Array.to_list p.remap);
   Option.iter windows ~f:(fun w -> write_windows h ~lane:0 w);
-  if not (List.is_empty tx_bytes) then write h (b + 9) tx_bytes;
+  let pending = ref (if stream then List.drop tx_bytes 8 else []) and drained = ref [] in
+  let tx_pre = if stream then List.take tx_bytes 8 else tx_bytes in
+  if not (List.is_empty tx_pre) then write h (b + 9) tx_pre;
   h.wired <- setup.open_drain_wired_and;
   h.off <- h.n + ctrl_write_len - k;
   h.peer <- peer;
@@ -235,7 +242,18 @@ let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?win
   List.iter (List.sort ctrl_writes ~compare:(fun (a, _) (b, _) -> Int.compare a b)) ~f:(fun (t, v) ->
     while h.n < h.off + t do cycle h done;
     write h 0x01 [ v ]);
-  while h.n < stop do cycle h done;
+  while h.n < stop do
+    if not stream
+    then cycle h
+    else if h.n + (2 * ctrl_write_len) >= stop
+    then cycle h
+    else (
+      let st = List.hd_exn (read h (b + 11) 1) in
+      match !pending with
+      | x :: rest when st land 0xF < 8 -> write h (b + 9) [ x ]; pending := rest
+      | _ when rx_drain && (st lsr 4) land 0xF > 0 -> drained := !drained @ read h (b + 10) 1
+      | _ -> for _ = 1 to 64 do cycle h done)
+  done;
   h.peer <- no_peer;
   let v = read h 0x40 12 in
   let code i = List.nth_exn v i and time i = le32 (List.sub v ~pos:i ~len:4) in
@@ -243,7 +261,7 @@ let chip_run ?(lib = lib) ?lane_pipe ?verdict_pipe ?(param_windows = false) ?win
   let first_fail = if code 0 land 1 = 1 then Some (code 1, to_psim (time 4)) else None
   and first_blame = if code 0 land 2 = 2 then Some (code 2, to_psim (time 8)) else None in
   let lvl = (List.hd_exn (read h (b + 11) 1) lsr 4) land 0xF in
-  let rx = if lvl = 0 then [] else read h (b + 10) lvl in
+  let rx = !drained @ if lvl = 0 then [] else read h (b + 10) lvl in
   { outs = h.outs; pads = h.pads; mon = h.mon; off = h.off
   ; clears = List.rev_map h.clears ~f:(fun n -> n - h.off); first_units = code 3; first_fail; first_blame; rx }
 ;;

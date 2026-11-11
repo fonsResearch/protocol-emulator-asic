@@ -252,8 +252,235 @@ let csv pname i =
     printf "SV %s\n" (match !first with Some n -> "KILLED " ^ n | None -> "SURVIVED")
 ;;
 
+(* ---- directed witness search (checks the formal cover did not decide, log/witness_v2.md) ----
+   A witness only has to exist: a concrete run in which the target check is the monitor's first
+   verdict. Blame checks: the shipped firmware with peer parameter sweeps. Fail checks: single-
+   instruction firmware mutants with the nominal peer. A hit is confirmed on the v2 chip RTL
+   (shipped library v2inc5, D.chip_run): the chip's first verdict has the target role and code. *)
+module Isa1 = Pemu_spec_v1.Isa1
+
+let fw_mutants prog =
+  let a = Array.of_list prog in
+  let rep i x = List.mapi prog ~f:(fun k y -> if k = i then x else y) in
+  List.concat_mapi prog ~f:(fun i ins ->
+    let alts : (string * Isa1.t) list =
+      ("nop", Isa1.Nop)
+      ::
+      (match (ins : Isa1.t) with
+       | Wait n -> [ "wait-1", Isa1.Wait (n - 1); "wait+1", Isa1.Wait (n + 1) ]
+       | Out v -> List.init 8 ~f:(fun b -> sprintf "out^%d" b, Isa1.Out (v lxor (1 lsl b)))
+       | Oen v -> List.init 8 ~f:(fun b -> sprintf "oen^%d" b, Isa1.Oen (v lxor (1 lsl b)))
+       | Ldi (d, v) -> [ "ldi-1", Isa1.Ldi (d, v - 1); "ldi+1", Isa1.Ldi (d, v + 1) ]
+       | Cmp (s, v) -> [ "cmp-1", Isa1.Cmp (s, v - 1); "cmp+1", Isa1.Cmp (s, v + 1) ]
+       | Addi (r, v) -> [ "addi-1", Isa1.Addi (r, v - 1); "addi+1", Isa1.Addi (r, v + 1) ]
+       | Br (c, t) -> [ "br^1", Isa1.Br (c lxor 1, t); "br-1", Isa1.Br (c, t - 1); "br+1", Isa1.Br (c, t + 1) ]
+       | Jmp t -> [ "jmp-1", Isa1.Jmp (t - 1); "jmp+1", Isa1.Jmp (t + 1) ]
+       | Djnz t -> [ "djnz-1", Isa1.Djnz (t - 1); "djnz+1", Isa1.Djnz (t + 1) ]
+       | _ -> [])
+    in
+    ignore a;
+    List.filter_map alts ~f:(fun (d, x) ->
+      if Isa1.equal x ins then None
+      else (
+        let m = rep i x in
+        match Isa1.assemble m with
+        | _ -> Some (sprintf "%d:%s" i d, m)
+        | exception _ -> None)))
+;;
+
+type wscen =
+  { wname : string
+  ; wsetup : Psim.setup
+  ; wpkg : int
+  ; wtx : int list
+  ; wpeer : unit -> Psim.chip_view -> Psim.peer_drive
+  ; wcycles : int
+  ; wpop : int (* Psim host RX pop interval; < 1_000_000_000 = draining host (chip: rx_drain) *)
+  }
+
+let i2c_ctl_setup (l, h, tsu, thold) p =
+  { Psim.prog = P1.i2c_ctl ~l ~h ~tsu ~thold; own = P1.i2c_own; od = P1.i2c_od; cfg = 0; cfg2 = 0; p
+  ; contract = Lib.i2c_ctl ~l ~h ~tsu ~thold; open_drain_wired_and = P1.i2c_own }
+;;
+
+let i2c_tgt_setup =
+  { Psim.prog = P1.i2c_tgt ~addr:0x50; own = P1.i2c_own; od = P1.i2c_od; cfg = 0; cfg2 = 0; p = 5
+  ; contract = Lib.i2c_tgt ~h_min:19 ~l_min:22 ~hd:19; open_drain_wired_and = P1.i2c_own }
+;;
+
+let sm30 = { Peers.tlow = 141; thigh = 120; thd_sta = 120; tsu_sta = 141; tsu_sto = 120; tbuf = 141; dh = 1; su = 8 }
+let tgt_txs = [ `W (0x50, [ 0x11; 0x22 ]), true; `R (0x50, 2), false; `W (0x52, [ 0xAA ]), false ]
+
+let usb_setup prog =
+  { Psim.prog; own = P1.usb_own; od = 0; cfg = P1.usb_cfg; cfg2 = 0
+  ; p = Pemu_rtl_v1.Rom_lib.usb_ls_p ~clock_hz:Pemu_rtl_v1.Rom_lib.v2_clock_hz
+  ; contract = Lib.usb_ls_tx (); open_drain_wired_and = 0 }
+;;
+
+(* peer-parameter scenario families per package (blame witnesses) and the nominal scenario
+   (fail witnesses, with firmware mutants) *)
+let wfamilies pkg =
+  let i2c_host = [ 0xA0; 0x03; 0x11; 0x22; 0x33; 0xA1; 0x02 ] in
+  let ictl name lhts p cycles =
+    let s = i2c_ctl_setup lhts p in
+    let mk n ?(dd = 8) ?(stretch = 0) ?(nack_write = -1) () =
+      { wname = n; wsetup = s; wpkg = (if p = 7 then 4 else 5); wtx = i2c_host
+      ; wpeer = (fun () -> (Peers.i2c_target ~addr:0x50 ~read_data:[ 0xC3; 0x5A ] ~dd ~stretch ~nack_write ()).drive)
+      ; wcycles = cycles; wpop = 1_000_000_000 }
+    in
+    ignore name;
+    mk "nominal" ()
+    :: (List.init 60 ~f:(fun k -> let dd = 4 * k in mk (sprintf "dd%d" dd) ~dd ())
+        @ List.init 20 ~f:(fun k -> let st = 50 * k in mk (sprintf "stretch%d" st) ~stretch:st ())
+        @ [ mk "nackw1" ~nack_write:1 () ])
+  in
+  let itgt =
+    let mk n t txs =
+      { wname = n; wsetup = i2c_tgt_setup; wpkg = 6; wtx = [ 0x50; 0xA1; 0x36 ]
+      ; wpeer = (fun () -> (Peers.i2c_controller ~t txs).cdrive); wcycles = 60_000; wpop = 1_000_000_000 }
+    in
+    let scale f v = Int.max 1 (Float.iround_nearest_exn (Float.of_int v *. f)) in
+    let fields =
+      [ "tlow", (fun t v -> { t with Peers.tlow = v }), sm30.tlow; "thigh", (fun t v -> { t with Peers.thigh = v }), sm30.thigh
+      ; "thd_sta", (fun t v -> { t with Peers.thd_sta = v }), sm30.thd_sta; "tsu_sta", (fun t v -> { t with Peers.tsu_sta = v }), sm30.tsu_sta
+      ; "tsu_sto", (fun t v -> { t with Peers.tsu_sto = v }), sm30.tsu_sto; "tbuf", (fun t v -> { t with Peers.tbuf = v }), sm30.tbuf
+      ; "dh", (fun t v -> { t with Peers.dh = v }), 1; "su", (fun t v -> { t with Peers.su = v }), sm30.su ]
+    in
+    mk "nominal" sm30 tgt_txs
+    :: List.concat_map fields ~f:(fun (fn, set, v0) ->
+      List.map [ 0.1; 0.25; 0.4; 0.5; 0.6; 0.75; 0.9; 1.5; 2.0; 4.0; 10.0; 40.0; 100.0 ] ~f:(fun f ->
+        let v = if v0 <= 1 then scale f 20 else scale f v0 in
+        mk (sprintf "%s=%d" fn v) (set sm30 v) tgt_txs))
+    @ [ mk "read1" sm30 [ `R (0x50, 1), false ]; mk "read3" sm30 [ `R (0x50, 3), false ]
+      ; mk "write3" sm30 [ `W (0x50, [ 1; 2; 3 ]), false ]; mk "sr_write" sm30 [ `W (0x50, [ 1 ]), true; `W (0x50, [ 2 ]), false ]
+      ; mk "other_addr" sm30 [ `W (0x51, [ 1 ]), false; `R (0x50, 1), false ] ]
+    (* SDA pull overlays on the nominal controller: the environment pulls SDA low for [len]
+       cycles from cycle [from] (B58: a whole read cell, low to low; B81: a short glitch in a
+       high phase). The overlay counts peer calls, one per cycle. *)
+    @ List.concat_map [ "pull", 261; "glitch", 30 ] ~f:(fun (nm, len) ->
+      List.init 500 ~f:(fun i ->
+        let from = 400 + (50 * i) in
+        { (mk (sprintf "%s%d+%d" nm from len) sm30 tgt_txs) with
+          wcycles = 30_000
+        ; wpeer =
+            (fun () ->
+              let d = (Peers.i2c_controller ~t:sm30 tgt_txs).cdrive in
+              let n = ref 0 in
+              fun v ->
+                let x : Psim.peer_drive = d v in
+                incr n;
+                if !n > from && !n <= from + len then { x with drive_oe = x.drive_oe lor (1 lsl Peers.i2c_sda) } else x)
+        }))
+    (* fail base: a write long enough that the push window (4095 steps) can expire without a
+       START/STOP resetting the frame guard *)
+    @ [ { (mk "long16" sm30 [ `W (0x50, List.init 16 ~f:(fun k -> 0x10 + k)), false ]) with wpop = 50 } ]
+  in
+  match pkg with
+  | "i2c_ctl_fm" -> ictl "fm" (6, 4, 3, 6) 7 14_000
+  | "i2c_ctl_sm" -> ictl "sm" (5, 5, 5, 5) 29 50_000
+  | "i2c_tgt" -> itgt
+  | "usb" ->
+    let two = [ 0xC3; 0; 0x4B; 3; 0x01; 0x02; 0x03 ] in
+    [ { wname = "nominal"; wsetup = usb_setup P1.usb_ls_tx; wpkg = 7; wtx = two; wpeer = (fun () -> D.no_peer); wcycles = 5000; wpop = 1_000_000_000 }
+    ; { wname = "n9"; wsetup = usb_setup P1.usb_ls_tx; wpkg = 7; wtx = [ 0xC3; 9; 0x01 ]; wpeer = (fun () -> D.no_peer); wcycles = 3000; wpop = 1_000_000_000 } ]
+    (* fail bases with long all-ones payloads (bit stuffing lengthens the body past data_max) *)
+    @ List.map [ 9; 10; 12; 15 ] ~f:(fun n ->
+      { wname = sprintf "long%dff" n; wsetup = usb_setup P1.usb_ls_tx; wpkg = 7; wtx = 0xC3 :: n :: List.init n ~f:(fun _ -> 0xFF)
+      ; wpeer = (fun () -> D.no_peer); wcycles = 6000; wpop = 1_000_000_000 })
+  | p -> failwithf "wsearch: no families for %s" p ()
+;;
+
+let first_verdict r = List.hd (Psim.firings r)
+
+let wsearch pkg role code =
+  let target (r, c) = Pemu_monitor_v1.Lang.equal_role r role && c = code in
+  let fams = wfamilies pkg in
+  let runs =
+    match (role : Pemu_monitor_v1.Lang.role) with
+    | Blame -> List.map fams ~f:(fun s -> s.wname, s)
+    | Fail ->
+      let base = List.filter fams ~f:(fun s ->
+        String.equal s.wname "nominal" || String.equal s.wname "n9" || String.is_prefix s.wname ~prefix:"long") in
+      List.concat_map base ~f:(fun s ->
+        List.map (fw_mutants s.wsetup.prog) ~f:(fun (d, prog) -> s.wname ^ "/fw " ^ d, { s with wsetup = { s.wsetup with prog } }))
+  in
+  let hit =
+    List.find_map runs ~f:(fun (d, s) ->
+      let r = Psim.run ~tx_bytes:s.wtx ~rx_pop_every:s.wpop ~setup:s.wsetup ~cycles:s.wcycles ~peer:(s.wpeer ()) () in
+      match first_verdict r with
+      | Some (cy, ro, c) when target (ro, c) -> Some (d, s, cy)
+      | _ -> None)
+  in
+  match hit with
+  | None -> printf "WSEARCH %s %s%02X NONE (%d runs)\n" pkg (match role with Fail -> "F" | Blame -> "B") code (List.length runs)
+  | Some (d, s, cy) ->
+    (* confirm on the v2 chip RTL *)
+    let lib = List.map (Pemu_rtl_v1.Rom_lib.v2_inc5 ()) ~f:Pemu_monitor_v1.Compile.compile_exn in
+    let k = List.hd_exn (D.calibrate ()) in
+    let c =
+      D.chip_run ~lib ~lane_pipe:true ~verdict_pipe:true ~param_windows:true ~stream:true ~rx_drain:(s.wpop < 1_000_000_000) ~k ~setup:s.wsetup ~pkg:s.wpkg ~tx_bytes:s.wtx
+        ~peer:(s.wpeer ()) ~cycles:s.wcycles ()
+    in
+    let mine, other = match role with Fail -> c.first_fail, c.first_blame | Blame -> c.first_blame, c.first_fail in
+    let ok =
+      match mine, other with
+      | Some (cc, t), None -> cc = code && true && t >= 0
+      | Some (cc, t), Some (_, t2) -> cc = code && t <= t2
+      | None, _ -> false
+    in
+    printf "WSEARCH %s %s%02X FOUND [%s] psim first verdict at %d; chip %s (first fail %s, first blame %s)\n" pkg
+      (match role with Fail -> "F" | Blame -> "B") code d cy (if ok then "CONFIRMED" else "NOT CONFIRMED")
+      (Option.value_map c.first_fail ~default:"-" ~f:(fun (cc, t) -> sprintf "%02X@%d" cc t))
+      (Option.value_map c.first_blame ~default:"-" ~f:(fun (cc, t) -> sprintf "%02X@%d" cc t))
+;;
+
 let () =
   match Sys.get_argv () |> Array.to_list |> List.tl_exn with
+  | [ "wins"; pkg; i ] ->
+    (* firmware instruction i (and neighbours) of the package's nominal scenario *)
+    let s = List.hd_exn (wfamilies pkg) in
+    let i = Int.of_string i in
+    List.iteri s.wsetup.prog ~f:(fun k x ->
+      if abs (k - i) <= 2 then printf "%s %d %s%s\n" pkg k (Sexp.to_string (Isa1.sexp_of_t x)) (if k = i then "  <--" else ""))
+  | [ "wbase"; pkg ] ->
+    (* shipped firmware on every family scenario: first verdicts (Psim; chip for the long bases) *)
+    List.iter (wfamilies pkg) ~f:(fun s ->
+      if not (String.is_prefix s.wname ~prefix:"pull" || String.is_prefix s.wname ~prefix:"glitch")
+      then (
+        let r = Psim.run ~tx_bytes:s.wtx ~rx_pop_every:s.wpop ~setup:s.wsetup ~cycles:s.wcycles ~peer:(s.wpeer ()) () in
+        let chip =
+          if String.is_prefix s.wname ~prefix:"long" || String.equal s.wname "nominal"
+          then (
+            let lib = List.map (Pemu_rtl_v1.Rom_lib.v2_inc5 ()) ~f:Pemu_monitor_v1.Compile.compile_exn in
+            let k = List.hd_exn (D.calibrate ()) in
+            let c = D.chip_run ~lib ~lane_pipe:true ~verdict_pipe:true ~param_windows:true ~stream:true ~rx_drain:(s.wpop < 1_000_000_000) ~k ~setup:s.wsetup
+                ~pkg:s.wpkg ~tx_bytes:s.wtx ~peer:(s.wpeer ()) ~cycles:s.wcycles () in
+            let f = Option.value_map ~default:"-" ~f:(fun (cc, t) -> sprintf "%02X@%d" cc t) in
+            sprintf " chip fail %s blame %s rx %d" (f c.first_fail) (f c.first_blame) (List.length c.rx))
+          else ""
+        in
+        let fs = Psim.firings r in
+        printf "WBASE %s %s psim [%s] pushes %d%s\n" pkg s.wname
+          (String.concat ~sep:"," (List.map (List.take fs 3) ~f:(fun (c, r, k) ->
+             sprintf "%s%02X@%d" (match (r : Pemu_monitor_v1.Lang.role) with Fail -> "F" | Blame -> "B") k c)))
+          (List.length (Psim.pushes r)) chip))
+  | [ "wsearch"; pkg; rc ] ->
+    let role : Pemu_monitor_v1.Lang.role = if Char.equal rc.[0] 'F' then Fail else Blame in
+    wsearch pkg role (Int.of_string ("0x" ^ String.drop_prefix rc 1))
+  | [ "wlist" ] ->
+    (* check-witness harnesses (Pemu_formal.Witness_v2): name, package, role, code, statements *)
+    let module W = Pemu_formal.Witness_v2 in
+    W.check_against_rom ();
+    List.iter (W.packages ()) ~f:(fun p ->
+      let cs = W.checks p.contract in
+      List.iter (W.distinct p.contract) ~f:(fun ch ->
+        let sites = List.filter cs ~f:(fun (_, _, c) -> Poly.equal c ch) in
+        printf "%s %s %s %02X %s\n" (W.name p ch) p.pname (W.role_char (fst ch)) (snd ch)
+          (String.concat ~sep:"," (List.map sites ~f:(fun (w, s, _) -> w ^ "." ^ s)))))
+  | [ "wemit"; nm; dir ] ->
+    let c = Pemu_formal.Witness_v2.find nm in
+    Hardcaml.Rtl.output ~output_mode:(To_file (dir ^/ nm ^ ".v")) Verilog c;
+    printf "W dprove %s\n" nm
   | [ "ccov"; pname ] ->
     (* contract check coverage: every check (role, code) of the shipped contract, and whether a
        directed SV scenario (Psim, shipped contract) fires it *)
