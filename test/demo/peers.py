@@ -429,3 +429,120 @@ class UsbLsReceiver:
         crc_ok = len(by) >= 3 and crc16_usb(payload) == (by[-2] | (by[-1] << 8))
         return {"pid": pid, "payload": payload, "sync_ok": sync_ok, "pid_ok": pid_ok, "crc_ok": crc_ok,
                 "stuff_err": stuff_err, "whole_bytes": len(data) % 8 == 0}
+
+
+# ---------------------------------------------------------------- 1-Wire (held-out, plan step 11)
+
+DQ = 2
+
+
+def crc8_maxim(data):
+    crc = 0
+    for b in data:
+        for _ in range(8):
+            mix = (crc ^ b) & 1
+            crc >>= 1
+            if mix:
+                crc ^= 0x8C
+            b >>= 1
+    return crc
+
+
+class OneWireDevice:
+    """A DS18B20-like device at standard speed on DQ (doc/protocols/onewire_v1.md section 0):
+    a low of 480 us or more is a reset, answered after [wait_us] by a presence low of [presence_us];
+    every other low that the device did not cause starts a slot. In a write slot the device samples
+    DQ [sample_us] after the fall; in a read slot it answers a 0 by holding DQ low [read0_us] from
+    the fall. Commands: READ ROM 0x33, SKIP ROM 0xCC, then READ SCRATCHPAD 0xBE or WRITE SCRATCHPAD
+    0x4E (TH, TL, config)."""
+
+    def __init__(self, cpu=30, rom=None, scratch=None, wait_us=30, presence_us=120, sample_us=30, read0_us=30):
+        body = rom or [0x28, 0x5A, 0x3C, 0x11, 0x07, 0x00, 0x00]
+        self.rom = body + [crc8_maxim(body)]
+        self.scratch = list(scratch or [0x91, 0x01, 0x4B, 0x46, 0x7F, 0xFF, 0x0F, 0x10])
+        self.cpu, self.wait, self.presence, self.sample, self.read0 = cpu, wait_us, presence_us, sample_us, read0_us
+        self.log = []
+        self._low_until = []  # (from, to) cycles of the device's own pulls
+        self._prev = 1
+        self._own_prev = False
+        self._fall = None
+        self._sample_at = None
+        self._rx = []  # received bits of the current byte
+        self._tx = []  # bits to send
+        self._expect = None  # "rom", "fn", ("data", k) or None
+
+    def _pulling(self, cyc):
+        return any(a <= cyc < b for a, b in self._low_until)
+
+    def _byte(self, b):
+        if self._expect == "rom":
+            self.log.append("rom %02X" % b)
+            if b == 0x33:
+                self._tx = [(x >> i) & 1 for x in self.rom for i in range(8)]
+                self._expect = "fn"
+            elif b == 0xCC:
+                self._expect = "fn"
+            else:
+                self._expect = None
+        elif self._expect == "fn":
+            self.log.append("fn %02X" % b)
+            if b == 0xBE:
+                sp = self.scratch + [crc8_maxim(self.scratch)]
+                self._tx = [(x >> i) & 1 for x in sp for i in range(8)]
+                self._expect = None
+            elif b == 0x4E:
+                self._expect = ("data", [])
+            else:
+                self._expect = None
+        elif isinstance(self._expect, tuple):
+            got = self._expect[1] + [b]
+            self.log.append("data %02X" % b)
+            if len(got) == 3:
+                self.scratch[2:5] = got
+                self.log.append("scratch written")
+                self._expect = None
+            else:
+                self._expect = ("data", got)
+
+    def step(self, cyc, out, oe, pad):
+        us = self.cpu
+        dq = bit(pad, DQ)
+        if dq == 0 and self._prev == 1 and not self._own_prev:
+            self._fall = cyc
+            if self._tx:
+                if self._tx.pop(0) == 0:
+                    self._low_until.append((cyc, cyc + self.read0 * us))
+            elif self._expect is not None:
+                self._sample_at = cyc + self.sample * us
+        if self._sample_at == cyc:
+            self._sample_at = None
+            self._rx.append(dq)
+            if len(self._rx) == 8:
+                b = sum(v << i for i, v in enumerate(self._rx))
+                self._rx = []
+                self._byte(b)
+        if dq == 1 and self._prev == 0 and self._fall is not None and not self._own_prev:
+            if cyc - self._fall >= 480 * us:
+                self.log.append("reset")
+                self._rx, self._tx, self._sample_at, self._expect = [], [], None, "rom"
+                if self.presence > 0:
+                    self._low_until.append((cyc + self.wait * us, cyc + (self.wait + self.presence) * us))
+            self._fall = None
+        self._prev = dq
+        own = self._pulling(cyc)
+        self._own_prev = own
+        return (1 << DQ, 0) if own else (0, 0)
+
+
+class LineRecorder:
+    """passive: records the cycles of every DQ edge (for RTL vs gate-level comparison)"""
+
+    def __init__(self, pin=DQ):
+        self.pin, self.prev, self.edges = pin, 1, []
+
+    def step(self, cyc, out, oe, pad):
+        v = bit(pad, self.pin)
+        if v != self.prev:
+            self.edges.append((cyc, v))
+        self.prev = v
+        return (0, 0)

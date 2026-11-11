@@ -3,7 +3,7 @@
 
   library.json            pemu_cc json
   programs/<name>.json    pemu_asm asm -f json of the shipped firmware (pemu_asm shipped) and of
-                          toolchain/examples/*.s (as ex_<name>)
+                          toolchain/examples/*.s (as ex_<name>) and flex_v2/firmware/*.s (as flex_<name>)
   windows/<name>.json     pemu_cc retune for the listed variants
 
 Needs `dune build ./toolchain` first. Exit 1 on --check if anything differs.
@@ -32,6 +32,7 @@ def build(out):
         run(BIN / "pemu_asm.exe", "shipped", t)
         srcs = [(p.stem, p) for p in sorted(Path(t).glob("*.s"))]
         srcs += [("ex_" + p.stem, p) for p in sorted((ROOT / "toolchain" / "examples").glob("*.s"))]
+        srcs += [("flex_" + p.stem, p) for p in sorted((ROOT / "flex_v2" / "firmware").glob("*.s"))]
         for name, p in srcs:
             run(BIN / "pemu_asm.exe", "asm", p, "-f", "json", "-o", out / "programs" / f"{name}.json", "--werror")
     for name, (rom, variant) in RETUNE.items():

@@ -159,3 +159,9 @@ the chip's framing. It checks ID, register reads, writes, and the guard flag: ok
 the package parses and runs under MicroPython and that the bit-bang framing is right. It says
 nothing about RP2350 pin timing or the demo board, which have not been tested.
 
+
+## Note: TX FIFO overflow (2026-11-11)
+
+A write to a full TX FIFO is dropped by the chip without an error. `Pemu.tx_push` does not check
+the level; callers that may push more than the free space must wait for room first (`fifo_status`),
+as the 1-Wire driver `host/pemu/onewire.py` does (log/flexibility_v2.md section 4).

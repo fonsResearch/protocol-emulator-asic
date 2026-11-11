@@ -5,8 +5,8 @@ language v1, with zero RTL changes. Procedural isolation (user decision 2026-11-
 and the contract (`flex_v2/src/flex_lib.ml`, `onewire_ctl`) are committed before the firmware.
 Later contract changes only through a logged disagreement (`log/flexibility_v2.md`).
 
-Scope (user decision 2026-11-11): unconditional A2 on the frozen lane spec, compile and fit check
-against the monitor ISA, and unmonitored firmware runs on the chip RTL and gate level. The shipped
+Scope (user decisions 2026-11-11): compile and fit check against the monitor ISA, and unmonitored
+firmware runs on the chip RTL and gate level. A2 for held-out protocols was dropped (log/flexibility_v2.md). The shipped
 chip has no slot for this contract (ROM library only), so it is not monitored on chip.
 
 ## 0. Sources

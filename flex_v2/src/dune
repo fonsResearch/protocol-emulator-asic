@@ -1,5 +1,16 @@
 (library
  (name pemu_flex_v2)
- (libraries core hardcaml pemu_spec_v1 pemu_monitor_v1 pemu_protocols_v1)
+ (libraries core hardcaml pemu_spec_v1 pemu_monitor_v1 pemu_protocols_v1 pemu_toolchain)
  (preprocess
   (pps ppx_jane)))
+
+(rule
+ (targets onewire_src.ml)
+ (deps ../firmware/onewire_ctl.s)
+ (action
+  (with-stdout-to
+   onewire_src.ml
+   (progn
+    (echo "let source = {fw|")
+    (cat ../firmware/onewire_ctl.s)
+    (echo "|fw}\n")))))
