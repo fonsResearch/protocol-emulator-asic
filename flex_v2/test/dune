@@ -1,6 +1,6 @@
 (library
  (name pemu_flex_v2_test)
- (libraries core hardcaml pemu_flex_v2 pemu_spec_v1 pemu_monitor_v1 pemu_protocols_v1 pemu_rtl_v1 pemu_rtl_v1_test)
- (inline_tests)
+ (libraries core hardcaml pemu_flex_v2 pemu_toolchain pemu_spec_v1 pemu_monitor_v1 pemu_protocols_v1 pemu_rtl_v1 pemu_rtl_v1_test)
+ (inline_tests (deps ../firmware/onewire_ctl.s))
  (preprocess
   (pps ppx_jane ppx_expect)))
