@@ -7,3 +7,5 @@ results/*/*.vcd.gz
 results/*/*.fst
 results/*/*.log
 results/sweep/
+# fresh results of tools/reproduce.sh
+results/repro_*/

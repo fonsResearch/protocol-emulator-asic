@@ -1,5 +1,7 @@
 # UART 8N1, v1 (contract source document, step domain)
 
+> **v2 tape-out (2026-11-11).** Clock 30 MHz (v1: 60 MHz). Shipped divisors and package names: `log/protocols_v2.md` and `pemu_cc list` (`doc/toolchain.md`). Values below in cycles or MHz are v1 unless marked v2; step-based contract parameters are unchanged unless `log/protocols_v2.md` says otherwise.
+
 Status: v1 (2026-10-18), plan step 7. Contracts in `monitor_v1/src/library_v1.ml` are written from this document only; firmware is written afterwards (user decision: procedural isolation). The v0 document `uart.md` (cycle domain) stays for the slice.
 
 ## 1. Line format (common convention)
@@ -27,7 +29,7 @@ Let s0 be a step in which the line reads 0 and read 1 in the previous step, whil
   - For every frame the receiver pushes exactly one byte to the host RX stream, in a step of s0 + 9d .. s0 + 10d - 1 - m (within the stop bit's core, after its start).
   - Bit i of the pushed byte (i = 0..7) equals the line in step s0 + (i + 1) d + floor(d / 2), the centre of data bit i.
   - No byte is pushed between frames, or before the stop bit of the current frame.
-- Host-stream assumption (outside the monitor): the host RX FIFO is not full when the receiver pushes.
+- Host-stream assumption (outside the monitor): the host RX FIFO is never full while the lane runs (the A2 harnesses assume `rx_level` < 8 at every cycle, `formal/src/ag_pkg.ml` `rx_never_full`; the earlier wording "not full at the push" was weaker than what is proved, correction 2026-11-11, `doc/host.md` section 3.1).
 
 ## 5. Parameter sets for the ROM library
 

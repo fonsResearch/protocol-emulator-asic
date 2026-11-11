@@ -158,3 +158,10 @@ USB-LS TX) as disassembled `.s` files with their lane configuration.
 
 Not covered here: chip-level runs of the toolchain output are in the host package tests
 (`host/`, section 6 of `doc/host.md`).
+
+## 6. Wrapper and reproduction
+
+`tools/pemu asm ARGS` and `tools/pemu cc ARGS` run `pemu_asm` / `pemu_cc` from any directory
+(building the toolchain on first use). `tools/reproduce.sh quick` runs the toolchain tests, the
+CLIs, the host-asset check and the MicroPython check; the other tiers of that script are listed in
+its header.

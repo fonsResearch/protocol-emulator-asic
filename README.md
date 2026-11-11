@@ -1,12 +1,28 @@
 # protocol-emulator-asic
 
-A firmware-programmable protocol emulator ASIC for the Jane Street protocol emulator ASIC competition, targeting Tiny Tapeout on IHP SG13CMOS5L (6x4 tiles).
+A firmware-programmable protocol emulator with an on-chip assumption monitor, for the Jane Street
+protocol emulator ASIC competition, on Tiny Tapeout IHP SG13CMOS5L (6x4 tiles, 30 MHz). RTL in
+Hardcaml (OCaml), emitted as Verilog for the Tiny Tapeout flow.
 
-The RTL is written in Hardcaml (OCaml) and emitted as Verilog for the Tiny Tapeout flow.
+Two lanes run protocol firmware; a monitor checks each lane's pins against a package contract and
+reports a guarantee violation as *fail* (the chip's fault) or an assumption violation as *blame*
+(the attached device's fault). Shipped packages: UART TX/RX, SPI controller/target (mode 0), I2C
+controller Fm/Sm, I2C target Sm, USB-LS TX.
 
-The project is verification-led. Its goal is an end-to-end result: shipped protocol programs, running on the taped-out netlist, are proven to produce pin traces that satisfy protocol monitors. That proof is cross-checked by spec-free timed self-consistency (QED) and by mutation analysis.
+Status (2026-11-11): tape-out candidate on branch `v2-inc5-usb`, signed off by CI (slow-corner
+setup slack +5.83 ns, 48.6 % utilisation, DRC/LVS/antenna clean). Not tested on silicon.
 
-Status: repository initialized. No functional logic yet.
+| topic | document |
+|---|---|
+| architecture overview | `doc/architecture_v2.md` |
+| concept (assume-guarantee) | `doc/concept/assume_guarantee.md` |
+| lane ISA, host interface, monitor | `doc/isa/isa_v1.md`, `doc/interface_v1.md`, `doc/contracts/monitor_isa_v1.md` |
+| contract language, protocol packages | `doc/contracts/language_v1.md`, `doc/protocols/` |
+| assembler and contract compiler | `doc/toolchain.md` |
+| host package (RP2350, MicroPython) | `doc/host.md` |
+| proofs and verification results | `log/proofs_v2.md`, `log/protocols_v2.md`, `log/witness_v2.md`, `log/campaign_v2.md`, `log/demo_v2.md` |
+| physical design and sign-off | `log/ci_results_v2.md`, `log/increments_v2.md` |
+| change log of frozen documents | `doc/CHANGES.md` |
 
 ## Licence
 

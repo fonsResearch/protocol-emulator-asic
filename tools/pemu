@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Wrapper for the toolchain CLIs (doc/toolchain.md section 6):
+#   tools/pemu asm ...   = pemu_asm ...      tools/pemu cc ... = pemu_cc ...
+# Builds the toolchain on first use (needs the opam switch, tools/env.sh).
+set -u
+R="$(cd "$(dirname "$0")/.." && pwd)"
+B="$R/_build/default/toolchain/bin"
+tool=${1:-}; shift || true
+case $tool in
+  asm) exe=pemu_asm.exe ;;
+  cc) exe=pemu_cc.exe ;;
+  *) echo "usage: tools/pemu asm|cc ARGS (doc/toolchain.md)"; exit 3 ;;
+esac
+if [ ! -x "$B/$exe" ]; then
+  ( cd "$R" && export HOME=${HOME:-/tmp} && source tools/env.sh > /dev/null 2>&1 && dune build ./toolchain ) || exit 3
+fi
+exec "$B/$exe" "$@"

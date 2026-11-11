@@ -1,5 +1,7 @@
 # I2C, v1 (contract source document, step domain)
 
+> **v2 tape-out (2026-11-11).** Clock 30 MHz (v1: 60 MHz). Shipped divisors and package names: `log/protocols_v2.md` and `pemu_cc list` (`doc/toolchain.md`). Values below in cycles or MHz are v1 unless marked v2; step-based contract parameters are unchanged unless `log/protocols_v2.md` says otherwise.
+
 Status: v1 draft (2026-10-18), plan step 7. Contracts `Library_v1.i2c_ctl` and `Library_v1.i2c_tgt` are written from this document only; firmware is written afterwards (procedural isolation; later changes go through `log/disagreements.md`).
 
 User decisions (2026-10-18):

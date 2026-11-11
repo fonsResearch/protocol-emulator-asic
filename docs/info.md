@@ -18,7 +18,7 @@ A programmable protocol emulator with an on-chip assumption monitor.
 - **A monitor engine** checks each lane's pins against a protocol package: a guarantee contract
   (what the chip must do) and an assumption contract (what the attached device must do). Package
   programs are compiled from the same contract source the proofs use. Five monitor units per lane
-  are evaluated one per cycle, so a monitored lane needs P >= 4.
+  are evaluated one per cycle (pipelined schedule), so a monitored lane needs P >= 5.
 - **Verdict.** A guarantee violation sets *fail* (`uo[1]`); an assumption violation by the
   attached device sets *blame* (`uo[2]`). Both are sticky, with a cause code, unit and cycle stamp
   readable over the host port.
@@ -58,5 +58,10 @@ Full register map: doc/interface_v1.md (lanes) and doc/contracts/monitor_isa_v1.
 ## External hardware
 
 A host that speaks SPI mode 0 on the `ui`/`uo` pins, for example the RP2350 on the demo board, and
-the protocol peer under test (UART, SPI) on `uio[7:0]` through a Pmod. No other parts are
-required.
+the protocol peer under test (UART, SPI, I2C, USB-LS) on `uio[7:0]` through a Pmod. No other parts
+are required.
+
+Host requirement: drain each running lane's RX FIFO so that it never holds 8 bytes. The package
+proofs assume this, and a full RX FIFO can make a lane stall and its package report a fail that
+the host caused. The MicroPython host package (`host/pemu`, doc/host.md) checks this and marks
+such runs as host-invalid.

@@ -1,5 +1,7 @@
 # SPI, v1 (contract source document, step domain)
 
+> **v2 tape-out (2026-11-11).** Clock 30 MHz (v1: 60 MHz). Shipped divisors and package names: `log/protocols_v2.md` and `pemu_cc list` (`doc/toolchain.md`). Values below in cycles or MHz are v1 unless marked v2; step-based contract parameters are unchanged unless `log/protocols_v2.md` says otherwise.
+
 Status: v1 (2026-10-18), plan step 7. Contracts `Library_v1.spi_ctl` and `Library_v1.spi_tgt` are written from this document only. Firmware is written afterwards (user decision: procedural isolation). Changes after firmware exists go through `log/disagreements.md`.
 
 User decisions (2026-10-18): pin map A, one byte per CS assertion, ROM parameter sets controller h = 2 and target h_min = 3 in all four modes.
@@ -50,7 +52,7 @@ Definitions:
 **Assumption (target behaviour; violation = blame).**
 - A1 (amended, D2): MISO is constant in steps S_k - 1 .. S_k + h - 1, i.e. it changes only in the half period after the shifting edge and before the step preceding the sampling step. (Original v1 text: MISO does not change in step S_k only. That text let a target with a clock-to-output delay above about one step deliver consistently stale bits without blame.)
 
-**Host-stream assumption (outside the monitor).** The host RX FIFO is not full at the push.
+**Host-stream assumption (outside the monitor).** The host RX FIFO is never full while the lane runs (the A2 harnesses assume `rx_level` < 8 at every cycle, `formal/src/ag_pkg.ml` `rx_never_full`; the earlier wording "not full at the push" was weaker than what is proved, correction 2026-11-11, `doc/host.md` section 3.1).
 
 **Note on progress.** A frame starts only when the host TX stream is non-empty. The monitor cannot observe the host FIFO, so progress is not a contract item (as for UART TX).
 
@@ -80,7 +82,7 @@ Definitions:
 - H3 Capture: the lane pushes exactly one byte q, in a step of e_16 + 2 .. e_16 + 4. q[7-k] = MOSI in step S_k + 1. There is no other pop or push between the pop of H1 and that push.
 - H4 Drive: from the first pop on, oe = 1 on MISO in every step. MISO is not tri-stated while CS is high (v1 limitation: single-target buses only).
 
-**Host-stream assumptions (outside the monitor).** The host TX FIFO is not empty when the lane pops for a frame, and the RX FIFO is not full at the push.
+**Host-stream assumptions (outside the monitor).** The host TX FIFO is not empty when the lane pops for a frame, and the host RX FIFO is never full while the lane runs (the A2 harnesses assume `rx_level` < 8 at every cycle, `formal/src/ag_pkg.ml` `rx_never_full`; the earlier wording "not full at the push" was weaker than what is proved, correction 2026-11-11, `doc/host.md` section 3.1).
 
 **Physical meaning [estimate].** The controller samples MISO at its own edge, which reaches the target's view up to one step plus the 2-cycle synchroniser later. H2 covers the step before the observed edge for that reason. With P_t the target divisor, h_min = 3 steps accepts controller half periods of at least 3(P_t + 1) cycles plus synchroniser jitter; at P_t = 7 that is SCLK up to about 2.5 MHz.
 

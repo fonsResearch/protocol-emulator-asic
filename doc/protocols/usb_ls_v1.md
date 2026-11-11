@@ -1,5 +1,7 @@
 # USB low-speed TX, v1 (contract source document, step domain)
 
+> **v2 tape-out (2026-11-11).** Clock 30 MHz (v1: 60 MHz). Shipped divisors and package names: `log/protocols_v2.md` and `pemu_cc list` (`doc/toolchain.md`). Values below in cycles or MHz are v1 unless marked v2; step-based contract parameters are unchanged unless `log/protocols_v2.md` says otherwise.
+
 Status: v1 draft (2026-10-19), plan step 7. The contract `Library_v1.usb_ls_tx` and the proof-side
 reference encoder are written from this document only; the firmware is written afterwards
 (procedural isolation; later changes go through `log/disagreements.md`).
@@ -11,10 +13,10 @@ User decisions:
   independent reference encoder [P].
 - 2026-10-19: D+ = uio0, D- = uio1 (pair mode, `pair_base` = 0).
 - 2026-10-19: host framing = PID byte, length N, N payload bytes; one status byte per packet.
-- 2026-10-19: P = 39 and bit_period = 1, so one lane step is one bit (40 cycles at 60 MHz,
+- 2026-10-19: P = 39 and bit_period = 1, so one lane step is one bit (40 cycles at 60 MHz; v2: P = 19, 20 cycles at 30 MHz,
   1.5 Mb/s).
 - 2026-10-19 (O1): TX FIFO underrun during a packet is handled by the firmware: abort the packet
-  and report it, so no host-stream assumption is needed.
+  and report it, so no TX-side host-stream assumption is needed. RX side: the status push assumes the host RX FIFO is never full while the lane runs (the A2 harnesses assume `rx_level` < 8 at every cycle, `formal/src/ag_pkg.ml` `rx_never_full`; the earlier wording "not full at the push" was weaker than what is proved, correction 2026-11-11, `doc/host.md` section 3.1).
 - 2026-10-19 (O2): N > 8: push status 1 and halt; nothing is sent on the line.
 
 Source: USB 2.0 specification (sections 7.1, 8.3-8.4). Check status 2026-10-19: rows marked
@@ -29,9 +31,9 @@ marked (memory) are still from memory:
 | NRZI | a 0 bit toggles the line state, a 1 bit keeps it (checked) |
 | bit stuffing | after six consecutive 1 bits a 0 is inserted (so at most 6 bit times without a transition); applies from SYNC through CRC, not to EOP (checked; the SYNC-through-CRC range from memory) |
 | SYNC | 8 bits 00000001 (LSB first), on the line KJKJKJKK (checked: NRZI of 0x80) |
-| PID | 4-bit PID plus its ones complement, LSB first (checked); DATA0 = 0xC3, DATA1 = 0x4B as bytes (memory) |
-| data field | 0-8 bytes for low speed, LSB first (memory) |
-| CRC16 | x^16 + x^15 + x^2 + 1, initial all ones, ones complement sent, MSB of the CRC first (memory; matches the lane spec check value CRC-16/USB 0xB4C8 over "123456789") |
+| PID | 4-bit PID plus its ones complement, LSB first (checked); DATA0 = 0011B, DATA1 = 1011B, check field after the type field, so 0xC3 and 0x4B as bytes (checked 2026-11-11: USB 2.0 text for the PID values and check field; byte values by arithmetic, also listed by a secondary source) |
+| data field | 0-8 bytes for low speed, LSB first (checked 2026-11-11, two secondary sources: low-speed maximum data payload 8 bytes) |
+| CRC16 | x^16 + x^15 + x^2 + 1, ones complement of the remainder sent, MSB of the CRC first (checked 2026-11-11: polynomial and complement from the USB 2.0 text as quoted in a secondary source; with these conventions the receiver residual is the specified x^15 + x^3 + x^2 + 1 = 0x800D for every payload length 0-8, and it is not for an LSB-first CRC or without the complement). Preset all ones: memory (the residual does not distinguish it from an all-zero preset used on both sides). The CRC-16/USB check value 0xB4C8 over "123456789" is also a recalled catalogue value |
 | EOP | SE0 for 2 bit times, then J for 1 bit time, then idle (checked, USB 2.0 section 7.1) |
 | packet abort | a run of 7 or more consecutive 1 bits (no transition) is a bit-stuff error that receivers treat as an error (checked). An intentional bit-stuff error is documented as the high-speed end-of-packet; an explicit low-speed rule allowing a transmitter abort was not found (open) |
 
@@ -44,7 +46,7 @@ only (not monitored on chip); **[O]** = checked only by co-simulation and the si
   it is active and by `out`/`oe` otherwise.
 - Observables per step: the chip's own outputs `dp`, `dm` (= `uio_out` bits 0, 1) and `oe0`, `oe1`
   (`uio_oe` bits 0, 1), masked by OWN. The monitor observes the chip outputs, not the pads.
-- One step = one bit (P = 39, bit_period = 1).
+- One step = one bit (v1 P = 39 at 60 MHz; v2 P = 19 at 30 MHz; bit_period = 1).
 - Line state per step: J = (dp, dm) = (0, 1); K = (1, 0); SE0 = (0, 0); (1, 1) is illegal (SE1).
 - Driven: `oe0` = `oe1` = 1.
 - Start-up convention (amended 2026-10-19 while writing the contract, before any firmware): the
@@ -119,7 +121,7 @@ last state. The test happens just before the POP, so a POP never blocks inside a
 
 ## 5. Items to check before the contract is frozen
 
-- The USB 2.0 facts in the table above (from memory).
+- The USB 2.0 facts in the table above still marked memory: CRC16 preset all ones; bit stuffing applies from SYNC through CRC (2026-11-11: PID bytes, data length and CRC polynomial/complement/bit order checked).
 - The abort form (2.3): whether a transmitter may abort with a bit-stuff error followed by EOP,
   and the required run length.
 - Monitor budget: met. `Library_v1.usb_ls_tx`: 5 units, 10/14 predicates, 7/7 windows, 11/15
